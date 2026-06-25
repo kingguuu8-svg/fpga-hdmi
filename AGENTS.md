@@ -17,6 +17,8 @@
   and phase acceptance criteria.
 - `docs/project-start-standard.md`: checklist that defines when the repository
   is ready to start a formal implementation cycle.
+- `docs/boards/hellofpga-smart-zynq-sl.md`: consolidated board reference for
+  the connected HelloFPGA Smart ZYNQ SL board.
 - `docs/current-cycle.md`: the current active cycle, or an explicit statement
   that no implementation cycle is open.
 - `docs/cycle-log.md`: completed cycle ledger with commit IDs, verification
