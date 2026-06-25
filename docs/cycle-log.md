@@ -19,7 +19,7 @@ Residual risks:
 
 ## 2026-06-25 - management-bootstrap
 
-Commit: pending
+Commit: 593c405 (`docs: establish project management workflow`)
 
 Objective:
 
@@ -56,5 +56,5 @@ Result:
 
 Residual risks:
 
-- Git repository must be initialized before the first commit can be recorded.
-
+- Existing source directories are still untracked because this cycle only
+  established project-management documents.
