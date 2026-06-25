@@ -1,0 +1,4 @@
+interface:
+  display_name: "Zynq-7020 Hardware"
+  short_description: "Program and verify a connected XC7Z020 board"
+  default_prompt: "Program and verify the connected Zynq-7020 board."

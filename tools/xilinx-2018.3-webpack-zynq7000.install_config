@@ -1,0 +1,17 @@
+#### Vivado HL WebPACK Install Configuration ####
+Edition=Vivado HL WebPACK
+
+# Install inside WSL ext4. Windows Vivado 2018.3 is retained only for SDK/JTAG.
+Destination=/opt/Xilinx
+
+# Minimal MVP payload: Vivado base + Zynq-7000 device support + SDK A9 tools.
+Modules=DocNav:0,Kintex UltraScale:0,Spartan-7:0,Artix-7:0,Model Composer:0,ARM Cortex-A53:0,Zynq UltraScale+ MPSoC:0,Zynq-7000:1,SDK Core Tools:1,ARM Cortex-A9:1,ARM Cortex R5:0,Virtex UltraScale+ 58G ES:0,Zynq UltraScale+ MPSoC ES:0,System Generator for DSP:0,Kintex-7:0,Kintex UltraScale+:0,MicroBlaze:0,Virtex UltraScale+ HBM ES:0
+
+InstallOptions=Enable WebTalk for SDK to send usage statistics to Xilinx:0
+
+CreateProgramGroupShortcuts=0
+ProgramGroupFolder=Xilinx Design Tools
+CreateShortcutsForAllUsers=0
+CreateDesktopShortcuts=0
+CreateFileAssociation=0
+

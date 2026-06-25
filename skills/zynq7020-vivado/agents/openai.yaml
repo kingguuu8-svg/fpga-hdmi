@@ -1,0 +1,4 @@
+interface:
+  display_name: "Zynq-7020 Vivado"
+  short_description: "Build reproducible Vivado projects for XC7Z020"
+  default_prompt: "Create or build the XC7Z020 Vivado hardware project."

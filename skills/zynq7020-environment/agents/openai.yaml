@@ -1,0 +1,4 @@
+interface:
+  display_name: "Zynq-7020 Environment"
+  short_description: "Detect the local Xilinx toolchain and connected Zynq hardware"
+  default_prompt: "Inspect and validate the local Zynq-7020 development environment."

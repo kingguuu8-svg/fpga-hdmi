@@ -15,6 +15,8 @@
 - `README.md`: project overview, current workflow entry points, and basic usage.
 - `docs/project-roadmap.md`: accepted system route, MVP scope, post-MVP phases,
   and phase acceptance criteria.
+- `docs/project-start-standard.md`: checklist that defines when the repository
+  is ready to start a formal implementation cycle.
 - `docs/current-cycle.md`: the current active cycle, or an explicit statement
   that no implementation cycle is open.
 - `docs/cycle-log.md`: completed cycle ledger with commit IDs, verification

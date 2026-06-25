@@ -58,3 +58,46 @@ Residual risks:
 
 - Existing source directories are still untracked because this cycle only
   established project-management documents.
+
+## 2026-06-25 - project-opening-baseline
+
+Commit: this commit (`cycle: establish project opening baseline`)
+
+Objective:
+
+Reach the repository state required to start formal implementation cycles.
+
+Changed scope:
+
+- Added the project-start readiness standard.
+- Registered the readiness standard in `AGENTS.md`.
+- Added current boards, examples, skills, and tools as the initial source
+  baseline.
+- Ignored Python bytecode caches.
+
+Verification:
+
+- Project-management cycle.
+- File audit confirms source directories are ready to track.
+- No simulation required.
+- No board programming required.
+
+Board action:
+
+- Not run; this cycle does not change hardware behavior.
+
+Evidence:
+
+- `docs/project-start-standard.md`
+- `docs/current-cycle.md`
+- `docs/cycle-log.md`
+- Git status after commit
+
+Result:
+
+- Project is ready to open the first formal implementation cycle after final
+  clean git status verification.
+
+Residual risks:
+
+- No remote repository is configured yet.

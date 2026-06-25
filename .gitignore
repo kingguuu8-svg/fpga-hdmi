@@ -5,3 +5,5 @@
 /tools/downloads/
 /tools/openFPGALoader-v1.1.1/
 /usage_statistics_webtalk.*
+__pycache__/
+*.pyc

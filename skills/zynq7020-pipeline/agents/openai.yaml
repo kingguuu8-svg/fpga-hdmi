@@ -1,0 +1,4 @@
+interface:
+  display_name: "Zynq-7020 Pipeline"
+  short_description: "Run the project-local XC7Z020 end-to-end workflow"
+  default_prompt: "Run the XC7Z020 MVP pipeline from environment checks through board programming."
