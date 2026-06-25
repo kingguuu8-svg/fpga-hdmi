@@ -1,0 +1,7 @@
+/build/
+/.Xil/
+/*.jou
+/*.log
+/tools/downloads/
+/tools/openFPGALoader-v1.1.1/
+/usage_statistics_webtalk.*

@@ -1,0 +1,247 @@
+# Zynq-7020 Network Video Effects System
+
+This repository contains a project-local Codex skills workflow for an XC7Z020
+board. Project-specific skills live under `skills/`; do not install them into
+the user-level Codex skills directory.
+
+## Project Direction
+
+The target system is:
+
+```text
+PC video stream -> Ethernet -> Zynq PS/DDR -> PL video effects -> HDMI output
+PC control      -> UART fallback -> board control endpoint -> PL registers
+```
+
+The MVP keeps USB-JTAG as the reliable development and recovery path. Replacing
+the downloader, USB control, and local cables with Ethernet/LAN control is a
+post-MVP milestone, not part of the first working network-video loop.
+
+Route document:
+
+```text
+docs/project-roadmap.md
+```
+
+## Current MVP
+
+The current verified foundation path is:
+
+```text
+probe Windows Xilinx tools and USB
+-> build a Vivado 2018.3 bitstream in WSL
+-> scan the connected XC7Z020 over Xilinx hw_server/XSCT
+-> program the bitstream to PL SRAM
+-> write run evidence under build/reports
+```
+
+The connected target reports:
+
+```text
+Cable: HelloFpga JTAG-JT2 26SA093A
+Target: xc7z020
+```
+
+The active board profile is:
+
+```text
+boards/hellofpga-smart-zynq-sl-7020.tcl
+```
+
+The fastest closed-loop video MVP is:
+
+```text
+Example: examples/video-pip
+Part: xc7z020clg484-1
+Clock: M19, 50 MHz, LVCMOS33
+HDMI: TMDS_33 output pins from the Smart ZYNQ SL schematic
+Stage 1: 640x480 timing and test pattern pass xsim
+Stage 2: 160x120 PIP compositor pass xsim
+Stage 3: preset PIP demo script passes xsim
+Programming: PL SRAM only
+```
+
+The earlier schematic-backed bare-board LED chaser MVP remains available:
+
+```text
+Example: examples/led-chaser
+Part: xc7z020clg484-1
+Clock: M19, 50 MHz, LVCMOS33
+LED1: P20, LVCMOS33, active-high
+LED2: P21, LVCMOS33, active-high
+Programming: PL SRAM only
+```
+
+## Video PIP Stage 1/2
+
+Run simulation first:
+
+```powershell
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\skills\zynq7020-vivado\scripts\sim-wsl.ps1 -Example video-pip
+```
+
+Expected markers:
+
+```text
+STAGE1_TIMING_AND_PATTERN_OK
+STAGE2_PIP_OK
+STAGE3_EFFECT_PIPE_OK
+STAGE4_BUTTON_CONTROL_OK
+STAGE5_AUTO_DEMO_SCRIPT_OK
+SIM_OK
+```
+
+Build the downloadable bitstream:
+
+```powershell
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\skills\zynq7020-vivado\scripts\build-wsl.ps1 -BoardProfile .\boards\hellofpga-smart-zynq-sl-7020.tcl -Example video-pip
+```
+
+Program PL SRAM:
+
+```powershell
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\skills\zynq7020-hardware\scripts\program-xsct.ps1 -Bitstream .\build\video-pip\video-pip.bit
+```
+
+This writes PL SRAM only. It does not write QSPI, NAND, eMMC, SD, or any flash
+storage.
+
+Latest video evidence:
+
+```text
+build/reports/video-pip-auto-demo.md
+build/reports/hdmi-effects-verified.md
+build/reports/latest-hdmi-effects-run.json
+build/reports/hdmi-capture/latest.png                 # prior capture artifact
+build/reports/hdmi-capture/latest-sequence.png        # prior fast-loop capture artifact
+build/reports/hdmi-capture/latest-validation.json     # latest capture attempt status
+build/reports/video-pip-stage12.md
+build/video-pip/sim/xsim-run.log
+build/video-pip/reports/drc.rpt
+build/video-pip/reports/timing_summary.rpt
+build/video-pip/video-pip.bit
+```
+
+Current automatic demo:
+
+```text
+640x480 HDMI output with a clean stable background A.
+PIP window B runs a preset loop: hidden -> appear -> move -> rotate ->
+scale -> rotate+scale while moving -> repeat.
+The previous HDMI capture path used the UVC adapter as DirectShow device index
+1. If the adapter does not open after reprogramming, physically replug the UVC
+capture adapter before recording.
+Each phase lasts 300 video frames, about 5.04 seconds at 640x480 timing.
+```
+
+## Recording Demo Script
+
+Record 35 to 40 seconds from the HDMI capture input. The visible loop is:
+
+```text
+0. Clean background A only
+1. PIP B appears with a white border
+2. PIP B moves diagonally
+3. PIP B shows 90-degree rotation
+4. PIP B shows 2x scale
+5. PIP B moves while using 90-degree rotation plus 2x scale
+6. Loop back to background-only intro
+```
+
+Use this narration:
+
+```text
+This is a PL-only Zynq-7020 HDMI video-effects pipeline. The FPGA generates a
+stable background video source, overlays a second picture-in-picture source,
+and applies scripted movement, rotation, and scaling before realtime HDMI
+output.
+```
+
+## Button Control Status
+
+The dynamic demo path has been implemented in RTL. The onboard KEY1/KEY2 button
+logic has been implemented and passes simulation, but it is not wired into the
+current downloadable HDMI top because the board's onboard key pins conflict with
+the working differential HDMI output resources.
+
+Evidence and decision record:
+
+```text
+build/reports/dynamic-video-button-control-attempt.md
+```
+
+Use external buttons on verified free J5/J6 GPIO pins, UART commands, or a later
+PS-side control path for reliable physical operation.
+
+## Run The LED MVP
+
+From the repository root:
+
+```powershell
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\skills\zynq7020-pipeline\scripts\run-mvp.ps1 -BoardProfile .\boards\hellofpga-smart-zynq-sl-7020.tcl -Backend auto
+```
+
+Expected final line:
+
+```text
+MVP_PIPELINE_OK bitstream=E:\main\fpga-hdml\build\led-chaser\led-chaser.bit backend=xsct
+```
+
+Latest run evidence:
+
+```text
+build/reports/latest-mvp-run.json
+build/led-chaser/reports/drc.rpt
+build/led-chaser/reports/timing_summary.rpt
+build/led-chaser/led-chaser.bit
+```
+
+## Build Only
+
+```powershell
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\skills\zynq7020-vivado\scripts\build-wsl.ps1 -BoardProfile .\boards\hellofpga-smart-zynq-sl-7020.tcl -Example led-chaser
+```
+
+## Program Only
+
+```powershell
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\skills\zynq7020-hardware\scripts\program-xsct.ps1 -Bitstream .\build\led-chaser\led-chaser.bit
+```
+
+## Board Evidence
+
+The board profile is based on the official HelloFPGA Smart ZYNQ SL page:
+
+```text
+http://www.hellofpga.com/index.php/2023/05/10/smart-zynq-sl/
+```
+
+Downloaded schematic:
+
+```text
+build/reports/SmartZynq_SL_Schematic_V1d3_20241005.pdf
+```
+
+Important pages:
+
+```text
+Page 6: LED circuit, active-high through 30R to ground
+Page 10: 50M CLOCK CLK=M19, LED1=P20, LED2=P21
+Page 11: Vivado constraint reference for clk_50, LED1, LED2
+```
+
+## Skill Entry Points
+
+Always start from the orchestrator:
+
+```text
+skills/zynq7020-pipeline/SKILL.md
+```
+
+Child skills:
+
+```text
+skills/zynq7020-environment/SKILL.md
+skills/zynq7020-vivado/SKILL.md
+skills/zynq7020-hardware/SKILL.md
+```
