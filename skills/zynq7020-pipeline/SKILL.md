@@ -7,7 +7,10 @@ description: Orchestrate the repository-local XC7Z020 end-to-end MVP workflow us
 
 Run the shortest safe path in this order:
 
-1. Load `../zynq7020-environment/SKILL.md` and probe tools, USB, UART, and JTAG.
+1. Read `docs/environment-baseline.md`. If it exists and none of its
+   invalidation conditions are met, trust the baseline and skip environment
+   probing. Otherwise load `../zynq7020-environment/SKILL.md` and probe tools,
+   USB, UART, and JTAG; after a successful probe, update the baseline.
 2. Identify the exact carrier board and create a verified profile under
    `boards/`. Stop rather than guessing pins.
 3. Load `../zynq7020-vivado/SKILL.md` and build the shortest verified example:

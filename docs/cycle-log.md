@@ -167,3 +167,82 @@ Residual risks:
   until this dependency is either committed or documented in the README.
 - The hardware experiment cycle `eth-ps-pl-hdmi-pass-through` remains paused
   waiting for a TF card; see `docs/reports/tf-card-linux-resume-2026-06-26.md`.
+
+## 2026-06-26 - skill-env-baseline
+
+Commit: this commit (`cycle: add environment baseline, make skills event-triggered`)
+
+Objective:
+
+Stop the project skills from re-probing a known-stable environment on every
+cycle, and close the skill gaps left by the earlier route pivot: the vivado
+skill was missing the eth-ps-pl build/sim entry point and was restating board
+facts that the fact-consistency rule now assigns to the board reference.
+
+Changed scope:
+
+- Added `docs/environment-baseline.md`: a git-tracked, one-time-confirmed
+  record of this machine's environment facts (Vivado 2018.3 paths, JTAG
+  adapter, device, board, UART, HDMI capture, Ethernet IP) with explicit
+  invalidation conditions. It is the fact owner for "current environment
+  facts" under the AGENTS.md fact-consistency rule.
+- Edited `skills/zynq7020-environment/SKILL.md`: added a "When to probe"
+  section that skips probing when the baseline is valid and only re-probes on
+  invalidation events.
+- Edited `skills/zynq7020-pipeline/SKILL.md`: step 1 now reads the baseline and
+  skips probing when it is valid, instead of mandating a probe every cycle.
+- Edited `skills/zynq7020-vivado/SKILL.md`: build-prep board-fact verification
+  now references `docs/boards/hellofpga-smart-zynq-sl.md` instead of restating
+  the facts; added the eth-ps-pl sim and VDMA build commands and its sim
+  marker (`AXI_FRAMEBUFFER_LINE_READER_OK`); marked the retired custom-reader
+  build entry point as not to be used.
+- Updated `docs/current-cycle.md`: new skill-env-baseline active cycle;
+  baseline-checkpoint moved to a Recently Closed Cycle section.
+
+Verification:
+
+- Skill-rule cycle; no simulation or board programming required.
+- Dry-checked every command path named in the edited skills against the file
+  tree: all 10 paths resolve to tracked files.
+- Cross-checked the vivado skill's eth sim marker against
+  `skills/zynq7020-vivado/scripts/sim.tcl:27` — both say
+  `AXI_FRAMEBUFFER_LINE_READER_OK`.
+- Cross-checked the baseline's Vivado/SDK paths against
+  `probe-environment.ps1` defaults — both are `E:\Xilinx\Vivado\2018.3` and
+  `E:\Xilinx\SDK\2018.3`.
+- Cross-checked the pipeline skill's tf-card report reference resolves to a
+  tracked file.
+
+Board action:
+
+- Not run; this cycle does not change hardware behavior. The baseline it
+  records was already confirmed by prior probe runs.
+
+Evidence:
+
+- The commit itself and this log entry.
+- `git status --short` clean for all in-scope files after commit.
+
+Result:
+
+- Skills no longer mandate per-cycle environment probing on a stable machine;
+  probing is now event-triggered by baseline invalidation.
+- vivado skill no longer violates the fact-consistency rule by restating board
+  facts; it references the board reference.
+- vivado skill now has the eth-ps-pl sim/build entry point that the route
+  pivot required.
+
+Residual risks:
+
+- The baseline is event-triggered, not time-triggered. Silent environment drift
+  that never touches an active JTAG/UART/Ethernet operation will not be caught
+  until the affected interface is next used. This is accepted: the drift
+  surfaces as a probe contradiction at that time.
+- The vivado skill still lists concrete command invocations alongside
+  referencing the pipeline skill as the entry-point owner. If the two ever
+  diverge, the pipeline skill wins per the fact-consistency rule; a future
+  cleanup could make the vivado skill reference-only.
+- The `examples/eth-ps-pl-hdmi-pass-through` sim target tests the retired
+  AXI framebuffer line reader, not the active VDMA path. The sim marker is
+  accurate for what sim.tcl actually runs, but it is not proof of the active
+  HDMI output path.

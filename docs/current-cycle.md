@@ -1,6 +1,6 @@
 # Current Cycle
 
-Status: active implementation cycle (baseline-checkpoint); the hardware
+Status: active implementation cycle (skill-env-baseline); the hardware
 experiment cycle eth-ps-pl-hdmi-pass-through remains paused waiting for a TF
 card.
 
@@ -35,38 +35,51 @@ cycle open time; they are not a self-audit checklist for cycle close.
 ## Active Cycle
 
 ```text
-Cycle ID: baseline-checkpoint
-Objective: commit the completed eth-ps-pl-hdmi-pass-through work surface and
-  supporting tooling into git, eliminating dangling references from
-  roadmap/skill/README to untracked files, and returning the repository to the
-  clean baseline required by docs/project-start-standard.md.
-Scope: stage the currently untracked examples/eth-ps-pl-hdmi-pass-through,
-  software/, docs/protocols/, docs/boards/lookup-log.md,
-  docs/reports/eth-ps-pl-hdmi-pass-through.md,
-  docs/reports/third-party-review-2026-06-26.md, and tools/*.{ps1,py,tcl},
-  plus the already-modified .gitignore, skills/zynq7020-vivado/scripts/sim.tcl,
-  and docs/boards/hellofpga-smart-zynq-sl.md. No RTL/Tcl/software logic changes;
-  this is a source-checkpoint cycle only. Retired custom-reader files are
-  committed as-is for historical traceability; their cleanup is a later cycle.
-Verification plan: after commit, git status --short shows no files in this
-  cycle's scope; every path referenced by README/roadmap/skill resolves to a
-  git-tracked object; tools/downloads remains gitignored and is not staged.
-Board action: none. This cycle does not touch hardware.
-Evidence target: the commit itself, plus a docs/cycle-log.md entry.
+Cycle ID: skill-env-baseline
+Objective: stop the skills from re-probing a known-stable environment on every
+  cycle, and close the skill gaps left by the route pivot (vivado skill missing
+  the eth-ps-pl build/sim entry, skills holding stale command copies that
+  violate the new fact-consistency rule).
+Scope: add docs/environment-baseline.md as a git-tracked, one-time-confirmed
+  environment fact; edit the three project skills so probing is triggered by
+  baseline-invalidation events instead of every cycle; make vivado skill
+  reference the board reference and pipeline skill for facts it currently
+  restates; verify the sim/build command chain resolves to real files.
+  No RTL/XDC/Tcl logic changes; no board programming.
+Verification plan: read each edited skill and confirm the trigger logic is
+  present and correct; dry-check that every command path named in the skills
+  resolves to a tracked file; confirm environment-baseline.md facts match the
+  probe scripts' default paths and the board reference.
+Board action: none. This cycle does not touch hardware; the baseline it records
+  was already confirmed by prior probe runs.
+Evidence target: the commit, plus a docs/cycle-log.md entry.
 Closure criteria:
-  1. All 16 untracked items and the in-scope modified files are committed.
-  2. git status --short shows no in-scope files remaining.
-  3. docs/cycle-log.md has a baseline-checkpoint entry with the commit id.
-  4. README/roadmap/skill referenced paths are all git-tracked.
+  1. docs/environment-baseline.md exists, is git-tracked, and its facts match
+     the probe-script defaults and board reference.
+  2. environment, pipeline, and vivado skills contain the baseline-trigger
+     logic and no longer mandate per-cycle probing when the baseline is valid.
+  3. vivado skill no longer restates board facts; it references the board
+     reference and pipeline skill per the fact-consistency rule.
+  4. Every sim/build command path named in the skills resolves to a tracked file.
 Highest-risk assumption this cycle falsifies:
-  The working-tree files are complete and self-consistent as-is: no half-written
-  sources, no dead references to deleted paths, no build products that should be
-  gitignored but would be mistakenly staged.
+  The environment facts being written into the baseline file are still true on
+  this machine right now (Vivado paths, JTAG adapter, device, board profile,
+  UART, HDMI capture, Ethernet IP), and the skill command paths all resolve.
 Cheapest alternative way to falsify the same assumption:
-  Per-file inspection before staging: check the eth example .v/.tcl/.xdc point
-  to the VDMA path (not the retired custom-reader as the live path), check
-  tools/downloads is still blocked by .gitignore, check sim.tcl's edit matches
-  the committed eth example. Pure file checks, zero hardware cost, under an hour.
+  Cross-check each baseline fact against the probe-script default paths and the
+  board reference's Current Interface Baseline section, and dry-check each
+  skill-named command path against the tracked file tree. Pure file checks, no
+  hardware, no Vivado invocation.
+```
+
+## Recently Closed Cycle
+
+```text
+Cycle ID: baseline-checkpoint
+Commit: bef3299
+Result: committed the eth-ps-pl-hdmi-pass-through work surface (52 files) into
+  git; working tree is clean; route-pivot documents no longer dangle-reference
+  untracked files. See docs/cycle-log.md for the full entry.
 ```
 
 ## Paused Cycle

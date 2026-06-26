@@ -5,6 +5,20 @@ description: Detect and validate the Windows-hosted AMD/Xilinx toolchain and con
 
 # Zynq-7020 Environment
 
+## When to probe
+
+This machine and board have a git-tracked, one-time-confirmed environment
+baseline at `docs/environment-baseline.md`. Read it first.
+
+- If the baseline exists and none of its invalidation conditions are met, skip
+  the probes below and trust the baseline facts. Do not re-probe a
+  known-stable environment on every cycle.
+- If any invalidation condition is met, run the probes below, confirm the
+  results match the baseline (or update the baseline to match), and only then
+  trust the baseline again.
+
+## Probes (run only when the baseline is invalid or missing)
+
 Run `scripts/probe-environment.ps1` before building or programming.
 
 Run `scripts/probe-hardware.ps1` when a board is connected. It starts a private
