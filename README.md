@@ -25,7 +25,21 @@ docs/project-roadmap.md
 
 ## Current MVP
 
-The current verified foundation path is:
+The current first-stage path is paused until a TF card is available. The next
+route-deciding experiment is:
+
+```text
+Boot the official Smart_ZYNQ_SP2_LINUX_ALL_TEST image from TF card
+-> verify Ethernet link/IP
+-> ping the board from the PC over the PL-side RTL8211E path
+```
+
+If ping works, continue the network-video work on the Linux/socket route and
+stop debugging the hand-written baremetal RGMII bridge. If ping fails, treat
+the network physical/driver layer as the root problem and debug with official
+Linux logs before returning to baremetal.
+
+The verified foundation path remains:
 
 ```text
 probe Windows Xilinx tools and USB
@@ -48,7 +62,19 @@ The active board profile is:
 boards/hellofpga-smart-zynq-sl-7020.tcl
 ```
 
-The fastest closed-loop video MVP is:
+The active pass-through implementation target is:
+
+```text
+Example: examples/eth-ps-pl-hdmi-pass-through
+Part: xc7z020clg484-1
+Input: PC UDP frames, 800x600 RGB888, port 5005
+Buffer: PS DDR framebuffer
+Output: official VDMA-style 800x600 HDMI path
+Status: paused pending TF-card Linux ping route gate
+```
+
+The previous PL-only video effects demo remains available as a side demo, not
+the current network-video MVP:
 
 ```text
 Example: examples/video-pip
@@ -72,7 +98,44 @@ LED2: P21, LVCMOS33, active-high
 Programming: PL SRAM only
 ```
 
-## Video PIP Stage 1/2
+## Ethernet Video Pass-Through
+
+Current active artifacts:
+
+```text
+docs/project-roadmap.md
+docs/current-cycle.md
+docs/reports/eth-ps-pl-hdmi-pass-through.md
+docs/reports/tf-card-linux-resume-2026-06-26.md
+examples/eth-ps-pl-hdmi-pass-through/
+software/eth_pass_through/
+tools/send_video_udp.py
+```
+
+Known good subchains:
+
+```text
+Official VDMA DDR framebuffer -> HDMI capture: passed at 800x600.
+Official pure-PL UDP loopback over the same RJ45 path: passed.
+Project baremetal hand-written RGMII bridge -> PS lwIP RX: paused, incomplete.
+```
+
+Baremetal fallback build, if explicitly needed after the TF route gate:
+
+```powershell
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\examples\eth-ps-pl-hdmi-pass-through\tcl\build-stage1-vdma-board-wsl.ps1
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\software\eth_pass_through\scripts\build-sdk-app-wsl.ps1
+```
+
+Do not use the retired custom-reader entry point:
+
+```powershell
+.\examples\eth-ps-pl-hdmi-pass-through\tcl\build-stage1-board-wsl.ps1
+```
+
+It targets the old 640x480 RGB565 custom reader and intentionally fails.
+
+## Video PIP Side Demo
 
 Run simulation first:
 
@@ -91,20 +154,14 @@ STAGE5_AUTO_DEMO_SCRIPT_OK
 SIM_OK
 ```
 
-Build the downloadable bitstream:
+Build the downloadable PL-only side-demo bitstream:
 
 ```powershell
 rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\skills\zynq7020-vivado\scripts\build-wsl.ps1 -BoardProfile .\boards\hellofpga-smart-zynq-sl-7020.tcl -Example video-pip
 ```
 
-Program PL SRAM:
-
-```powershell
-rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\skills\zynq7020-hardware\scripts\program-xsct.ps1 -Bitstream .\build\video-pip\video-pip.bit
-```
-
-This writes PL SRAM only. It does not write QSPI, NAND, eMMC, SD, or any flash
-storage.
+This writes PL SRAM only when programmed. It does not write QSPI, NAND, eMMC,
+SD, or any flash storage.
 
 Latest video evidence:
 

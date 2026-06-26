@@ -11,7 +11,8 @@ Ethernet.
 
 ## MVP Scope
 
-The MVP has three independent links:
+The current first-stage MVP is a pass-through proof, not the final effects
+demo. It has three independent links:
 
 ```text
 Video input:
@@ -24,15 +25,19 @@ Video output:
   PL video pipeline -> HDMI -> PC capture/display
 ```
 
-MVP target:
+Current first-stage target:
 
 ```text
-Input video: 320x240 RGB565, UDP, 15-30 fps
-Output video: 640x480 HDMI
-Effects: PIP, move, scale, rotate/rotate-like transform where feasible
-Control: UART command protocol with deterministic fallback behavior
+Input video: 800x600 RGB888, UDP, low frame rate acceptable for proof
+Output video: 800x600 HDMI through VDMA MM2S + v_axi4s_vid_out + rgb2dvi
+Effects: none in stage 1; original frame must be returned first
+Control: UART command protocol remains the first fallback after video closes
 Download/debug: keep USB-JTAG as the reliable development recovery path
 ```
+
+The old 320x240/640x480 RGB565 custom-framebuffer-reader route is retired for
+the active stage-1 path. It remains only as historical code until deleted or
+archived; it must not be used as completion evidence for this MVP.
 
 ## Why This Boundary
 
@@ -58,7 +63,7 @@ Network boot/update can be added after PS software is stable
 
 ## Non-MVP Items
 
-These are explicitly out of the MVP:
+These are explicitly out of the first-stage pass-through MVP:
 
 ```text
 Replacing the downloader with Ethernet
@@ -72,27 +77,36 @@ Full Linux media stack / GStreamer pipeline
 
 They are valid later milestones, not first-stage requirements.
 
+Exception: a TF-card Linux ping experiment is now a route gate, not a media
+stack milestone. When a TF card is available, boot the official vendor Linux
+image and verify whether the board can be pinged over the PL-side RTL8211E
+network path. This decides whether to continue on a Linux/socket route or fall
+back to a baremetal official-IP route.
+
 ## Post-MVP Direction
 
 After the MVP is stable, move toward a network-unified board control model:
 
 ```text
 Phase A:
-  UART control + Ethernet video + HDMI output
+  Route gate: official Linux image boots and responds to ping over Ethernet
 
 Phase B:
+  UART control + Ethernet video + HDMI output
+
+Phase C:
   Same command protocol over TCP/UDP
   UART remains as fallback
 
-Phase C:
+Phase D:
   Board reachable through LAN router
   PC controls board by IP address
 
-Phase D:
+Phase E:
   Linux FPGA Manager / PCAP based remote bitstream update
   JTAG remains recovery path
 
-Phase E:
+Phase F:
   Optional USB RNDIS/ECM fallback
   USB behaves as a network interface, not as a custom video protocol
 ```
@@ -102,13 +116,14 @@ Phase E:
 MVP is complete only when all of the following are true:
 
 ```text
-1. PC can send a known 320x240 RGB565 test video stream over Ethernet.
+1. PC can send a known 800x600 RGB888 test video frame stream over Ethernet.
 2. Board receives frames and updates a DDR-backed frame buffer.
-3. PL consumes the frame buffer and displays it through HDMI.
-4. UART commands can change at least one visible effect parameter.
-5. HDMI capture shows the changed output.
-6. JTAG can still rebuild/program/recover the board.
-7. A run report records commands, versions, interface status, and evidence.
+3. VDMA/PL consumes the frame buffer and displays it through HDMI.
+4. HDMI capture shows the same original input frame with no effects.
+5. JTAG can still rebuild/program/recover the board.
+6. A run report records commands, versions, interface status, and evidence.
+7. The later effects/control stage is opened only after this pass-through
+   criterion is met.
 ```
 
 ## Current Interface Baseline
@@ -126,6 +141,5 @@ JTAG restored: XSCT sees APU and xc7z020
 HDMI restored: USB Video VID_534D PID_2109 opens as DirectShow index 1
 UART available: COM27 and COM16 open at 115200 8N1
 Ethernet physical link: Realtek adapter Up at 1 Gbps
-Ethernet IP: currently APIPA; static IP plan still needed
+Ethernet IP: direct-link Windows interface uses 192.168.1.2/24 for current tests
 ```
-
