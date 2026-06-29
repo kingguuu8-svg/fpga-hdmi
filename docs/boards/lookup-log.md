@@ -301,3 +301,20 @@ Use this template for new entries:
 | Verification status | `diagnostic only` |
 | Promoted to | `docs/reports/eth-ps-pl-hdmi-pass-through.md` and `docs/current-cycle.md`. |
 | Remaining uncertainty | Whether the looped frame was corrupted by loopback mode timing, RGMII sampling, or normal counter behavior; whether PC-originated frames are bad before or after RTL8211E. |
+
+## 2026-06-29
+
+### Official Linux Network Ping Route Gate
+
+| Field | Value |
+| --- | --- |
+| Source | `C:/Users/中二哲人/Downloads/Smart_ZYNQ_SP2_LINUX_ALL_TEST_20240906.zip` |
+| Source | `build/eth-ps-pl-hdmi-pass-through/hardware/reports/uart_com16_linux_boot.log` |
+| Source | `build/eth-ps-pl-hdmi-pass-through/hardware/reports/uart_com16_linux_setip.log` |
+| Question | Does the official vendor Linux image bring up Ethernet over the PL-side RTL8211E path and respond to PC ping on the connected board? |
+| Reuse key | `official-linux-network-ping-pass` |
+| Conclusion | The official Linux image boots from a FAT32 TF card. U-Boot 2018.01 loads image.ub; Linux 4.14.0-xilinx-v2018.3 starts; `macb` driver binds `e000b000.ethernet eth0` at 1000/Full with RX errors=0 and TX errors=0. After setting a static IP (`ifconfig eth0 192.168.1.10/24`), PC ping returns 4/4 with 0% loss and <1ms latency. |
+| Implementation impact | The physical Ethernet path (PC, cable, RTL8211E, RGMII pins, PS GEM) is confirmed fully functional in both directions under Linux. The baremetal hand-written RGMII bridge RX failure (rx=0, rxfcs rising) is therefore caused by the bridge implementation, not the physical layer. Retire the hand-written bridge; proceed on the Linux/socket route. |
+| Verification status | `passed on connected hardware` |
+| Promoted to | `docs/boards/hellofpga-smart-zynq-sl.md` Ethernet PHY section, `docs/current-cycle.md` Resolved Route Gate, `docs/reports/tf-card-linux-ping-2026-06-29.md`. |
+| Remaining uncertainty | The Linux image MAC (00:0A:35:00:1E:53) differs from the baremetal default (00:0A:35:00:01:02); PC ARP must be cleared when switching images. HDMI output and VDMA framebuffer access under Linux are not yet verified. |

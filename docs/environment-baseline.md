@@ -18,9 +18,12 @@ whether to re-probe the environment or skip probing and trust the baseline.
 
 ## Confirmed facts
 
-Last confirmed: 2026-06-26
-Confirmed by: prior probe runs recorded in `build/reports/environment.json`,
-`build/reports/hardware.yml`, and `docs/boards/hellofpga-smart-zynq-sl.md`.
+Last confirmed: 2026-06-29
+Confirmed by: probe-environment.ps1, probe-hardware.ps1, and PnP/NetAdapter
+inspection on 2026-06-29, recorded in `build/reports/environment.json` and
+`build/reports/hardware.yml`. UART COM identity cross-checked against PnP
+device IDs (CH340 VID_1A86 = board UART; FTDI VID_0403 = JTAG adapter serial
+channel, not board UART).
 
 | Fact | Value | Notes |
 | --- | --- | --- |
@@ -32,9 +35,12 @@ Confirmed by: prior probe runs recorded in `build/reports/environment.json`,
 | Target device | `xc7z020clg484-1` | confirmed by JTAG |
 | Board | HelloFPGA Smart ZYNQ SL | |
 | Active board profile | `boards/hellofpga-smart-zynq-sl-7020.tcl` | git-tracked |
-| UART | COM16 and COM27 @ 115200 8N1 | COM numbers are USB-port-dependent; re-identify if replugged |
+| JTAG adapter serial channel | COM13 | FTDI VID `0403` PID `6011` 26SA093D; this is the JTAG adapter's own serial port, not the board UART. COM number is USB-port-dependent |
+| UART | COM16 @ 115200 8N1 | USB-SERIAL CH340 VID `1A86` PID `7523`; this is the board's USB-UART. COM number is USB-port-dependent; re-identify if replugged |
 | HDMI capture | DirectShow device index 1 | re-identify if capture adapter replugged |
-| Ethernet | direct link, PC `192.168.1.2/24`, board `192.168.1.10` | board IP is the baremetal default; Linux image IP must be re-read from boot logs |
+| Ethernet | direct link, PC `192.168.1.2/24` on "以太网 2" (Realtek 1Gbps) | link up at 1000/Full confirmed 2026-06-29 |
+| Board IP (baremetal) | `192.168.1.10`, MAC `00:0A:35:00:01:02` | baremetal lwIP default |
+| Board IP (Linux) | `192.168.1.10/24` set manually via UART, MAC `00:0A:35:00:1E:53` | Linux image uses DHCP by default; no DHCP server on direct link, so static IP must be set after boot. MAC differs from baremetal — clear PC ARP when switching images |
 
 ## Invalidation conditions
 

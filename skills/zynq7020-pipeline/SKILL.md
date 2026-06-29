@@ -38,21 +38,37 @@ STAGE4_BUTTON_CONTROL_OK
 SIM_OK
 ```
 
-For the active network-video path, the accepted direction is not PL-only:
+For the active network-video path, the accepted direction is confirmed by
+hardware evidence (2026-06-29):
 
 ```text
-PC UDP RGB888 -> PS/Linux or PS fallback receiver -> DDR framebuffer
+PC UDP RGB888 -> Linux userspace socket receiver -> DDR framebuffer
 -> VDMA MM2S -> HDMI
 ```
 
-Current route gate:
+Route gate result: PASSED.
 
 ```text
-No TF card is available, so the network-video path is paused. When a TF card
-arrives, follow docs/reports/tf-card-linux-resume-2026-06-26.md and boot the
-official Linux all-test image to verify Ethernet ping before more baremetal
-RGMII bridge work.
+The official Smart_ZYNQ_SP2_LINUX_ALL_TEST image boots from a FAT32 TF card.
+Linux macb driver brings up eth0 at 1000/Full with RX errors=0. PC ping
+192.168.1.10 = 4/4, 0% loss. The hand-written baremetal RGMII bridge is
+retired as a dead end; its RX failure was the bridge implementation, not the
+physical layer. See docs/reports/tf-card-linux-ping-2026-06-29.md.
 ```
 
-Do not continue tuning the hand-written baremetal RGMII bridge unless the
-Linux route gate fails and the failure evidence points back to PHY/RGMII.
+Verified Linux boot path (for reference when the board needs to be brought up
+for network-video work):
+
+```text
+1. Format TF card: 1GB FAT32 partition (Windows does not offer FAT32 above 32GB).
+2. Copy BOOT.BIN + image.ub from Smart_ZYNQ_SP2_LINUX_ALL_TEST to the partition.
+3. Set board DIP switch to SD boot, insert card, press POR RST.
+4. UART (COM16, CH340, 115200) prints U-Boot then Linux boot.
+5. Login as root (no password) via UART.
+6. ifconfig eth0 192.168.1.10 netmask 255.255.255.0 up  (no DHCP on direct link).
+7. Clear stale PC ARP (arp -d 192.168.1.10) — Linux MAC differs from baremetal.
+8. ping 192.168.1.10 from PC.
+```
+
+Do not resume hand-written baremetal RGMII bridge work. The Linux route is
+confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

@@ -246,3 +246,79 @@ Residual risks:
   AXI framebuffer line reader, not the active VDMA path. The sim marker is
   accurate for what sim.tcl actually runs, but it is not proof of the active
   HDMI output path.
+
+## 2026-06-29 - tf-card-linux-ping-route-gate
+
+Commit: this commit (`cycle: TF-card Linux ping route gate passed, retire baremetal RGMII bridge`)
+
+Objective:
+
+Run the route-deciding experiment from `docs/reports/tf-card-linux-resume-2026-06-26.md`:
+boot the official vendor Linux image from TF card and ping the board over the
+PL-side RTL8211E Ethernet path, to decide whether the project continues on a
+Linux/socket route or falls back to baremetal official-IP debugging.
+
+Changed scope:
+
+- Prepared TF card: 1GB FAT32 partition, copied BOOT.BIN + image.ub from
+  `Smart_ZYNQ_SP2_LINUX_ALL_TEST_20240906.zip`.
+- Booted official Linux on the connected board from SD; logged full U-Boot +
+  kernel boot via UART (COM16).
+- Logged in as root via UART, set static IP `192.168.1.10/24` on eth0 (no DHCP
+  on direct link).
+- Pinged the board from the PC: 4/4 received, 0% loss, <1ms.
+- Updated `docs/environment-baseline.md`: UART COM identity corrected (COM16 =
+  CH340 board UART, COM13 = FTDI JTAG serial channel), Ethernet facts split
+  into baremetal and Linux rows with distinct MACs, confirmed date 2026-06-29.
+- Updated `docs/boards/hellofpga-smart-zynq-sl.md`: added Official Linux network
+  row to Ethernet PHY facts.
+- Updated `docs/boards/lookup-log.md`: added 2026-06-29 Official Linux Network
+  Ping Route Gate entry.
+- Updated `docs/current-cycle.md`: route gate marked PASSED, paused cycle
+  resolved, hand-written baremetal RGMII bridge formally retired, next cycle
+  direction set to Linux/socket video receiver.
+- Updated `skills/zynq7020-pipeline/SKILL.md`: route gate marked passed, Linux
+  boot path recorded as a verified entry point per the skill-dynamic-optimization
+  rule, baremetal bridge work forbidden.
+- Added `docs/reports/tf-card-linux-ping-2026-06-29.md`: full experiment report.
+
+Verification:
+
+- Board action: booted official Linux from TF card, programmed no flash (SD
+  only, no QSPI/NAND/eMMC writes).
+- UART boot log (498 lines) confirms U-Boot → kernel → userspace → eth0 link
+  up at 1000/Full with RX errors=0.
+- PC ping result: 4/4 received, 0% loss, <1ms.
+- All evidence logs under `build/` (gitignored); concise facts promoted to
+  tracked docs.
+
+Board action:
+
+- Booted official Linux from TF card. No flash written. Static IP set via UART
+  after boot (runtime only, not persisted to the image).
+
+Evidence:
+
+- `docs/reports/tf-card-linux-ping-2026-06-29.md`
+- `build/eth-ps-pl-hdmi-pass-through/hardware/reports/uart_com16_linux_boot.log`
+- `build/eth-ps-pl-hdmi-pass-through/hardware/reports/uart_com16_linux_setip.log`
+
+Result:
+
+- Route gate PASSED (Outcome A). The project proceeds on the Linux/socket
+  route. The hand-written baremetal RGMII bridge is retired as a dead end:
+  the same physical path that fails under the hand-written bridge works
+  perfectly under Linux + official macb driver.
+- The pipeline skill now records the verified Linux boot path as a reference
+  entry point, satisfying the skill-dynamic-optimization rule.
+
+Residual risks:
+
+- HDMI output and VDMA framebuffer access under Linux are not yet verified.
+  The official Linux image is a generic all-test image, not a video-pipeline
+  image; the next cycle must confirm VDMA/HDMI works from Linux userspace.
+- The Linux image uses DHCP by default; on a direct link without a DHCP
+  server, a static IP must be set manually after each boot. A production setup
+  needs either a DHCP server on the PC or a static IP baked into the rootfs.
+- The Linux image MAC differs from the baremetal MAC; PC ARP must be cleared
+  when switching between images.

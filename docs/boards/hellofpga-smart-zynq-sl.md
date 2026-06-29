@@ -121,10 +121,11 @@ build scripts.
 | GMII-to-RGMII PHY address | `8` | confirmed from official IP XCI |
 | GMII-to-RGMII delay setup | internal IDELAY control enabled, TXC skew `0` | confirmed from official IP XCI |
 | Runtime RTL8211E delay bits | extension page `0xa4`, register `0x1c` reported `0x8577`; RX delay and TX delay bits are both set | confirmed from stage-1 UART diagnostic |
-| Runtime direction split | board-to-PC UDP heartbeat works; PC-to-board ping/ZVID UDP does not reach lwIP | confirmed from stage-1 UART and PC listener diagnostics |
+| Runtime direction split (baremetal) | board-to-PC UDP heartbeat works; PC-to-board ping/ZVID UDP does not reach lwIP | confirmed from stage-1 UART and PC listener diagnostics; root cause is the hand-written bridge, see Linux row below |
 | Runtime PHY loopback probe | BMCR loopback `0x1140 -> 0x5140` produced at least one GEM RX/RXBC count, but also an FCS count | diagnostic only |
 | Official pure-PL UDP loopback | `17_PL_NET_TEST_Smart_ZYNQ_S` bit receives and echoes UDP on the connected board | passed on hardware |
 | Official PL RX delay reference | custom `rgmii_to_gmii` uses `IDELAY_VALUE = 9` on RX data/control | confirmed from official UDP project |
+| Official Linux network | `Smart_ZYNQ_SP2_LINUX_ALL_TEST` boots from TF card; `macb` driver brings up eth0 at 1000/Full, RX errors=0, TX errors=0; PC ping 192.168.1.10 = 4/4, 0% loss, <1ms | passed on connected hardware 2026-06-29; confirms physical path is good and baremetal RX failure is in the hand-written bridge |
 
 Confirmed Ethernet net to package-pin mapping:
 

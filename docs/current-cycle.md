@@ -1,8 +1,9 @@
 # Current Cycle
 
-Status: active implementation cycle (skill-env-baseline); the hardware
-experiment cycle eth-ps-pl-hdmi-pass-through remains paused waiting for a TF
-card.
+Status: no active implementation cycle. The TF-card Linux ping route gate
+PASSED on 2026-06-29 (see docs/reports/tf-card-linux-ping-2026-06-29.md).
+The next cycle should implement the Linux/socket video path. The hand-written
+baremetal RGMII bridge is retired.
 
 ## Rule
 
@@ -82,47 +83,34 @@ Result: committed the eth-ps-pl-hdmi-pass-through work surface (52 files) into
   untracked files. See docs/cycle-log.md for the full entry.
 ```
 
-## Paused Cycle
+## Resolved Route Gate
 
-The hardware experiment cycle remains paused waiting for a TF card. It is
-recorded here so it can be resumed unchanged when the card arrives.
+The TF-card Linux ping route gate PASSED on 2026-06-29. The paused cycle's
+closure criterion is met: official Linux responds to ping, selecting the
+Linux/socket route.
 
 ```text
-Cycle ID: eth-ps-pl-hdmi-pass-through
-Objective: pass original PC-sent video/static frames through Ethernet, PS DDR,
-  VDMA framebuffer readout, and HDMI with no video effects.
-Status: paused; route gate is the TF-card Linux ping experiment.
-Verification plan: official TF-card Linux boot plus PC ping to the board over
-  the PL-side RTL8211E network path.
-Board action: when the TF card arrives, boot the official Linux all-test image
-  from TF card. Do not write QSPI, NAND, eMMC, or other nonvolatile storage.
-Evidence target: docs/reports/tf-card-linux-resume-2026-06-26.md and a new
-  dated report under docs/reports/ after the experiment.
-Closure criteria: official Linux either responds to ping, selecting the
-  Linux/socket route, or fails with recorded UART/Linux/network evidence that
-  justifies returning to lower-level PHY/RGMII debug.
+Cycle ID: eth-ps-pl-hdmi-pass-through (route-gate phase)
+Result: PASSED. Official Linux boots from TF card, eth0 link up at 1000/Full,
+  PC ping 192.168.1.10 = 4/4 received, 0% loss.
+Evidence: docs/reports/tf-card-linux-ping-2026-06-29.md
+Decision: Outcome A — proceed on Linux/socket route, retire hand-written
+  baremetal RGMII bridge.
 ```
-
-Resume procedure when the TF card arrives: follow
-`docs/reports/tf-card-linux-resume-2026-06-26.md`.
 
 ## Current Decision
 
-The active implementation route is:
+The active implementation route is now confirmed by hardware evidence:
 
 ```text
-PC UDP RGB888 frame -> PS/Linux or PS fallback receiver -> DDR framebuffer
+PC UDP RGB888 frame -> Linux userspace socket receiver -> DDR framebuffer
 -> VDMA MM2S -> v_axi4s_vid_out -> rgb2dvi -> HDMI
 ```
 
-The old route is retired for the active cycle:
-
-```text
-PC UDP RGB565 -> PS baremetal lwIP -> 0x10000000 custom AXI reader
--> custom TMDS HDMI
-```
-
-Do not use the retired route as completion evidence.
+The hand-written baremetal RGMII bridge + lwIP route is retired. It was
+verified as a dead end: the same physical path that fails under the hand-written
+bridge works perfectly under Linux + official macb driver (RX errors=0, ping
+0% loss). The bridge code remains in the repo as negative evidence only.
 
 ## Current Evidence
 
@@ -131,22 +119,23 @@ Known-good subchains:
 ```text
 Official VDMA HDMI image passed on connected board and PC HDMI capture.
 Official pure-PL UDP loopback passed over the same PC/RJ45/RTL8211E path.
-Project baremetal board-to-PC UDP heartbeat works.
+Official Linux boots from TF card, eth0 1000/Full, RX errors=0, ping 0% loss.  [NEW 2026-06-29]
+Project baremetal board-to-PC UDP heartbeat works (but PC-to-board RX does not).
 ```
 
-Known blocker:
+Retired dead end:
 
 ```text
-Project baremetal PC-to-board UDP RX through the hand-written RGMII bridge is
-not reliable enough to assemble a frame. Static ARP and slow UDP pacing do not
-close the gap. The IDELAY=9 idea has already been applied to the custom bridge;
-the remaining suspect is the implementation sub-route itself, especially the
-hand-written RGMII/GMII crossing versus the official Xilinx gmii_to_rgmii IP or
-the vendor Linux network stack.
+Project baremetal PC-to-board UDP RX through the hand-written RGMII bridge:
+rx=0, rxfcs rising, no frames reach lwIP. Root cause confirmed by the Linux
+ping result as the hand-written bridge BUFIO/BUFG crossing, not the physical
+layer. Do not resume this work.
 ```
 
-Next action when TF card is available:
+Next cycle direction:
 
 ```text
-Follow docs/reports/tf-card-linux-resume-2026-06-26.md.
+Implement the Linux/socket video receiver: PC UDP -> Linux socket -> DDR
+framebuffer write -> VDMA HDMI output. Start at the smallest frame size that
+proves the loop, then scale up.
 ```
