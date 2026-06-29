@@ -77,11 +77,10 @@ Full Linux media stack / GStreamer pipeline
 
 They are valid later milestones, not first-stage requirements.
 
-Exception: a TF-card Linux ping experiment is now a route gate, not a media
-stack milestone. When a TF card is available, boot the official vendor Linux
-image and verify whether the board can be pinged over the PL-side RTL8211E
-network path. This decides whether to continue on a Linux/socket route or fall
-back to a baremetal official-IP route.
+The TF-card Linux ping experiment was the route gate, not a media-stack
+milestone. It passed on 2026-06-29: the official vendor Linux image booted from
+TF card and the PC pinged the board over the PL-side RTL8211E network path with
+0% loss. The project now continues on the Linux/socket route.
 
 ## Post-MVP Direction
 
@@ -89,10 +88,10 @@ After the MVP is stable, move toward a network-unified board control model:
 
 ```text
 Phase A:
-  Route gate: official Linux image boots and responds to ping over Ethernet
+  DONE - official Linux image boots and responds to ping over Ethernet
 
 Phase B:
-  UART control + Ethernet video + HDMI output
+  PetaLinux project + Linux socket receiver + Ethernet video + HDMI output
 
 Phase C:
   Same command protocol over TCP/UDP

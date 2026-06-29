@@ -30,6 +30,8 @@ channel, not board UART).
 | Host OS | Windows | local machine |
 | Vivado | 2018.3, invoked via WSL batch | default root `E:\Xilinx\Vivado\2018.3` |
 | SDK / XSCT | 2018.3 | default root `E:\Xilinx\SDK\2018.3` |
+| PetaLinux | 2018.3 installed in WSL | `/opt/petalinux-v2018.3`; source `settings.sh` as Linux user `petalinux` from a clean environment |
+| PetaLinux WSL compatibility | Ubuntu 22.04 with compatibility fixes | `python` compatibility package maps to Python 2.7.18, `/bin/sh -> bash`, `en_US.UTF-8` generated, `i386` architecture enabled |
 | Required tools present | `bin\vivado.bat`, `bin\hw_server.bat`, `bin\xsct.bat` | checked by probe-environment.ps1 |
 | JTAG adapter | HelloFpga JTAG-JT2 26SA093A | FTDI VID `0403` PID `6011` |
 | Target device | `xc7z020clg484-1` | confirmed by JTAG |

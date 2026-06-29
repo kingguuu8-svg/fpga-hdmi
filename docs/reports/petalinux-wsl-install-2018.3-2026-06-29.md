@@ -1,123 +1,184 @@
-# PetaLinux WSL Install 2018.3 Attempt
+# PetaLinux WSL Install 2018.3 Result
 
 Date: 2026-06-29
 Cycle ID: petalinux-wsl-install-2018.3
 
-## Objective
+## Outcome
 
-Install PetaLinux 2018.3 in WSL Ubuntu 22.04 so `petalinux` commands work and
-match the existing Vivado/SDK 2018.3 toolchain.
+**PASSED.** PetaLinux 2018.3 is installed in WSL Ubuntu 22.04 and the core
+PetaLinux commands are available after sourcing the installed settings script.
 
-## Current result
-
-Blocked before installation. The Linux PetaLinux installer is not present
-locally, and the official AMD/Xilinx download requires the AMD account download
-flow.
-
-## Confirmed environment
-
-| Check | Result |
-| --- | --- |
-| WSL distro | `Ubuntu-22.04`, WSL2 |
-| WSL OS | Ubuntu 22.04.5 LTS |
-| WSL user | `root` |
-| WSL `HOME` during explicit root commands | `/root` |
-| Free space | 908G available on `/` and `/opt` |
-| Existing PetaLinux command | Not found |
-| Existing `/opt/Xilinx` | Vivado/SDK 2018.3 present |
-| `/opt/xilinx-installer-2018.3` | Present, but not used; this is not the Linux PetaLinux `.run` installer |
-
-## Download checks
-
-Requested installer filename:
+Install path:
 
 ```text
-petalinux-v2018.3-final-installer.run
+/opt/petalinux-v2018.3
 ```
 
-Manual AMD/Xilinx account URL:
+Verified commands:
 
 ```text
-https://account.amd.com/en/forms/downloads/xef.html?filename=petalinux-v2018.3-final-installer.run
+/opt/petalinux-v2018.3/tools/common/petalinux/bin/petalinux-build
+/opt/petalinux-v2018.3/tools/common/petalinux/bin/petalinux-create
+/opt/petalinux-v2018.3/tools/common/petalinux/bin/petalinux-config
+/opt/petalinux-v2018.3/tools/common/petalinux/bin/petalinux-package
+/opt/petalinux-v2018.3/tools/common/petalinux/bin/petalinux-util
 ```
 
-Legacy Xilinx URL tested:
+Version evidence:
 
 ```text
-https://www.xilinx.com/member/forms/download/xef.html?filename=petalinux-v2018.3-final-installer.run
+settings.sh exports PETALINUX_VER=2018.3
 ```
 
-Observed result:
+PetaLinux 2018.3 does not provide a top-level `petalinux --version` command.
+The cycle's original closure wording was inaccurate; the valid verification is
+`settings.sh` plus the versioned 2018.3 command suite above.
+
+## Installer
+
+Downloaded file:
 
 ```text
-HTTP/1.1 301 Moved Permanently
-Location: https://account.amd.com/en/forms/downloads/xef.html?filename=petalinux-v2018.3-final-installer.run
+C:/Users/中二哲人/Downloads/petalinux-v2018.3-final-installer.run
+Size: 7,289,606,083 bytes
+Copied to WSL: /home/petalinux/petalinux-v2018.3-final-installer.run
 ```
 
-The redirect confirms the requested filename is recognized by the legacy
-Xilinx download path, but the final AMD account form did not return installer
-bytes through non-interactive `curl`.
-
-## Proxy checks
-
-Initial attempt failed because Clash bound only to Windows loopback. This has
-been fixed: `allow-lan: true` set in the Clash config, clash-meta restarted,
-now listening on `0.0.0.0:7890`.
-
-| Endpoint from WSL | Result (after fix) |
-| --- | --- |
-| `http://172.27.96.1:7890` | **works** — google.com returns 302 |
-| `http://127.0.0.1:7890` | works from Windows side only |
-
-WSL proxy is now functional. The Windows host IP for WSL is `172.27.96.1`.
-Use `export http_proxy=http://172.27.96.1:7890 https_proxy=http://172.27.96.1:7890`
-in WSL before any network operation requiring the proxy.
-
-## Installation status
-
-Not run. No files were installed under `/opt/petalinux` or any other PetaLinux
-install directory.
-
-## Blocker
-
-The PetaLinux 2018.3 installer (`petalinux-v2018.3-final-installer.run`, ~2-3GB)
-is not present on this machine. The official AMD download page requires an
-AMD/Xilinx account login through a browser form — non-interactive download via
-curl is not possible. The user is currently remote and cannot perform the
-browser login.
-
-## Next action (when user is back at the machine)
-
-1. Open in browser and login with AMD account:
+The installer must not be run as root. The first root attempt failed with:
 
 ```text
-https://account.amd.com/en/forms/downloads/xef.html?filename=petalinux-v2018.3-final-installer.run
+ERROR: Exiting Installer: Cannot install as root user !
 ```
 
-2. Download to one of:
+Final install user:
 
 ```text
-E:\tmp\petalinux-v2018.3-final-installer.run
-C:\Users\中二哲人\Downloads\petalinux-v2018.3-final-installer.run
+Linux user: petalinux
+Home: /home/petalinux
+Target directory owner: petalinux:petalinux
 ```
 
-3. Copy into WSL and install:
+## Host Compatibility Work
+
+WSL host:
+
+```text
+Ubuntu 22.04.5 LTS, WSL2
+```
+
+PetaLinux 2018.3 warns that this is not a supported OS, but the installer and
+command environment are usable after compatibility fixes.
+
+Installed dependency groups:
+
+```text
+net-tools diffstat chrpath socat xterm autoconf libtool unzip texinfo
+zlib1g-dev gcc-multilib build-essential libsdl1.2-dev libglib2.0-dev
+libncurses5-dev libssl-dev zlib1g:i386 python2 equivs
+```
+
+Compatibility fixes:
+
+```text
+dpkg --add-architecture i386
+Generated en_US.UTF-8 locale
+Created local equivs package: python 2.7.18 depends on python2
+/usr/bin/python -> /usr/bin/python2
+/bin/sh -> bash
+```
+
+Why these were needed:
+
+```text
+PetaLinux 2018.3 checks for a Debian package named `python`, which Ubuntu
+22.04 no longer provides. It also requires en_US.UTF-8 while installing the
+Yocto SDKs, and recommends bash as /bin/sh.
+```
+
+## Installation Command
+
+The successful install used a clean non-root environment:
 
 ```bash
-export HOME=/root
-export http_proxy=http://172.27.96.1:7890
-export https_proxy=http://172.27.96.1:7890
-cp /mnt/c/Users/中二哲人/Downloads/petalinux-v2018.3-final-installer.run /root/
-cd /root
-chmod +x petalinux-v2018.3-final-installer.run
-./petalinux-v2018.3-final-installer.run /opt/petalinux-v2018.3
-source /opt/petalinux-v2018.3/settings.sh
-petalinux --version
+runuser -u petalinux -- bash -lc \
+  "export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8; \
+   cd /home/petalinux && \
+   yes y | ./petalinux-v2018.3-final-installer.run \
+     --log /home/petalinux/petalinux_installation_log \
+     /opt/petalinux-v2018.3"
 ```
 
-4. Verify `petalinux --version` prints 2018.3, then close this cycle.
+The installer log ends with:
 
-## Board action
+```text
+INFO: PetaLinux SDK has been installed to /opt/petalinux-v2018.3/.
+```
 
-None. This cycle changes host tooling only.
+Installed size:
 
+```text
+13G /opt/petalinux-v2018.3
+```
+
+## Verification Command
+
+Use a clean environment to avoid Windows PATH entries with spaces and
+parentheses leaking into WSL shell parsing:
+
+```bash
+runuser -u petalinux -- env -i \
+  HOME=/home/petalinux USER=petalinux LOGNAME=petalinux SHELL=/bin/bash \
+  LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 PATH=/usr/local/bin:/usr/bin:/bin \
+  bash -lc '
+    source /opt/petalinux-v2018.3/settings.sh
+    set | grep "^PETALINUX"
+    command -v petalinux-build
+    command -v petalinux-create
+    command -v petalinux-config
+    command -v petalinux-package
+    command -v petalinux-util
+    petalinux-create --help | head -20
+  '
+```
+
+Verification output included:
+
+```text
+PetaLinux environment set to '/opt/petalinux-v2018.3'
+PETALINUX=/opt/petalinux-v2018.3
+PETALINUX_VER=2018.3
+/opt/petalinux-v2018.3/tools/common/petalinux/bin/petalinux-build
+/opt/petalinux-v2018.3/tools/common/petalinux/bin/petalinux-create
+/opt/petalinux-v2018.3/tools/common/petalinux/bin/petalinux-config
+/opt/petalinux-v2018.3/tools/common/petalinux/bin/petalinux-package
+/opt/petalinux-v2018.3/tools/common/petalinux/bin/petalinux-util
+petalinux-create             (c) 2005-2018 Xilinx, Inc.
+```
+
+## Accepted Warnings
+
+These warnings remain and are accepted for this stage:
+
+```text
+WARNING: This is not a supported OS
+WARNING: No tftp server found
+environment: line 312/316: Ubuntu version parse warning
+```
+
+Reason:
+
+```text
+The project needs local project generation/build first. TFTP is not required
+for the next cycle. The unsupported-OS and version-parse warnings are recorded
+risks for Ubuntu 22.04, not current hard failures.
+```
+
+## Board Action
+
+None. This cycle only changed host WSL tooling.
+
+## Next Cycle
+
+Open a new implementation cycle to create a minimal PetaLinux project from the
+VDMA HDMI hardware design, then prove the generated image can boot and preserve
+the already-confirmed Linux Ethernet path.

@@ -165,8 +165,9 @@ Residual risks:
 - Build reproducibility still depends on gitignored `tools/downloads/` (the
   official HelloFPGA BD Tcl and rgb2dvi IP repo). A clean clone cannot build
   until this dependency is either committed or documented in the README.
-- The hardware experiment cycle `eth-ps-pl-hdmi-pass-through` remains paused
-  waiting for a TF card; see `docs/reports/tf-card-linux-resume-2026-06-26.md`.
+- Historical note: at this point the hardware experiment cycle was still
+  blocked by TF-card availability. It was resolved by the 2026-06-29
+  `tf-card-linux-ping-route-gate` entry below.
 
 ## 2026-06-26 - skill-env-baseline
 
@@ -322,3 +323,63 @@ Residual risks:
   needs either a DHCP server on the PC or a static IP baked into the rootfs.
 - The Linux image MAC differs from the baremetal MAC; PC ARP must be cleared
   when switching between images.
+
+## 2026-06-29 - petalinux-wsl-install-2018.3
+
+Commit: this commit (`cycle: install PetaLinux 2018.3 in WSL`)
+
+Objective:
+
+Install PetaLinux 2018.3 in WSL Ubuntu 22.04 so the project can create and
+build a Linux/socket route image that matches the existing Vivado/SDK 2018.3
+toolchain.
+
+Changed scope:
+
+- Used the downloaded
+  `C:/Users/中二哲人/Downloads/petalinux-v2018.3-final-installer.run`
+  installer.
+- Created Linux user `petalinux`; the installer refuses to run as root.
+- Installed required WSL packages and i386 support for the 2018.3 toolchain.
+- Added a local `python` compatibility package with `equivs` so the legacy
+  installer sees `python 2.7.18` on Ubuntu 22.04.
+- Generated `en_US.UTF-8` locale for the Yocto SDK installers.
+- Reconfigured `/bin/sh` to bash, as recommended by PetaLinux.
+- Installed PetaLinux to `/opt/petalinux-v2018.3`.
+- Updated `docs/current-cycle.md`, `docs/environment-baseline.md`,
+  `docs/project-roadmap.md`, `README.md`, and the install report.
+
+Verification:
+
+- Sourced `/opt/petalinux-v2018.3/settings.sh` as user `petalinux` from a clean
+  environment.
+- Confirmed `PETALINUX=/opt/petalinux-v2018.3` and `PETALINUX_VER=2018.3`.
+- Confirmed these commands resolve:
+  `petalinux-build`, `petalinux-create`, `petalinux-config`,
+  `petalinux-package`, and `petalinux-util`.
+- Ran `petalinux-create --help` successfully.
+
+Board action:
+
+- Not run; this cycle changes host tooling only.
+
+Evidence:
+
+- `docs/reports/petalinux-wsl-install-2018.3-2026-06-29.md`
+- `/home/petalinux/petalinux_installation_log` inside WSL
+
+Result:
+
+- PetaLinux 2018.3 host tooling is installed and command-visible in WSL.
+- The earlier blocked cycle is closed.
+- The project can open the next cycle: create/build a minimal PetaLinux project
+  from the VDMA HDMI hardware design.
+
+Residual risks:
+
+- Ubuntu 22.04 is not an officially supported host for PetaLinux 2018.3; the
+  environment still prints an unsupported-OS warning.
+- No TFTP server is installed. This is accepted because the next route uses
+  TF-card boot first.
+- The next cycle must still prove that a project-built PetaLinux image preserves
+  the known-good Ethernet path and exposes a usable VDMA/HDMI path.

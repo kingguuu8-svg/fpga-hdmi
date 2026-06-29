@@ -25,19 +25,17 @@ docs/project-roadmap.md
 
 ## Current MVP
 
-The current first-stage path is paused until a TF card is available. The next
-route-deciding experiment is:
+The TF-card Linux route gate has passed. The current first-stage path is:
 
 ```text
-Boot the official Smart_ZYNQ_SP2_LINUX_ALL_TEST image from TF card
--> verify Ethernet link/IP
--> ping the board from the PC over the PL-side RTL8211E path
+PC UDP RGB888 -> Linux userspace socket receiver -> DDR framebuffer
+-> VDMA MM2S -> HDMI
 ```
 
-If ping works, continue the network-video work on the Linux/socket route and
-stop debugging the hand-written baremetal RGMII bridge. If ping fails, treat
-the network physical/driver layer as the root problem and debug with official
-Linux logs before returning to baremetal.
+The official Smart_ZYNQ_SP2_LINUX_ALL_TEST image boots from TF card and can be
+pinged by the PC at `192.168.1.10` with 0% loss. The hand-written baremetal
+RGMII bridge is retired as a dead end; future network-video work uses Linux
+sockets.
 
 The verified foundation path remains:
 
@@ -70,7 +68,7 @@ Part: xc7z020clg484-1
 Input: PC UDP frames, 800x600 RGB888, port 5005
 Buffer: PS DDR framebuffer
 Output: official VDMA-style 800x600 HDMI path
-Status: paused pending TF-card Linux ping route gate
+Status: Linux route gate passed; PetaLinux 2018.3 host tooling installed
 ```
 
 The previous PL-only video effects demo remains available as a side demo, not
@@ -117,10 +115,12 @@ Known good subchains:
 ```text
 Official VDMA DDR framebuffer -> HDMI capture: passed at 800x600.
 Official pure-PL UDP loopback over the same RJ45 path: passed.
-Project baremetal hand-written RGMII bridge -> PS lwIP RX: paused, incomplete.
+Official Linux TF-card Ethernet route: passed, ping 0% loss.
+PetaLinux 2018.3 in WSL: installed at /opt/petalinux-v2018.3.
+Project baremetal hand-written RGMII bridge -> PS lwIP RX: retired dead end.
 ```
 
-Baremetal fallback build, if explicitly needed after the TF route gate:
+Baremetal fallback build, only if explicitly needed for historical comparison:
 
 ```powershell
 rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\examples\eth-ps-pl-hdmi-pass-through\tcl\build-stage1-vdma-board-wsl.ps1
