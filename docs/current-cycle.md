@@ -1,9 +1,11 @@
 # Current Cycle
 
-Status: no active implementation cycle. The TF-card Linux ping route gate
-PASSED on 2026-06-29 (see docs/reports/tf-card-linux-ping-2026-06-29.md).
-The next cycle should implement the Linux/socket video path. The hand-written
-baremetal RGMII bridge is retired.
+Status: paused. The petalinux-wsl-install-2018.3 cycle is blocked on the
+PetaLinux installer download, which requires an AMD/Xilinx account browser
+login. The user is remote and cannot perform the login. WSL proxy access has
+been fixed (172.27.96.1:7890). When the user returns and downloads
+petalinux-v2018.3-final-installer.run, resume this cycle using the steps in
+docs/reports/petalinux-wsl-install-2018.3-2026-06-29.md.
 
 ## Rule
 
@@ -36,41 +38,33 @@ cycle open time; they are not a self-audit checklist for cycle close.
 ## Active Cycle
 
 ```text
-Cycle ID: skill-env-baseline
-Objective: stop the skills from re-probing a known-stable environment on every
-  cycle, and close the skill gaps left by the route pivot (vivado skill missing
-  the eth-ps-pl build/sim entry, skills holding stale command copies that
-  violate the new fact-consistency rule).
-Scope: add docs/environment-baseline.md as a git-tracked, one-time-confirmed
-  environment fact; edit the three project skills so probing is triggered by
-  baseline-invalidation events instead of every cycle; make vivado skill
-  reference the board reference and pipeline skill for facts it currently
-  restates; verify the sim/build command chain resolves to real files.
-  No RTL/XDC/Tcl logic changes; no board programming.
-Verification plan: read each edited skill and confirm the trigger logic is
-  present and correct; dry-check that every command path named in the skills
-  resolves to a tracked file; confirm environment-baseline.md facts match the
-  probe scripts' default paths and the board reference.
-Board action: none. This cycle does not touch hardware; the baseline it records
-  was already confirmed by prior probe runs.
-Evidence target: the commit, plus a docs/cycle-log.md entry.
+Cycle ID: petalinux-wsl-install-2018.3
+Objective: install PetaLinux 2018.3 in WSL Ubuntu 22.04 so `petalinux`
+  commands run and match the existing Vivado/SDK 2018.3 toolchain.
+Scope: confirm WSL proxy access to the AMD/Xilinx PetaLinux 2018.3 download
+  page, obtain the Linux `.run` installer if possible, install it into WSL,
+  source the settings script with `HOME=/root`, and verify
+  `petalinux --version` reports 2018.3. Do not use the existing Windows
+  installer directory under `/opt/xilinx-installer-2018.3`.
+Verification plan: in WSL, confirm proxy reachability to Xilinx, confirm the
+  installer filename/link, check installer integrity where possible, run the
+  installer, source the installed settings script, and capture
+  `petalinux --version` output.
+Board action: none. This cycle changes host tooling only.
+Evidence target: `docs/reports/petalinux-wsl-install-2018.3-2026-06-29.md`,
+  plus this file and `docs/cycle-log.md`.
 Closure criteria:
-  1. docs/environment-baseline.md exists, is git-tracked, and its facts match
-     the probe-script defaults and board reference.
-  2. environment, pipeline, and vivado skills contain the baseline-trigger
-     logic and no longer mandate per-cycle probing when the baseline is valid.
-  3. vivado skill no longer restates board facts; it references the board
-     reference and pipeline skill per the fact-consistency rule.
-  4. Every sim/build command path named in the skills resolves to a tracked file.
+  1. `petalinux` exists in WSL after sourcing the installed settings script.
+  2. `petalinux --version` reports 2018.3.
+  3. The report records installer source, install path, proxy/HOME handling,
+     verification output, and any remaining risks.
 Highest-risk assumption this cycle falsifies:
-  The environment facts being written into the baseline file are still true on
-  this machine right now (Vivado paths, JTAG adapter, device, board profile,
-  UART, HDMI capture, Ethernet IP), and the skill command paths all resolve.
+  PetaLinux 2018.3 can be installed and run inside the available WSL Ubuntu
+  22.04/root environment despite the tool's old host-OS expectations.
 Cheapest alternative way to falsify the same assumption:
-  Cross-check each baseline fact against the probe-script default paths and the
-  board reference's Current Interface Baseline section, and dry-check each
-  skill-named command path against the tracked file tree. Pure file checks, no
-  hardware, no Vivado invocation.
+  Before downloading or running the full installer, use WSL shell checks to
+  verify the OS, `HOME=/root`, proxy reachability to Xilinx, and whether any
+  existing `/opt` PetaLinux settings script already provides `petalinux`.
 ```
 
 ## Recently Closed Cycle
