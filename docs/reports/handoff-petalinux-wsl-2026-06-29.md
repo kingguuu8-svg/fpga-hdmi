@@ -19,15 +19,21 @@ context. Read it fully before starting work. Also read:
 
 ```text
 Board: HelloFPGA Smart ZYNQ SL, xc7z020clg484-1
-TF card: 64GB SanDisk, currently has 1GB FAT32 partition with official
-         Smart_ZYNQ_SP2_LINUX_ALL_TEST BOOT.BIN + image.ub
+TF card: 64GB SanDisk, NOW PARTITIONED for PetaLinux dual-boot:
+         - partition 1: D: ZYNQBOOT FAT32 1GB (boot: BOOT.BIN + image.ub)
+         - partition 2: F: rootfs 57.2GB (currently NTFS, will be reformatted
+           ext4 by PetaLinux burn script or WSL mkfs.ext4 when rootfs is ready)
+         The previous single-FAT32 all-test image was wiped by repartitioning.
+         Original all-test zip is still at:
+         C:/Users/中二哲人/Downloads/Smart_ZYNQ_SP2_LINUX_ALL_TEST_20240906.zip
 Ethernet: confirmed working under Linux (macb driver, 1000/Full, ping 0% loss)
 HDMI/VDMA under Linux: NOT working — the all-test image has no VDMA/HDMI driver,
          only a 240x240 SPI LCD framebuffer (fb_st7789v). See probe log:
          build/eth-ps-pl-hdmi-pass-through/hardware/reports/uart_com16_linux_probe.log
 Vivado: 2018.3 at E:\Xilinx\Vivado\2018.3 (Windows + WSL batch)
 SDK/XSCT: 2018.3 at E:\Xilinx\SDK\2018.3
-WSL: installed, but NO PetaLinux toolchain in it
+WSL: Ubuntu 22.04, root, 908GB free, NO PetaLinux toolchain yet
+WSL proxy: http://172.27.96.1:7890 (Clash allow-lan enabled, verified working)
 VMware: user reports it is incomplete; prefer WSL route
 ```
 
