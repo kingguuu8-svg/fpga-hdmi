@@ -93,10 +93,10 @@ Phase A:
 Phase B:
   IN PROGRESS - PetaLinux project + Linux socket receiver + Ethernet video +
   HDMI output
-  Current gate: Linux now exposes /dev/dri/card0 for xlnx,pl-disp, but HDMI is
-  not yet Linux-controllable because there is no connector/mode/fbdev provider.
-  Resolve the fixed-mode HDMI connector/mode gate before opening the Ethernet
-  video receiver cycle.
+  Fixed-mode HDMI gate: PASSED. Linux exposes a connected DRM output and
+  userspace framebuffer writes are visible through HDMI capture.
+  Current gate: implement the Linux UDP frame receiver and prove that a
+  PC-sent known frame reaches the existing framebuffer pass-through path.
 
 Phase C:
   Same command protocol over TCP/UDP

@@ -301,8 +301,11 @@ turning the tester IP into a video reader.
 | Resolution used by official MVP reference | 800x600 | confirmed |
 | Pixel format | RGB888, 24-bit stream | confirmed |
 | VDMA read burst | 64 | confirmed from official BD Tcl |
+| VDMA MM2S DDR decode window | `0x00000000` through `0x0fffffff` | confirmed from official BD Tcl address segment |
 | VDMA framebuffer base | `XPAR_PS7_DDR_0_S_AXI_BASEADDR + 0x01000000` | confirmed from official SDK |
 | Pixel/serial clocks | 40 MHz pixel clock, 200 MHz serial clock | confirmed from official tutorial and BD Tcl |
+| Fixed VTC horizontal timing | active 800, front porch 40, sync 128, back porch 88, total 1056 | confirmed from official BD Tcl |
+| Fixed VTC vertical timing | active 600, front porch 1, sync 4, back porch 23, total 628 | confirmed from official BD Tcl |
 | PS FCLKs | FCLK0 50 MHz, FCLK1 150 MHz | confirmed from official VDMA HDMI project |
 | HDMI data P pins | M21, L21, J21 | confirmed from official VDMA XDC and board profile |
 | HDMI clock P pins | N19 for V1.3; official demo also exposes N22 for earlier boards | confirmed from official VDMA tutorial/XDC |
@@ -317,6 +320,11 @@ Use VDMA as the DDR-to-HDMI boundary.
 PC UDP receiver on PS writes one RGB888 frame into the VDMA framebuffer, flushes
 DCache, and lets VDMA continuously scan that buffer to HDMI. This removes the
 need for a custom PL AXI framebuffer reader in the first-stage MVP.
+
+Linux DMA allocations used by VDMA must remain below `0x10000000`. The official
+Vivado address map exposes only the first 256 MiB of PS DDR to the VDMA MM2S
+master; an allocation above that boundary produces an AXI decode error even
+though it is valid ARM system RAM.
 ```
 
 Latest hardware control:

@@ -108,7 +108,7 @@ Verified project-image boot/probe path (2026-06-30):
    ls -l /dev/dri /dev/fb* 2>&1
 ```
 
-Current result for the generated image:
+Historical result before the fixed-mode connector cycle:
 
 ```text
 Boot/probe PASSED: Linux boots, eth0 links at 1000/Full, PC ping is 4/4 with
@@ -145,6 +145,36 @@ Verified PetaLinux PL-display overlay path (2026-06-30):
    - /dev/dri/card0 exists
    - dmesg shows xilinx-vdma probe and xlnx-pl-disp probe
    - current known blocker is recorded if no connector/modes exist
+```
+
+Verified fixed-mode Linux HDMI framebuffer path (preferred, 2026-06-30):
+
+```text
+1. Apply software/petalinux/hdmi-linux-display-stack/apply-overlay.sh.
+   The overlay installs the Xilinx fixed-HDMI component, OF graph, and a CMA
+   reservation inside the board's VDMA-visible DDR window.
+2. Build with software/petalinux/hdmi-linux-display-stack/build-in-chroot.sh.
+3. Verify the kernel map contains xlnx_fixed_hdmi_driver_init and the final DT
+   contains fixed-hdmi plus the CMA reservation. Mode and pixel-format values
+   must match docs/project-roadmap.md and board timing must match
+   docs/boards/hellofpga-smart-zynq-sl.md.
+4. Update TF-card image.ub through the running board only after SHA-256
+   verification and retaining the prior image as a recovery copy.
+5. After reboot, require:
+   - /dev/dri/card0 and /dev/fb0
+   - connector status connected
+   - connector mode matching docs/project-roadmap.md
+   - VDMA start address inside the board DDR window
+   - no VDMA decode error or atomic flip timeout
+6. Write a deterministic raw frame to /dev/fb0.
+7. Capture HDMI with tools/capture_hdmi.py using the validation profile that
+   matches the test frame. Require HDMI_CAPTURE_OK.
+
+Verified outcome:
+Linux framebuffer console and userspace raw-frame writes both reached physical
+HDMI. The first failed probe placed CMA above the official VDMA DDR decode
+window; the preferred path fixes that in device tree rather than using
+userspace /dev/mem or changing PL.
 ```
 
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is

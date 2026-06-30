@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture and validate the HDMI video-pip automatic demo through a UVC adapter."""
+"""Capture and validate HDMI output through a UVC adapter."""
 
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ def grab_frames(index: int, backend_name: str, backend: int, width: int, height:
     }
 
 
-def validate_frame(frame: np.ndarray) -> tuple[bool, list[dict]]:
+def validate_pip_frame(frame: np.ndarray) -> tuple[bool, list[dict]]:
     bg_rgb = roi_rgb(frame, 80, 80)
     background_ok = classify("dark_panel", bg_rgb)
     mean_luma = float(frame.mean())
@@ -134,6 +134,30 @@ def validate_frame(frame: np.ndarray) -> tuple[bool, list[dict]]:
     return all(item["pass"] for item in results), results
 
 
+def validate_rgb_stripes(frame: np.ndarray) -> tuple[bool, list[dict]]:
+    h, w = frame.shape[:2]
+    x0 = w // 8
+    x1 = w - x0
+    stripe_rois = [
+        ("top_blue", frame[h // 12 : h // 4, x0:x1], 2),
+        ("middle_green", frame[5 * h // 12 : 7 * h // 12, x0:x1], 1),
+        ("bottom_red", frame[3 * h // 4 : 11 * h // 12, x0:x1], 0),
+    ]
+    results = []
+    for name, roi, dominant_index in stripe_rois:
+        rgb = roi.mean(axis=(0, 1))[::-1]
+        dominant = float(rgb[dominant_index])
+        others = [float(rgb[index]) for index in range(3) if index != dominant_index]
+        passed = dominant > 180 and max(others) < 60
+        results.append({
+            "name": name,
+            "expected": "dominant_channel_gt_180_and_other_channels_lt_60",
+            "rgb_mean": [round(float(value), 2) for value in rgb],
+            "pass": bool(passed),
+        })
+    return all(item["pass"] for item in results), results
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", default="auto", help="'auto' or a numeric OpenCV device index")
@@ -143,6 +167,7 @@ def main() -> int:
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--frames", type=int, default=45)
     parser.add_argument("--save-samples", type=int, default=0, help="save N evenly spaced captured frames")
+    parser.add_argument("--validation-profile", default="pip", choices=["pip", "rgb-stripes"])
     parser.add_argument("--out-dir", default="build/reports/hdmi-capture")
     args = parser.parse_args()
 
@@ -153,6 +178,7 @@ def main() -> int:
     backends = BACKENDS if args.backend == "all" else [(args.backend, BACKEND_BY_NAME[args.backend])]
     attempts = []
     best = None
+    validator = validate_pip_frame if args.validation_profile == "pip" else validate_rgb_stripes
 
     for index in indices:
         for backend_name, backend in backends:
@@ -162,7 +188,7 @@ def main() -> int:
                 continue
             backend_best = None
             for sample_idx, frame in enumerate(samples):
-                passed, checks = validate_frame(frame)
+                passed, checks = validator(frame)
                 score = sum(1 for item in checks if item["pass"])
                 if backend_best is None or score > backend_best["score"]:
                     backend_best = {
@@ -192,6 +218,7 @@ def main() -> int:
 
     result = {
         "status": "fail",
+        "validation_profile": args.validation_profile,
         "selected_index": None,
         "attempts": attempts,
         "image": None,

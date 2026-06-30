@@ -591,3 +591,58 @@ Residual risks:
   provider for the fixed rgb2dvi HDMI output.
 - The next cycle must make a Linux userspace modeset or fbdev write visibly
   change HDMI output before the Ethernet video receiver cycle is opened.
+
+## 2026-06-30 - hdmi-linux-fixed-mode-connector
+
+Commit: this commit (`cycle: expose fixed-mode HDMI framebuffer`)
+
+Objective:
+
+Add the missing fixed-mode Linux DRM connector and prove that Linux userspace
+can change the board's physical HDMI output through the VDMA framebuffer.
+
+Changed scope:
+
+- Added a minimal Xilinx DRM component driver for a fixed HDMI-A connector.
+- Added the OF graph and fixed display timing to the PetaLinux overlay.
+- Reserved Linux CMA inside the official VDMA DDR decode window.
+- Added an `rgb-stripes` HDMI capture validation profile.
+- Updated board facts, the active roadmap, and the preferred pipeline skill.
+
+Verification:
+
+- PetaLinux build passed all 3065 tasks.
+- Kernel config and symbol map contain the fixed HDMI driver.
+- Final DT contains the fixed HDMI graph and CMA reservation.
+- Board exposes `/dev/dri/card0`, `/dev/fb0`, a connected connector, and the
+  expected mode.
+- VDMA start address is inside the official DDR window; status has no error
+  bits before or after the framebuffer write.
+- Boot log has no VDMA decode errors or atomic flip timeouts.
+- A userspace raw-frame write changed HDMI to deterministic RGB stripes.
+- Automated DirectShow HDMI capture returned `HDMI_CAPTURE_OK`.
+
+Board action:
+
+- Updated only `image.ub` on the TF-card FAT boot partition over Ethernet,
+  retained recovery copies, rebooted, and wrote a userspace test frame through
+  `/dev/fb0`. No JTAG programming or board flash write.
+
+Evidence:
+
+- `docs/reports/hdmi-linux-fixed-mode-connector.md`
+- `build/hdmi-linux-fixed-mode-connector-cma-fix/petalinux-build.log`
+- `build/hdmi-linux-fixed-mode-connector/uart-final-acceptance.log`
+- `build/hdmi-linux-fixed-mode-connector/hdmi-cma-after-pattern-verified/latest-validation.json`
+
+Result:
+
+- PASSED. Linux owns a usable fixed-mode DRM/fbdev output, and userspace writes
+  are visible and machine-validated through physical HDMI capture.
+
+Residual risks:
+
+- The connector has no EDID or hot-plug detection.
+- The physical VTC remains fixed.
+- The next receiver should prevent framebuffer-console writes from corrupting
+  video frames.

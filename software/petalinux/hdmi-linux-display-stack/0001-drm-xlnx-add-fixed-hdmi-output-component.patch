@@ -1,0 +1,278 @@
+From 3c84cc40e1c61c6747c8d8d1a8089895669124ad Mon Sep 17 00:00:00 2001
+From: fpga-hdml <fpga-hdml@local>
+Date: Tue, 30 Jun 2026 14:00:00 +0800
+Subject: [PATCH] drm: xlnx: add fixed HDMI output component
+
+The Digilent rgb2dvi block has no Linux encoder driver.
+Add a small component driver that supplies the encoder, connector, and one
+device-tree display mode needed by the Xilinx DRM component graph.
+Timing generation remains owned by the existing fixed VTC.
+
+Signed-off-by: fpga-hdml <fpga-hdml@local>
+---
+ drivers/gpu/drm/xlnx/Kconfig           |  10 ++
+ drivers/gpu/drm/xlnx/Makefile          |   2 +
+ drivers/gpu/drm/xlnx/xlnx_fixed_hdmi.c | 232 +++++++++++++++++++++++++
+ 3 files changed, 244 insertions(+)
+ create mode 100644 drivers/gpu/drm/xlnx/xlnx_fixed_hdmi.c
+
+diff --git a/drivers/gpu/drm/xlnx/Kconfig b/drivers/gpu/drm/xlnx/Kconfig
+index c391f5e..cda0718 100644
+--- a/drivers/gpu/drm/xlnx/Kconfig
++++ b/drivers/gpu/drm/xlnx/Kconfig
+@@ -68,0 +69,10 @@ config DRM_XLNX_PL_DISP
++config DRM_XLNX_FIXED_HDMI
++	tristate "Xilinx DRM fixed HDMI output component"
++	depends on DRM_XLNX
++	select VIDEOMODE_HELPERS
++	help
++	  DRM encoder and connector component for a fixed-mode PL HDMI output
++	  without a software-controlled transmitter. The display mode is read
++	  from device tree and the existing PL timing generator remains
++	  responsible for producing the physical video timing.
++
+diff --git a/drivers/gpu/drm/xlnx/Makefile b/drivers/gpu/drm/xlnx/Makefile
+index 69c75a1..da67e44 100644
+--- a/drivers/gpu/drm/xlnx/Makefile
++++ b/drivers/gpu/drm/xlnx/Makefile
+@@ -17,0 +18,2 @@ obj-$(CONFIG_DRM_XLNX_PL_DISP) += xlnx_pl_disp.o
++obj-$(CONFIG_DRM_XLNX_FIXED_HDMI) += xlnx_fixed_hdmi.o
++
+diff --git a/drivers/gpu/drm/xlnx/xlnx_fixed_hdmi.c b/drivers/gpu/drm/xlnx/xlnx_fixed_hdmi.c
+new file mode 100644
+index 0000000..b81cde4
+--- /dev/null
++++ b/drivers/gpu/drm/xlnx/xlnx_fixed_hdmi.c
+@@ -0,0 +1,232 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Fixed-mode HDMI output component for Xilinx DRM pipelines.
++ *
++ * This represents a PL pipeline whose timing generator and rgb2dvi output are
++ * already running in hardware and have no Linux control registers.
++ */
++
++#include <drm/drmP.h>
++#include <drm/drm_atomic_helper.h>
++#include <drm/drm_crtc_helper.h>
++
++#include <linux/component.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/slab.h>
++
++#include <video/of_display_timing.h>
++
++struct xlnx_fixed_hdmi {
++	struct device *dev;
++	struct drm_encoder encoder;
++	struct drm_connector connector;
++	struct drm_display_mode mode;
++};
++
++static inline struct xlnx_fixed_hdmi *
++encoder_to_fixed_hdmi(struct drm_encoder *encoder)
++{
++	return container_of(encoder, struct xlnx_fixed_hdmi, encoder);
++}
++
++static inline struct xlnx_fixed_hdmi *
++connector_to_fixed_hdmi(struct drm_connector *connector)
++{
++	return container_of(connector, struct xlnx_fixed_hdmi, connector);
++}
++
++static enum drm_connector_status
++xlnx_fixed_hdmi_detect(struct drm_connector *connector, bool force)
++{
++	return connector_status_connected;
++}
++
++static void xlnx_fixed_hdmi_connector_destroy(struct drm_connector *connector)
++{
++	drm_connector_unregister(connector);
++	drm_connector_cleanup(connector);
++	connector->dev = NULL;
++}
++
++static const struct drm_connector_funcs xlnx_fixed_hdmi_connector_funcs = {
++	.detect = xlnx_fixed_hdmi_detect,
++	.fill_modes = drm_helper_probe_single_connector_modes,
++	.destroy = xlnx_fixed_hdmi_connector_destroy,
++	.reset = drm_atomic_helper_connector_reset,
++	.atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,
++	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
++};
++
++static int xlnx_fixed_hdmi_get_modes(struct drm_connector *connector)
++{
++	struct xlnx_fixed_hdmi *fixed =
++		connector_to_fixed_hdmi(connector);
++	struct drm_display_mode *mode;
++
++	mode = drm_mode_duplicate(connector->dev, &fixed->mode);
++	if (!mode)
++		return 0;
++
++	mode->type |= DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
++	drm_mode_set_name(mode);
++	drm_mode_probed_add(connector, mode);
++	connector->display_info.bpc = 8;
++
++	return 1;
++}
++
++static int
++xlnx_fixed_hdmi_mode_valid(struct drm_connector *connector,
++			   struct drm_display_mode *mode)
++{
++	struct xlnx_fixed_hdmi *fixed =
++		connector_to_fixed_hdmi(connector);
++
++	return drm_mode_equal(&fixed->mode, mode) ? MODE_OK : MODE_BAD;
++}
++
++static struct drm_encoder *
++xlnx_fixed_hdmi_best_encoder(struct drm_connector *connector)
++{
++	struct xlnx_fixed_hdmi *fixed =
++		connector_to_fixed_hdmi(connector);
++
++	return &fixed->encoder;
++}
++
++static const struct drm_connector_helper_funcs
++xlnx_fixed_hdmi_connector_helper_funcs = {
++	.get_modes = xlnx_fixed_hdmi_get_modes,
++	.mode_valid = xlnx_fixed_hdmi_mode_valid,
++	.best_encoder = xlnx_fixed_hdmi_best_encoder,
++};
++
++static void xlnx_fixed_hdmi_encoder_destroy(struct drm_encoder *encoder)
++{
++	drm_encoder_cleanup(encoder);
++}
++
++static const struct drm_encoder_funcs xlnx_fixed_hdmi_encoder_funcs = {
++	.destroy = xlnx_fixed_hdmi_encoder_destroy,
++};
++
++static int xlnx_fixed_hdmi_bind(struct device *dev, struct device *master,
++				void *data)
++{
++	struct xlnx_fixed_hdmi *fixed = dev_get_drvdata(dev);
++	struct drm_device *drm = data;
++	int ret;
++
++	ret = drm_encoder_init(drm, &fixed->encoder,
++			       &xlnx_fixed_hdmi_encoder_funcs,
++			       DRM_MODE_ENCODER_TMDS, NULL);
++	if (ret)
++		return ret;
++
++	fixed->encoder.possible_crtcs = 1;
++	fixed->connector.polled = DRM_CONNECTOR_POLL_CONNECT;
++
++	ret = drm_connector_init(drm, &fixed->connector,
++				 &xlnx_fixed_hdmi_connector_funcs,
++				 DRM_MODE_CONNECTOR_HDMIA);
++	if (ret)
++		goto err_encoder;
++
++	drm_connector_helper_add(&fixed->connector,
++				 &xlnx_fixed_hdmi_connector_helper_funcs);
++
++	ret = drm_connector_register(&fixed->connector);
++	if (ret)
++		goto err_connector;
++
++	ret = drm_mode_connector_attach_encoder(&fixed->connector,
++						&fixed->encoder);
++	if (ret)
++		goto err_registered_connector;
++
++	dev_info(dev, "fixed HDMI connector bound with mode %s\n",
++		 fixed->mode.name);
++
++	return 0;
++
++err_registered_connector:
++	xlnx_fixed_hdmi_connector_destroy(&fixed->connector);
++	goto err_encoder;
++err_connector:
++	drm_connector_cleanup(&fixed->connector);
++err_encoder:
++	drm_encoder_cleanup(&fixed->encoder);
++	return ret;
++}
++
++static void xlnx_fixed_hdmi_unbind(struct device *dev, struct device *master,
++				   void *data)
++{
++	struct xlnx_fixed_hdmi *fixed = dev_get_drvdata(dev);
++
++	xlnx_fixed_hdmi_connector_destroy(&fixed->connector);
++	drm_encoder_cleanup(&fixed->encoder);
++}
++
++static const struct component_ops xlnx_fixed_hdmi_component_ops = {
++	.bind = xlnx_fixed_hdmi_bind,
++	.unbind = xlnx_fixed_hdmi_unbind,
++};
++
++static int xlnx_fixed_hdmi_probe(struct platform_device *pdev)
++{
++	struct xlnx_fixed_hdmi *fixed;
++	int ret;
++
++	fixed = devm_kzalloc(&pdev->dev, sizeof(*fixed), GFP_KERNEL);
++	if (!fixed)
++		return -ENOMEM;
++
++	fixed->dev = &pdev->dev;
++	ret = of_get_drm_display_mode(pdev->dev.of_node, &fixed->mode, NULL,
++				      OF_USE_NATIVE_MODE);
++	if (ret) {
++		dev_err(&pdev->dev, "failed to read fixed display mode: %d\n",
++			ret);
++		return ret;
++	}
++
++	fixed->mode.type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
++	drm_mode_set_name(&fixed->mode);
++	platform_set_drvdata(pdev, fixed);
++
++	ret = component_add(&pdev->dev, &xlnx_fixed_hdmi_component_ops);
++	if (ret)
++		return ret;
++
++	dev_info(&pdev->dev, "fixed HDMI output component probed\n");
++
++	return 0;
++}
++
++static int xlnx_fixed_hdmi_remove(struct platform_device *pdev)
++{
++	component_del(&pdev->dev, &xlnx_fixed_hdmi_component_ops);
++	return 0;
++}
++
++static const struct of_device_id xlnx_fixed_hdmi_of_match[] = {
++	{ .compatible = "fpga-hdml,xlnx-fixed-hdmi" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, xlnx_fixed_hdmi_of_match);
++
++static struct platform_driver xlnx_fixed_hdmi_driver = {
++	.probe = xlnx_fixed_hdmi_probe,
++	.remove = xlnx_fixed_hdmi_remove,
++	.driver = {
++		.name = "xlnx-fixed-hdmi",
++		.of_match_table = xlnx_fixed_hdmi_of_match,
++	},
++};
++module_platform_driver(xlnx_fixed_hdmi_driver);
++
++MODULE_AUTHOR("fpga-hdml");
++MODULE_DESCRIPTION("Xilinx DRM fixed-mode HDMI output component");
++MODULE_LICENSE("GPL v2");

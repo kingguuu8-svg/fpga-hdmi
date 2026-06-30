@@ -46,6 +46,20 @@ placeholder.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: hdmi-linux-fixed-mode-connector
+Result: PASSED. Linux now exposes a connected fixed-mode HDMI connector,
+  /dev/dri/card0, and /dev/fb0. The VDMA DMA-decode failure was traced to a
+  Linux CMA allocation outside the official VDMA DDR window documented in
+  docs/boards/hellofpga-smart-zynq-sl.md; moving CMA inside that window removed
+  VDMA errors and flip timeouts. A userspace /dev/fb0 write changed HDMI from
+  the Linux login console to a deterministic three-stripe image, and automated
+  HDMI capture validation passed.
+Evidence: docs/reports/hdmi-linux-fixed-mode-connector.md
+Board action: replaced image.ub on the TF-card FAT boot partition via board
+  Linux wget over Ethernet, retained backups, rebooted from TF card, wrote a
+  test frame through /dev/fb0, and captured HDMI. No JTAG programming, QSPI,
+  NAND, eMMC, or other board nonvolatile storage writes.
+
 Cycle ID: hdmi-linux-display-stack
 Result: PARTIAL. The project image now enables Xilinx PL display DRM
   (CONFIG_DRM_XLNX=y, CONFIG_DRM_XLNX_PL_DISP=y), boots from the TF card, and
@@ -119,6 +133,8 @@ Official pure-PL UDP loopback passed over the same PC/RJ45/RTL8211E path.
 Official Linux boots from TF card, eth0 1000/Full, RX errors=0, ping 0% loss.
 PetaLinux 2018.3 host tooling is installed and command-visible in WSL.
 Project baremetal board-to-PC UDP heartbeat works (but PC-to-board RX does not).
+Project Linux exposes a connected DRM HDMI output and /dev/fb0.
+Linux userspace framebuffer writes pass automated HDMI capture validation.
 ```
 
 Retired dead end:
@@ -132,28 +148,7 @@ layer. Do not resume this work.
 
 ## Next Cycle Direction
 
-```text
-Cycle ID: hdmi-linux-fixed-mode-connector
-Objective: make the existing /dev/dri/card0 usable by adding connector/mode
-  information for the fixed 800x600 rgb2dvi HDMI output, without returning to
-  userspace /dev/mem register ownership.
-Scope: Linux display-stack ownership only. Prefer an existing fixed-mode DRM
-  connector/bridge path if one is available in Linux 4.14/Xilinx 2018.3; if not,
-  add the smallest fixed-mode connector/bridge driver or hardware-description
-  change needed to expose a mode. VTC AXI-Lite may be enabled only if it is
-  needed for the selected connector/timing path.
-Verification plan: boot the updated image, require /dev/dri/card0 plus at
-  least one connector mode or /dev/fb0, run a minimal userspace modeset/fb test,
-  and capture HDMI output changing under Linux control.
-Board action: boot updated image from TF card and run a minimal DRM/fb display
-  test. No QSPI, NAND, eMMC, or other nonvolatile board storage writes.
-Evidence target: docs/reports/hdmi-linux-fixed-mode-connector.md
-Closure criteria: a Linux userspace test changes the HDMI image through DRM or
-  fbdev, and HDMI capture records the changed frame.
-Highest-risk assumption this cycle falsifies:
-  The current rgb2dvi HDMI chain can be represented to Linux as a fixed-mode
-  connector/mode without replacing the whole video pipeline.
-Cheapest alternative way to falsify the same assumption:
-  Inspect local 2018.3 DRM bridge/connector/panel drivers and test a DT-only
-  fixed-mode connector before changing Vivado hardware.
-```
+Open `ethernet-video-userspace-receiver` next: receive the project UDP frame
+protocol through a Linux userspace socket, write complete frames to the proven
+Linux framebuffer path, and require HDMI capture to match a PC-sent known
+frame. Do not add effects until pass-through closes.

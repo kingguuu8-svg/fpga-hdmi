@@ -253,6 +253,32 @@ Use this template for new entries:
 | Promoted to | `docs/boards/hellofpga-smart-zynq-sl.md` DDR/PS and official reference sections. |
 | Remaining uncertainty | Whether the official bitstream's dual HDMI clock output is safe for the connected board revision without comparing board versions; current reference suggests it was designed for compatibility across V1.2 and V1.3. |
 
+### Official VTC Fixed-Mode Timing Reinspection
+
+| Field | Value |
+| --- | --- |
+| Source | `tools/downloads/19_VDMA_HDMI_TEST/19_VDMA_HDMI_TEST/VDMA_HDMI_TEST/VDMA_HDMI_TEST.srcs/sources_1/bd/ZYNQ_CORE/hw_handoff/ZYNQ_CORE_bd.tcl` |
+| Question | What exact fixed mode must Linux advertise so its DRM framebuffer dimensions and refresh interval match the self-running VTC already in the programmed PL design? |
+| Reuse key | `official-vdma-hdmi-fixed-vtc-mode` |
+| Extracted facts | The official VTC uses a 40 MHz pixel clock. Horizontal timing is active 800, front porch 40, sync 128, back porch 88, total 1056. Vertical timing is active 600, front porch 1, sync 4, back porch 23, total 628. `HAS_AXI4_LITE=false`, so Linux cannot reprogram this VTC and must advertise the same fixed timing. |
+| Implementation impact | `software/petalinux/hdmi-linux-display-stack/system-user.dtsi` must expose exactly this timing through the fixed HDMI connector. A different DRM mode could size the VDMA framebuffer incorrectly even though the physical VTC continues transmitting its original timing. |
+| Verification status | `confirmed by direct reinspection of official Vivado 2018.3 BD Tcl` |
+| Promoted to | `docs/boards/hellofpga-smart-zynq-sl.md` HDMI / VDMA table. |
+| Remaining uncertainty | The DT mode can describe the self-running timing, but only an on-board DRM/fbdev write plus HDMI capture can prove the Xilinx component graph accepts the added connector and scans the Linux buffer. |
+
+### Official VDMA DDR Window Reinspection
+
+| Field | Value |
+| --- | --- |
+| Source | `tools/downloads/19_VDMA_HDMI_TEST/19_VDMA_HDMI_TEST/VDMA_HDMI_TEST/VDMA_HDMI_TEST.srcs/sources_1/bd/ZYNQ_CORE/hw_handoff/ZYNQ_CORE_bd.tcl` |
+| Question | Why does Linux VDMA MM2S report DMA decode error `0x40` even though the framebuffer address is valid system RAM? |
+| Reuse key | `official-vdma-hdmi-ddr-window` |
+| Extracted facts | The official block design connects VDMA MM2S through SmartConnect to PS `S_AXI_HP0`, but its MM2S address segment has offset `0x00000000` and range `0x10000000`. Linux allocated the DRM framebuffer from CMA at `0x1f100000`, outside that 256 MiB PL-visible window. VDMA registers otherwise held the expected height 600, horizontal size 2400, and stride 2400. |
+| Implementation impact | Linux CMA used by DRM/VDMA must be reserved below `0x10000000`. `software/petalinux/hdmi-linux-display-stack/system-user.dtsi` fixes the default CMA region at `0x0e000000..0x0effffff`; no PL rebuild or userspace register ownership is required. |
+| Verification status | `passed on connected hardware; corrected CMA placement removed decode errors and userspace framebuffer output passed HDMI capture` |
+| Promoted to | `docs/boards/hellofpga-smart-zynq-sl.md` HDMI / VDMA table and Linux allocation note. |
+| Remaining uncertainty | None for the current fixed-mode framebuffer path. A future higher-resolution hardware design may need a larger VDMA DDR address segment or a differently sized CMA pool. |
+
 ### Official VDMA HDMI Hardware Control
 
 | Field | Value |

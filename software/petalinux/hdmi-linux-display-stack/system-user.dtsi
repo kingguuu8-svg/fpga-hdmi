@@ -1,16 +1,59 @@
 /include/ "system-conf.dtsi"
 
 / {
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		linux_cma: linux,cma {
+			compatible = "shared-dma-pool";
+			reusable;
+			reg = <0x0e000000 0x01000000>;
+			linux,cma-default;
+		};
+	};
+
 	drm_pl_disp: drm-pl-disp-drv {
 		compatible = "xlnx,pl-disp";
 		dmas = <&axi_vdma_0 0>;
 		dma-names = "dma0";
 		xlnx,vformat = "RG24";
-		#address-cells = <1>;
-		#size-cells = <0>;
 
-		pl_disp_port: port@0 {
-			reg = <0>;
+		pl_disp_port: port {
+			pl_disp_out: endpoint {
+				remote-endpoint = <&fixed_hdmi_in>;
+			};
+		};
+	};
+
+	fixed_hdmi: fixed-hdmi {
+		compatible = "fpga-hdml,xlnx-fixed-hdmi";
+
+		display-timings {
+			native-mode = <&fixed_hdmi_mode>;
+
+			fixed_hdmi_mode: timing0 {
+				clock-frequency = <40000000>;
+				hactive = <800>;
+				hfront-porch = <40>;
+				hsync-len = <128>;
+				hback-porch = <88>;
+				vactive = <600>;
+				vfront-porch = <1>;
+				vsync-len = <4>;
+				vback-porch = <23>;
+				hsync-active = <1>;
+				vsync-active = <1>;
+				de-active = <1>;
+				pixelclk-active = <1>;
+			};
+		};
+
+		port {
+			fixed_hdmi_in: endpoint {
+				remote-endpoint = <&pl_disp_out>;
+			};
 		};
 	};
 };

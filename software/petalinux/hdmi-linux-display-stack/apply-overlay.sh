@@ -7,17 +7,6 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 linux_recipe_dir="${project_path}/project-spec/meta-user/recipes-kernel/linux"
 dt_files_dir="${project_path}/project-spec/meta-user/recipes-bsp/device-tree/files"
 
-install_file_checked() {
-	local src="$1"
-	local dst="$2"
-	install -d "$(dirname "$dst")"
-	if [[ -e "$dst" ]] && ! cmp -s "$src" "$dst"; then
-		printf 'Refusing to overwrite existing different file: %s\n' "$dst" >&2
-		return 2
-	fi
-	install -m 0644 "$src" "$dst"
-}
-
 install_file_with_backup() {
 	local src="$1"
 	local dst="$2"
@@ -31,10 +20,13 @@ install_file_with_backup() {
 	install -m 0644 "$src" "$dst"
 }
 
-install_file_checked "${script_dir}/linux-xlnx_%.bbappend" \
+install_file_with_backup "${script_dir}/linux-xlnx_%.bbappend" \
 	"${linux_recipe_dir}/linux-xlnx_%.bbappend"
-install_file_checked "${script_dir}/user.cfg" \
+install_file_with_backup "${script_dir}/user.cfg" \
 	"${linux_recipe_dir}/files/user.cfg"
+install_file_with_backup \
+	"${script_dir}/0001-drm-xlnx-add-fixed-hdmi-output-component.patch" \
+	"${linux_recipe_dir}/files/0001-drm-xlnx-add-fixed-hdmi-output-component.patch"
 install_file_with_backup "${script_dir}/system-user.dtsi" \
 	"${dt_files_dir}/system-user.dtsi"
 
