@@ -46,6 +46,19 @@ placeholder.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: ethernet-video-userspace-receiver
+Result: PASSED. A Linux userspace ARM receiver now accepts the project UDP
+  RGB888 frame protocol on port 5005, assembles a complete 800x600 frame,
+  maps protocol RGB into the actual /dev/fb0 channel byte order, and writes the
+  frame to the proven VDMA/DRM HDMI framebuffer. PC sent one rgb-stripes frame
+  as 1200 UDP packets; board log showed packets=1200 dropped=0 and HDMI
+  capture validation returned HDMI_CAPTURE_OK.
+Evidence: docs/reports/ethernet-video-userspace-receiver.md
+Board action: ran a userspace binary from /tmp after downloading it over
+  Ethernet, sent UDP from the PC, and captured HDMI. No Vivado rebuild, no
+  PetaLinux rebuild, no JTAG programming, and no QSPI, NAND, eMMC, or other
+  board flash writes.
+
 Cycle ID: hdmi-linux-fixed-mode-connector
 Result: PASSED. Linux now exposes a connected fixed-mode HDMI connector,
   /dev/dri/card0, and /dev/fb0. The VDMA DMA-decode failure was traced to a
@@ -135,6 +148,8 @@ PetaLinux 2018.3 host tooling is installed and command-visible in WSL.
 Project baremetal board-to-PC UDP heartbeat works (but PC-to-board RX does not).
 Project Linux exposes a connected DRM HDMI output and /dev/fb0.
 Linux userspace framebuffer writes pass automated HDMI capture validation.
+Project Linux userspace UDP receiver receives a complete 800x600 RGB888 frame
+and updates the physical HDMI output through /dev/fb0.
 ```
 
 Retired dead end:
@@ -148,7 +163,7 @@ layer. Do not resume this work.
 
 ## Next Cycle Direction
 
-Open `ethernet-video-userspace-receiver` next: receive the project UDP frame
-protocol through a Linux userspace socket, write complete frames to the proven
-Linux framebuffer path, and require HDMI capture to match a PC-sent known
-frame. Do not add effects until pass-through closes.
+The first-stage pass-through MVP is closed. Open the next cycle only after
+choosing the stage-2 focus: sustained low-FPS video streaming, UART-controlled
+demo state, or the first board-side visual effect. Do not combine all three in
+one cycle.

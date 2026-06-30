@@ -36,6 +36,13 @@ def make_frame(width: int, height: int, frame_id: int, pattern: str) -> bytes:
             elif pattern == "checker":
                 on = ((x // 32) ^ (y // 32) ^ frame_id) & 1
                 r, g, b = (245, 245, 245) if on else (20, 60, 110)
+            elif pattern == "rgb-stripes":
+                if y < height // 3:
+                    r, g, b = (0, 0, 255)
+                elif y < (2 * height) // 3:
+                    r, g, b = (0, 255, 0)
+                else:
+                    r, g, b = (255, 0, 0)
             else:
                 r = (x * 255) // max(1, width - 1)
                 g = (y * 255) // max(1, height - 1)
@@ -103,7 +110,7 @@ def main() -> int:
     parser.add_argument("--fps", type=float, default=1.0)
     parser.add_argument("--frames", type=int, default=1)
     parser.add_argument("--payload", type=int, default=DEFAULT_PAYLOAD)
-    parser.add_argument("--pattern", choices=["bars", "checker", "gradient"], default="bars")
+    parser.add_argument("--pattern", choices=["bars", "checker", "gradient", "rgb-stripes"], default="bars")
     parser.add_argument(
         "--inter-packet-us",
         type=float,

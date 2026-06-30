@@ -177,5 +177,31 @@ window; the preferred path fixes that in device tree rather than using
 userspace /dev/mem or changing PL.
 ```
 
+Verified Linux UDP-to-HDMI pass-through path (preferred for stage-1 closure,
+2026-06-30):
+
+```text
+1. Build and test the Linux receiver:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\software\eth_pass_through\scripts\build-linux-receiver-wsl.ps1
+2. Serve build/ethernet-video-userspace-receiver/ from the PC over HTTP on
+   the direct-link interface, then download fb_video_udp_receiver to /tmp on
+   the board and verify SHA-256.
+3. Start the receiver from the board UART shell:
+   /tmp/fb_video_udp_receiver --frames 1 --timeout-sec 60 > /tmp/fb_video_udp_receiver.log 2>&1 &
+4. Send a deterministic RGB frame from the PC:
+   rtk powershell.exe -NoProfile -Command "python .\tools\send_video_udp.py 192.168.1.10 --pattern rgb-stripes --frames 1 --fps 1 --payload 1200 --inter-packet-us 200"
+5. Require the board log to contain:
+   VIDEO_UDP_FRAME_WRITTEN frame_id=0 frames=1 packets=1200 dropped=0
+   VIDEO_UDP_RECEIVER_DONE frames=1 packets=1200 dropped=0
+6. Capture HDMI with tools/capture_hdmi.py using validation-profile
+   rgb-stripes and require HDMI_CAPTURE_OK.
+```
+
+Verified outcome:
+The stage-1 network-video pass-through MVP is closed. The receiver must map
+protocol RGB888 into the framebuffer channel byte order reported by
+FBIOGET_VSCREENINFO; on the verified image /dev/fb0 is 24bpp with red byte 2,
+green byte 1, and blue byte 0.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

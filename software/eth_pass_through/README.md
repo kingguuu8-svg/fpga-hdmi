@@ -1,8 +1,24 @@
-# Ethernet Pass-Through Baremetal Software
+# Ethernet Pass-Through Software
 
-This directory holds source files for the first-stage PS baremetal receiver.
-The baremetal route is currently a fallback, not the main route while waiting
-for the TF-card Linux ping gate.
+This directory holds source files for the first-stage Ethernet video
+pass-through receiver.
+
+The active route is Linux userspace:
+
+```text
+PC UDP RGB888
+  -> Linux socket receiver
+  -> /dev/fb0 with framebuffer-channel mapping
+  -> VDMA/DRM HDMI
+```
+
+Build and host-test the Linux receiver from Windows:
+
+```powershell
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\software\eth_pass_through\scripts\build-linux-receiver-wsl.ps1
+```
+
+The baremetal route below is retained as fallback/historical code only.
 
 Target flow:
 

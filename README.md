@@ -68,7 +68,7 @@ Part: xc7z020clg484-1
 Input: PC UDP frames, 800x600 RGB888, port 5005
 Buffer: PS DDR framebuffer
 Output: official VDMA-style 800x600 HDMI path
-Status: Linux route gate passed; PetaLinux 2018.3 host tooling installed
+Status: stage-1 UDP framebuffer HDMI pass-through passed
 ```
 
 The previous PL-only video effects demo remains available as a side demo, not

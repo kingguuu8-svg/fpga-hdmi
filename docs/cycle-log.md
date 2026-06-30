@@ -646,3 +646,74 @@ Residual risks:
 - The physical VTC remains fixed.
 - The next receiver should prevent framebuffer-console writes from corrupting
   video frames.
+
+## 2026-06-30 - ethernet-video-userspace-receiver
+
+Commit: this commit (`cycle: close Ethernet UDP HDMI pass-through`)
+
+Objective:
+
+Receive the project UDP RGB888 frame protocol in Linux userspace, write
+complete frames to the proven `/dev/fb0` path, and prove through HDMI capture
+that a PC-sent known frame reaches the display.
+
+Changed scope:
+
+- Added a Linux userspace ARM receiver:
+  `software/eth_pass_through/linux_app/src/fb_video_udp_receiver.c`.
+- Added framebuffer channel mapping helpers and tests:
+  `software/eth_pass_through/src/video_framebuffer.*` and
+  `software/eth_pass_through/tests/test_linux_framebuffer_writer.c`.
+- Added a WSL build/test wrapper:
+  `software/eth_pass_through/scripts/build-linux-receiver-wsl.ps1`.
+- Extended `tools/send_video_udp.py` with the `rgb-stripes` pattern.
+- Updated `docs/current-cycle.md`, `docs/project-roadmap.md`, `README.md`,
+  `software/eth_pass_through/README.md`, and the pipeline skill to record the
+  verified pass-through route.
+- Added `docs/reports/ethernet-video-userspace-receiver.md`.
+
+Verification:
+
+- Host unit tests passed:
+  `VIDEO_UDP_RECEIVER_TEST_OK` and `VIDEO_FB_COPY_TEST_OK`.
+- ARM cross-compile passed with PetaLinux 2018.3 toolchain. Output binary:
+  32-bit ARM EABI5 Linux executable, SHA-256
+  `3914d374fe5e5fc15a22da7c47b8a6fdc26df98f02454bf3c272413594946da4`.
+- Board networking passed: PC ping to `192.168.1.10` 4/4, 0% loss; board ping
+  to `192.168.1.2` 2/2, 0% loss.
+- Board receiver log showed `/dev/fb0` 800x600, 24bpp, 2400-byte stride,
+  channel bytes red=2 green=1 blue=0.
+- PC sent one `rgb-stripes` 800x600 RGB888 frame as 1200 UDP packets.
+- Board receiver log showed complete-frame and receiver-done markers with
+  `packets=1200` and `dropped=0`.
+- HDMI DirectShow capture with `rgb-stripes` validation returned
+  `HDMI_CAPTURE_OK`.
+
+Board action:
+
+- Ran a userspace binary from `/tmp` after downloading it over Ethernet with
+  `wget`. No Vivado rebuild, no PetaLinux rebuild, no JTAG programming, no
+  QSPI, NAND, eMMC, or other board flash write.
+
+Evidence:
+
+- `docs/reports/ethernet-video-userspace-receiver.md`
+- `build/ethernet-video-userspace-receiver/test_video_udp_receiver.log`
+- `build/ethernet-video-userspace-receiver/test_linux_framebuffer_writer.log`
+- `build/ethernet-video-userspace-receiver/uart_receiver_after_send_bgrfix.log`
+- `build/ethernet-video-userspace-receiver/hdmi-after-udp-frame-bgrfix/latest-validation.json`
+
+Result:
+
+- PASSED. The first-stage Ethernet video pass-through MVP is physically closed:
+  PC UDP RGB888 frame -> Linux userspace socket receiver -> `/dev/fb0` ->
+  VDMA/DRM HDMI -> PC HDMI capture validation.
+
+Residual risks:
+
+- This proves single-frame pass-through at low packet rate, not sustained
+  realtime video throughput.
+- No loss recovery exists; incomplete UDP frames are dropped.
+- The receiver is not yet packaged into the PetaLinux rootfs or started by
+  init.
+- Effects and runtime control remain later cycles.

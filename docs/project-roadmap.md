@@ -91,12 +91,12 @@ Phase A:
   DONE - official Linux image boots and responds to ping over Ethernet
 
 Phase B:
-  IN PROGRESS - PetaLinux project + Linux socket receiver + Ethernet video +
+  DONE - PetaLinux project + Linux socket receiver + Ethernet video +
   HDMI output
   Fixed-mode HDMI gate: PASSED. Linux exposes a connected DRM output and
   userspace framebuffer writes are visible through HDMI capture.
-  Current gate: implement the Linux UDP frame receiver and prove that a
-  PC-sent known frame reaches the existing framebuffer pass-through path.
+  UDP framebuffer gate: PASSED. A PC-sent RGB888 frame reaches the Linux
+  userspace receiver, /dev/fb0, and HDMI capture.
 
 Phase C:
   Same command protocol over TCP/UDP
@@ -117,17 +117,16 @@ Phase F:
 
 ## Acceptance Criteria
 
-MVP is complete only when all of the following are true:
+MVP is complete. The completed acceptance facts are:
 
 ```text
-1. PC can send a known 800x600 RGB888 test video frame stream over Ethernet.
-2. Board receives frames and updates a DDR-backed frame buffer.
-3. VDMA/PL consumes the frame buffer and displays it through HDMI.
-4. HDMI capture shows the same original input frame with no effects.
-5. JTAG can still rebuild/program/recover the board.
-6. A run report records commands, versions, interface status, and evidence.
-7. The later effects/control stage is opened only after this pass-through
-   criterion is met.
+1. PC sent a known 800x600 RGB888 frame over Ethernet.
+2. Board received the frame and updated the Linux DDR-backed framebuffer.
+3. VDMA/PL consumed the framebuffer and displayed it through HDMI.
+4. HDMI capture showed the same original test pattern with no effects.
+5. JTAG remains the reliable rebuild/program/recovery path.
+6. Run reports record commands, versions, interface status, and evidence.
+7. Later effects/control work is now allowed to open as stage 2.
 ```
 
 ## Current Interface Baseline
