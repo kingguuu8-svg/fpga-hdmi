@@ -69,6 +69,7 @@ Input: PC UDP frames, 800x600 RGB888, port 5005
 Buffer: PS DDR framebuffer
 Output: official VDMA-style 800x600 HDMI path
 Status: stage-1 UDP framebuffer HDMI pass-through passed
+Control: UART fallback FIFO pause/resume/status passed
 ```
 
 The previous PL-only video effects demo remains available as a side demo, not

@@ -46,6 +46,18 @@ placeholder.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: uart-control-endpoint
+Result: PASSED. The Linux receiver now supports a FIFO control endpoint that
+  can be driven from the UART shell. UART `pause` caused a complete UDP frame
+  to log VIDEO_UDP_FRAME_SKIPPED_PAUSED instead of writing /dev/fb0; UART
+  `resume` and `status` were accepted, the next UDP frame was written, and HDMI
+  capture returned HDMI_CAPTURE_OK.
+Evidence: docs/reports/uart-control-endpoint.md
+Board action: ran a userspace binary from /tmp, wrote control commands through
+  the UART shell to /tmp/video_ctl, sent UDP frames from the PC, and captured
+  HDMI. No Vivado rebuild, no PetaLinux rebuild, no JTAG programming, and no
+  board flash writes.
+
 Cycle ID: sustained-low-fps-stream
 Result: PASSED. The Linux UDP receiver handled a five-frame 800x600 RGB888
   low-FPS stream. PC sent 6000 UDP packets; board logs showed five
@@ -164,6 +176,8 @@ Project Linux userspace UDP receiver receives a complete 800x600 RGB888 frame
 and updates the physical HDMI output through /dev/fb0.
 Project Linux userspace UDP receiver handles a five-frame low-FPS stream with
 6000 UDP packets, dropped=0, and HDMI capture validation after the stream.
+Project Linux receiver accepts UART-shell-driven pause/resume/status commands
+through a FIFO control endpoint without breaking UDP receive or HDMI output.
 ```
 
 Retired dead end:
@@ -177,5 +191,6 @@ layer. Do not resume this work.
 
 ## Next Cycle Direction
 
-Open `uart-control-endpoint` next: add a UART-driven control path to the Linux
-receiver process. Do not add visual effects until UART control closes.
+Open `first-board-side-effect` next: add one minimal board-side visual effect
+to the Linux receiver and prove that the board, not the PC sender, changes the
+displayed frame. Do not combine this with TCP/UDP control transport.

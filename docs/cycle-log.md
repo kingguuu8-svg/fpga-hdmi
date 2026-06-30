@@ -774,3 +774,62 @@ Residual risks:
 - The pattern is static across frames; this proves repeated transport/display
   updates, not visual motion.
 - UART control and board-side effects remain later cycles.
+
+## 2026-06-30 - uart-control-endpoint
+
+Commit: this commit (`cycle: add UART receiver control endpoint`)
+
+Objective:
+
+Add a UART-driven control path to the Linux receiver process and prove that a
+UART command changes receiver behavior while UDP video input and HDMI output
+remain working.
+
+Changed scope:
+
+- Added `software/eth_pass_through/src/video_control.*`.
+- Added `software/eth_pass_through/tests/test_video_control.c`.
+- Added `--control-fifo` support to the Linux receiver.
+- Added `tools/run_uart_control_probe.ps1`.
+- Added `--start-frame-id` to `tools/send_video_udp.py`.
+- Added `docs/reports/uart-control-endpoint.md` and updated current-cycle,
+  roadmap, cycle-log, and pipeline skill entries.
+
+Verification:
+
+- Host tests passed: `VIDEO_UDP_RECEIVER_TEST_OK`, `VIDEO_FB_COPY_TEST_OK`,
+  and `VIDEO_CONTROL_TEST_OK`.
+- ARM cross-compile passed. Output binary SHA-256:
+  `41a7509a7e744054066e6f583f419e2d33193657e0735bd7db75d2d96469a575`.
+- Board SHA-256 check passed after Ethernet download.
+- UART command `pause` produced `CONTROL_PAUSED`.
+- A complete UDP frame while paused produced
+  `VIDEO_UDP_FRAME_SKIPPED_PAUSED frame_id=100`.
+- UART commands `resume` and `status` produced `CONTROL_RESUMED` and
+  `CONTROL_STATUS paused=0`.
+- A subsequent UDP frame produced `VIDEO_UDP_FRAME_WRITTEN frame_id=101` and
+  `VIDEO_UDP_RECEIVER_DONE frames=1 skipped=1 packets=2400 dropped=0`.
+- HDMI capture with `rgb-stripes` validation returned `HDMI_CAPTURE_OK`.
+
+Board action:
+
+- Ran a userspace binary from `/tmp`, sent UART shell commands to the FIFO
+  endpoint, sent UDP frames from the PC, and captured HDMI. No Vivado rebuild,
+  no PetaLinux rebuild, no JTAG programming, and no board flash write.
+
+Evidence:
+
+- `docs/reports/uart-control-endpoint.md`
+- `build/uart-control-endpoint/test_video_control.log`
+- `build/uart-control-endpoint/uart_final.log`
+- `build/uart-control-endpoint/hdmi-after-uart-control/latest-validation.json`
+
+Result:
+
+- PASSED. The receiver now has a verified UART fallback control endpoint.
+
+Residual risks:
+
+- The FIFO endpoint is intentionally minimal and not yet packaged as a daemon.
+- TCP/UDP command transport is not implemented.
+- Board-side visual effects remain the next cycle.

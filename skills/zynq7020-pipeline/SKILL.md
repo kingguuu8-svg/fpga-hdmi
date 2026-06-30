@@ -226,5 +226,33 @@ The single-frame route was extended to five paced frames with no receiver
 drops. This proves repeated receiver/framebuffer updates, but not high-FPS
 throughput or visual motion.
 
+Verified UART receiver-control path (preferred when checking fallback control,
+2026-06-30):
+
+```text
+1. Run the integrated probe:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_uart_control_probe.ps1
+2. The helper builds and host-tests the receiver, deploys it through a
+   one-shot PowerShell/.NET file server, starts it with --control-fifo
+   /tmp/video_ctl, sends UART shell commands, sends UDP frames, and captures
+   HDMI.
+3. Require:
+   VIDEO_CONTROL_TEST_OK
+   CONTROL_FIFO_READY path=/tmp/video_ctl
+   CONTROL_PAUSED
+   VIDEO_UDP_FRAME_SKIPPED_PAUSED frame_id=100
+   CONTROL_RESUMED
+   CONTROL_STATUS paused=0
+   VIDEO_UDP_FRAME_WRITTEN frame_id=101
+   VIDEO_UDP_RECEIVER_DONE frames=1 skipped=1 packets=2400 dropped=0
+   HDMI_CAPTURE_OK
+   UART_CONTROL_PROBE_OK
+```
+
+Verified outcome:
+The receiver can be controlled from the UART shell without stopping UDP receive
+or breaking HDMI output. The FIFO is the current fallback transport; TCP/UDP
+control remains a later transport for the same command semantics.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

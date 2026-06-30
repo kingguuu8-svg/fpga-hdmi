@@ -109,6 +109,7 @@ def main() -> int:
     parser.add_argument("--height", type=int, default=600)
     parser.add_argument("--fps", type=float, default=1.0)
     parser.add_argument("--frames", type=int, default=1)
+    parser.add_argument("--start-frame-id", type=int, default=0)
     parser.add_argument("--payload", type=int, default=DEFAULT_PAYLOAD)
     parser.add_argument("--pattern", choices=["bars", "checker", "gradient", "rgb-stripes"], default="bars")
     parser.add_argument(
@@ -135,7 +136,8 @@ def main() -> int:
 
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        for frame_id in range(args.frames):
+        for index in range(args.frames):
+            frame_id = args.start_frame_id + index
             started = time.perf_counter()
             frame = make_frame(args.width, args.height, frame_id, args.pattern)
             packets = send_frame(

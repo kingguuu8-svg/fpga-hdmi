@@ -35,6 +35,16 @@ Control: UART command protocol remains the first fallback after video closes
 Download/debug: keep USB-JTAG as the reliable development recovery path
 ```
 
+Video source policy:
+
+```text
+Do not use a camera or webcam as the project video input source.
+Use deterministic PC-generated frames first, then a fixed preselected demo
+video file when dynamic content is needed.
+HDMI capture devices may be used only as output verification instruments, not
+as input video sources.
+```
+
 The old 320x240/640x480 RGB565 custom-framebuffer-reader route is retired for
 the active stage-1 path. It remains only as historical code until deleted or
 archived; it must not be used as completion evidence for this MVP.
@@ -99,8 +109,10 @@ Phase B:
   userspace receiver, /dev/fb0, and HDMI capture.
 
 Phase C:
-  Same command protocol over TCP/UDP
-  UART remains as fallback
+  IN PROGRESS - control path
+  UART fallback gate: PASSED. The Linux receiver accepts pause/resume/status
+  through a FIFO endpoint driven from the UART shell.
+  Later: carry the same command semantics over TCP/UDP.
 
 Phase D:
   Board reachable through LAN router
