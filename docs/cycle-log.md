@@ -717,3 +717,60 @@ Residual risks:
 - The receiver is not yet packaged into the PetaLinux rootfs or started by
   init.
 - Effects and runtime control remain later cycles.
+
+## 2026-06-30 - sustained-low-fps-stream
+
+Commit: this commit (`cycle: prove sustained low-FPS stream`)
+
+Objective:
+
+Prove the Linux UDP receiver can handle a sustained low-FPS multi-frame stream,
+not just a single frame, while continuing to update HDMI through `/dev/fb0`.
+
+Changed scope:
+
+- Added elapsed-time markers to `fb_video_udp_receiver`.
+- Added `tools/run_sustained_stream_probe.ps1`, a reproducible build/deploy/send
+  and capture helper for low-FPS stream checks.
+- Added `docs/reports/sustained-low-fps-stream.md`.
+- Updated `docs/current-cycle.md`, `docs/cycle-log.md`, and the pipeline skill
+  with the verified multi-frame route.
+
+Verification:
+
+- Host tests passed: `VIDEO_UDP_RECEIVER_TEST_OK` and
+  `VIDEO_FB_COPY_TEST_OK`.
+- ARM cross-compile passed. Output binary SHA-256:
+  `b9a675bf12af95df866076083d6e547ce53bda9f1b9d3b834d30fbc3b7ab1b67`.
+- One-shot PowerShell/.NET file server served the receiver binary to the board;
+  board SHA-256 check passed.
+- PC sent five 800x600 RGB888 frames: 6000 UDP packets total.
+- Board logs showed five frame-write markers and
+  `VIDEO_UDP_RECEIVER_DONE frames=5 packets=6000 dropped=0`.
+- Ethernet counters after the stream showed RX/TX errors=0 and dropped=0.
+- HDMI capture with `rgb-stripes` validation returned `HDMI_CAPTURE_OK`.
+
+Board action:
+
+- Ran a userspace binary from `/tmp` after Ethernet download, sent UDP frames
+  from the PC, and captured HDMI. No Vivado rebuild, no PetaLinux rebuild, no
+  JTAG programming, and no board flash write.
+
+Evidence:
+
+- `docs/reports/sustained-low-fps-stream.md`
+- `build/sustained-low-fps-stream/send_video_udp.log`
+- `build/sustained-low-fps-stream/uart_after_stream.log`
+- `build/sustained-low-fps-stream/hdmi-after-stream/latest-validation.json`
+
+Result:
+
+- PASSED. The UDP-to-framebuffer-to-HDMI path handles a five-frame low-FPS
+  stream without receiver drops.
+
+Residual risks:
+
+- This is a paced low-FPS proof, not a high-throughput realtime target.
+- The pattern is static across frames; this proves repeated transport/display
+  updates, not visual motion.
+- UART control and board-side effects remain later cycles.

@@ -46,6 +46,18 @@ placeholder.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: sustained-low-fps-stream
+Result: PASSED. The Linux UDP receiver handled a five-frame 800x600 RGB888
+  low-FPS stream. PC sent 6000 UDP packets; board logs showed five
+  VIDEO_UDP_FRAME_WRITTEN markers and VIDEO_UDP_RECEIVER_DONE frames=5
+  packets=6000 dropped=0. HDMI capture after the stream returned
+  HDMI_CAPTURE_OK.
+Evidence: docs/reports/sustained-low-fps-stream.md
+Board action: ran a userspace binary from /tmp after downloading it through a
+  one-shot Ethernet file server, sent UDP frames from the PC, and captured
+  HDMI. No Vivado rebuild, no PetaLinux rebuild, no JTAG programming, and no
+  board flash writes.
+
 Cycle ID: ethernet-video-userspace-receiver
 Result: PASSED. A Linux userspace ARM receiver now accepts the project UDP
   RGB888 frame protocol on port 5005, assembles a complete 800x600 frame,
@@ -150,6 +162,8 @@ Project Linux exposes a connected DRM HDMI output and /dev/fb0.
 Linux userspace framebuffer writes pass automated HDMI capture validation.
 Project Linux userspace UDP receiver receives a complete 800x600 RGB888 frame
 and updates the physical HDMI output through /dev/fb0.
+Project Linux userspace UDP receiver handles a five-frame low-FPS stream with
+6000 UDP packets, dropped=0, and HDMI capture validation after the stream.
 ```
 
 Retired dead end:
@@ -163,7 +177,5 @@ layer. Do not resume this work.
 
 ## Next Cycle Direction
 
-The first-stage pass-through MVP is closed. Open the next cycle only after
-choosing the stage-2 focus: sustained low-FPS video streaming, UART-controlled
-demo state, or the first board-side visual effect. Do not combine all three in
-one cycle.
+Open `uart-control-endpoint` next: add a UART-driven control path to the Linux
+receiver process. Do not add visual effects until UART control closes.

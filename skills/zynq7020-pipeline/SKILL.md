@@ -203,5 +203,28 @@ protocol RGB888 into the framebuffer channel byte order reported by
 FBIOGET_VSCREENINFO; on the verified image /dev/fb0 is 24bpp with red byte 2,
 green byte 1, and blue byte 0.
 
+Verified sustained low-FPS stream path (preferred when checking repeated frame
+updates, 2026-06-30):
+
+```text
+1. Run the integrated probe:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_sustained_stream_probe.ps1 -Frames 5 -Fps 1 -InterPacketUs 200
+2. The helper builds and host-tests the receiver, deploys it through a
+   one-shot PowerShell/.NET file server, starts it from UART, sends five
+   rgb-stripes frames, reads board logs, and captures HDMI.
+3. Require:
+   VIDEO_UDP_RECEIVER_TEST_OK
+   VIDEO_FB_COPY_TEST_OK
+   /tmp/fb_video_udp_receiver: OK
+   VIDEO_UDP_RECEIVER_DONE frames=5 packets=6000 dropped=0
+   HDMI_CAPTURE_OK
+   SUSTAINED_STREAM_PROBE_OK
+```
+
+Verified outcome:
+The single-frame route was extended to five paced frames with no receiver
+drops. This proves repeated receiver/framebuffer updates, but not high-FPS
+throughput or visual motion.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

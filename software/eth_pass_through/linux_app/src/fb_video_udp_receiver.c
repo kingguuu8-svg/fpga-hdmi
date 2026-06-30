@@ -249,6 +249,16 @@ static int open_udp_socket(uint16_t port, unsigned int timeout_seconds)
     return fd;
 }
 
+static unsigned long long monotonic_ms(void)
+{
+    struct timeval tv;
+
+    if (gettimeofday(&tv, 0) != 0) {
+        return 0u;
+    }
+    return ((unsigned long long)tv.tv_sec * 1000ull) + ((unsigned long long)tv.tv_usec / 1000ull);
+}
+
 int main(int argc, char **argv)
 {
     app_config_t config;
@@ -259,6 +269,7 @@ int main(int argc, char **argv)
     uint8_t packet[VIDEO_UDP_HEADER_LEN + VIDEO_UDP_CHUNK_BYTES];
     unsigned int packets = 0u;
     unsigned int frames_written = 0u;
+    unsigned long long start_ms;
     int sock = -1;
     int exit_code = 1;
 
@@ -288,6 +299,7 @@ int main(int argc, char **argv)
            config.frames,
            config.timeout_seconds);
     fflush(stdout);
+    start_ms = monotonic_ms();
 
     while (frames_written < config.frames) {
         ssize_t got;
@@ -314,19 +326,21 @@ int main(int argc, char **argv)
                 goto cleanup;
             }
             frames_written++;
-            printf("VIDEO_UDP_FRAME_WRITTEN frame_id=%lu frames=%u packets=%u dropped=%lu\n",
+            printf("VIDEO_UDP_FRAME_WRITTEN frame_id=%lu frames=%u packets=%u dropped=%lu elapsed_ms=%llu\n",
                    (unsigned long)receiver.frame_id,
                    frames_written,
                    packets,
-                   (unsigned long)receiver.dropped_packets);
+                   (unsigned long)receiver.dropped_packets,
+                   monotonic_ms() - start_ms);
             fflush(stdout);
         }
     }
 
-    printf("VIDEO_UDP_RECEIVER_DONE frames=%u packets=%u dropped=%lu\n",
+    printf("VIDEO_UDP_RECEIVER_DONE frames=%u packets=%u dropped=%lu elapsed_ms=%llu\n",
            frames_written,
            packets,
-           (unsigned long)receiver.dropped_packets);
+           (unsigned long)receiver.dropped_packets,
+           monotonic_ms() - start_ms);
     exit_code = 0;
 
 cleanup:
