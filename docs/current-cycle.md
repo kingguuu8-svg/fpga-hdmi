@@ -30,6 +30,19 @@ than the planned scope, the cycle direction should be reconsidered before
 approval, not after debugging. These two lines exist to be read by a human at
 cycle open time; they are not a self-audit checklist for cycle close.
 
+### Optional third-party review (recorded after cycle close, non-blocking)
+
+A closed cycle may carry a `## Third-party review` section appended after the
+cycle's own report. It records an external reviewer's verification findings:
+what was independently checked, whether claims hold up, and any residual
+concerns the reviewer spotted that the cycle's own closure criteria did not
+cover. This section is non-blocking — it does not reopen the cycle or gate the
+next one. Its purpose is to leave a durable, checked record so that the next
+agent or the human can read the reviewer's view alongside the cycle's own PASSED
+claim, and decide whether the residual concerns deserve a follow-up cycle.
+If no review was performed, omit the section entirely; do not write a
+placeholder.
+
 ## Recently Closed Cycle
 
 ```text

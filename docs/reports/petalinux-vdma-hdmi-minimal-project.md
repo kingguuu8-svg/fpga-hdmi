@@ -185,3 +185,87 @@ ERROR: axi_vdma_0: s2mm_introut port is not connected
 - The Ubuntu 18.04 chroot bind mounts are runtime state. If WSL restarts, mount
   `/opt/petalinux-v2018.3`, `/home`, `/mnt/e`, `/proc`, `/sys`, `/dev`, and a
   tmpfs `/dev/shm` before running PetaLinux again.
+
+## Third-party review
+
+Reviewer: external audit, performed 2026-06-30 after cycle close.
+Scope: independently verify physical artifacts and inspect the generated FIT
+image's device tree and kernel content, rather than trusting the report's
+PASSED claim.
+
+### Independently verified (claims hold up)
+
+- TF-card D: artifacts present: BOOT.BIN (4577736 bytes), image.ub (9980104
+  bytes). SHA256 of both files matches the hash in the cycle report exactly.
+- Ubuntu 18.04 chroot at `/opt/chroots/ubuntu18-petalinux2018` is a real
+  directory tree, not a stub. PetaLinux project directory exists with real
+  build output under images/.
+- The BD Tcl interrupt fix in `create_ps_emio_vdma_hdmi_bd.tcl` is the standard
+  Zynq fabric interrupt topology: `PCW_IRQ_F2P_INTR=1` + `PCW_USE_FABRIC_INTERRUPT=1` on PS7, an
+  xlconcat (16 ports) aggregating `axi_vdma_0/mm2s_introut` and `s2mm_introut`
+  into `IRQ_F2P`, and an xlconstant=0 feeding the remaining 14 unused IRQ slots.
+  This is the textbook solution and the right fix for the device-tree generator
+  rejecting unconnected VDMA interrupt ports.
+- Extracted the new image.ub FIT blob and decompiled its device tree: the VDMA
+  node is correct and complete.
+  - `reg = <0x43000000 0x10000>` matches the HDF address map.
+  - `compatible = "xlnx,axi-vdma-6.3\0xlnx,axi-vdma-1.00.a"` — full compatible
+    string present.
+  - `interrupts = <0x00 0x1d 0x04 0x00 0x1e 0x04>` — IRQ 29 / 30, with the two
+    `dma-channel@` sub-nodes carrying matching per-channel IRQ lines.
+  - Clocks, `xlnx,num-fstores`, address-width all populated.
+- The GEM/ethernet node is intact: `ethernet@e000b000 status="okay"
+  phy-mode="gmii"`. Route-gate networking capability is preserved in the new
+  device tree.
+- Kernel strings search confirms VDMA driver is compiled in: "Xilinx AXI VDMA
+  Engine Driver Probed!!" and the `xilinx-vdma` symbols are present. An
+  unexpected bonus: "Xilinx DRM KMS support for Xilinx" is also in the kernel
+  — the PetaLinux default defconfig enabled Xilinx DRM KMS, which the original
+  all-test image did not surface. HDMI output may therefore have a real Linux
+  display stack to attach to, not just a raw VDMA node.
+
+### Residual concerns the closure criteria did not cover
+
+1. **HDMI output chain is not in the device tree.** `grep -iE "hdmi|dvi|rgb"`
+   on the decompiled dtb returns zero matches. The `rgb2dvi_0` IP and any
+   `v_axi4s_vid_out` / video-timing-controller IP from the Vivado BD have no
+   device-tree nodes. The Xilinx device-tree generator does not produce nodes
+   for the Digilent rgb2dvi IP. Consequence: VDMA will probe and be usable as a
+   DMA engine from userspace, but the downstream HDMI video pipeline is invisible
+   to Linux — HDMI output will not work by simply booting this image. The
+   VDMA-probe milestone and the HDMI-output milestone are two separate gates;
+   the cycle report bundles them into one unverified "HDMI/VDMA Linux runtime
+   behavior" line, which understates the gap.
+2. **No board boot yet.** The whole verification chain is offline artifact
+   inspection plus PetaLinux's own build-pass marker. The dmesg "VDMA Engine
+   Driver Probed" string being in the kernel binary only proves the driver was
+   compiled in; the actual probe requires the running kernel to match the
+   device-tree node to the driver and reach `->probe()`. A boot test is the
+   only way to confirm a real `/dev/dri/card0` or `/dev/fb*` entry appears.
+3. **The chroot bind-mount state is genuinely fragile.** If WSL is restarted
+   the mounts must be re-established before any incremental build. This is an
+   operational hazard for future cycles, not a defect in the artifacts already
+   committed.
+
+### Reviewer's suggested next cycle split
+
+To avoid bundling two gates, the reviewer suggests splitting the natural next
+step into two cycles rather than one:
+
+- `vdma-boot-probe-verify`: insert the card, set SD boot, POR RST, capture
+  UART, confirm Linux boots, confirm `dmesg` shows the VDMA probe line, confirm
+  `eth0` still links and pings, list `/dev/dri` or `/dev/fb*`. Trims the cheapest
+  possible falsification of "VDMA works under Linux on this board".
+- `hdmi-dtb-patch`: only opened if the first cycle's VDMA probe succeeds but
+  HDMI does not output. Hand-author the rgb2dvi / v_axi4s_vid_out / VTC
+  device-tree fragment (these are generic MIPI / DRM / video-out nodes, no
+  Vivado BD re-edit required), dtc-compile back into the dtb, mkimage-repack
+  the image.ub, re-boot and capture HDMI on the PC capture device.
+
+### Verdict
+
+Accept the cycle as PASSED for the build/package/write-card scope it declared.
+The artifacts are real, the BD fix is correct, the device tree's VDMA node is
+complete. Be aware that the headline "build PetaLinux VDMA HDMI TF image"
+implies more HDMI-readiness than the device tree actually delivers — HDMI
+output is the next but one milestone, not this one.
