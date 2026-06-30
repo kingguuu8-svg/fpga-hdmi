@@ -522,3 +522,72 @@ Residual risks:
   image bakes in networking configuration.
 - No HDMI output device exists yet from Linux's perspective; this is the next
   cycle's target.
+
+## 2026-06-30 - hdmi-linux-display-stack
+
+Commit: this commit (`cycle: expose PL display DRM card`)
+
+Objective:
+
+Make the project PetaLinux image expose a Linux-managed HDMI output path,
+preferably `/dev/dri/card0` and secondarily `/dev/fb0`, without using
+userspace `/dev/mem` MMIO as the main route.
+
+Changed scope:
+
+- Added a reproducible PetaLinux meta-user overlay under
+  `software/petalinux/hdmi-linux-display-stack/`.
+- Enabled `CONFIG_DRM_XLNX=y` and `CONFIG_DRM_XLNX_PL_DISP=y`.
+- Added a `xlnx,pl-disp` DT node bound to VDMA MM2S channel 0 with `RG24`
+  format.
+- Added chroot helper scripts for the verified PetaLinux 2018.3 Ubuntu 18.04
+  build path and for one-off bitbake/PetaLinux commands.
+- Updated the current-cycle report and pipeline skill with the verified
+  overlay/build/board-update path.
+
+Verification:
+
+- Inspected kernel source and bindings for `xlnx,pl-disp`, `xlnx,drm`, and VTC.
+- Proved `bitbake -e virtual/kernel` includes `file://user.cfg`.
+- Forced `do_kernel_configme`; verified the kernel build `.config` has
+  `CONFIG_DRM_XLNX=y` and `CONFIG_DRM_XLNX_PL_DISP=y`.
+- PetaLinux build passed: 3065 tasks attempted, all succeeded.
+- Decompiled generated `system.dtb`; verified `drm-pl-disp-drv` with
+  `compatible = "xlnx,pl-disp"` and `xlnx,vformat = "RG24"`.
+- Board booted new `image.ub`; kernel version changed to build `#4`.
+- Runtime showed `/dev/dri/card0`, VDMA probe, and Xilinx PL display probe.
+- Runtime also showed no `/dev/fb*`, no connector status/modes/enabled files,
+  and dmesg `Cannot find any crtc or sizes`.
+- HDMI capture device 1 / DirectShow / 800x600 captured stable color bars.
+- Ethernet remained good: board pinged PC `192.168.1.2` with 2/2 received.
+
+Board action:
+
+- Replaced `image.ub` on the TF-card FAT boot partition from the running board
+  over Ethernet using `wget`; backed up the old `image.ub` on the same
+  partition; rebooted from TF card. No JTAG programming, SRAM programming,
+  QSPI, NAND, eMMC, or other nonvolatile board storage writes.
+
+Evidence:
+
+- `docs/reports/hdmi-linux-display-stack.md`
+- `build/hdmi-linux-display-stack/petalinux-build.log`
+- `build/hdmi-linux-display-stack/uart_board_image_update_session.log`
+- `build/hdmi-linux-display-stack/uart_board_reboot_session.log`
+- `build/hdmi-linux-display-stack/uart_board_drm_probe_session.log`
+- `build/hdmi-linux-display-stack/hdmi-capture-device1-dshow/latest.png`
+
+Result:
+
+- PARTIAL. Linux now exposes `/dev/dri/card0` for the PL display pipeline, and
+  HDMI output is physically present. Linux cannot yet control the HDMI image
+  because no connector/mode provider exists.
+
+Residual risks:
+
+- The current VTC instance has no AXI-Lite register interface, so the Linux VTC
+  bridge cannot be represented correctly without a Vivado BD change.
+- A VTC bridge alone is not enough; the DRM stack still needs a connector/mode
+  provider for the fixed rgb2dvi HDMI output.
+- The next cycle must make a Linux userspace modeset or fbdev write visibly
+  change HDMI output before the Ethernet video receiver cycle is opened.

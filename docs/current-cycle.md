@@ -1,6 +1,6 @@
 # Current Cycle
 
-Status: no active implementation cycle.
+Status: no active implementation cycle is open.
 
 ## Rule
 
@@ -46,6 +46,19 @@ placeholder.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: hdmi-linux-display-stack
+Result: PARTIAL. The project image now enables Xilinx PL display DRM
+  (CONFIG_DRM_XLNX=y, CONFIG_DRM_XLNX_PL_DISP=y), boots from the TF card, and
+  exposes /dev/dri/card0. HDMI capture still sees stable 800x600 color bars.
+  The image is not yet Linux-controllable because DRM has no connector/mode
+  provider: /dev/fb* is absent, /sys/class/drm/card0 has no status/modes/enabled
+  files, and dmesg says "[drm] Cannot find any crtc or sizes".
+Evidence: docs/reports/hdmi-linux-display-stack.md
+Board action: replaced image.ub on the TF-card FAT boot partition via board
+  Linux wget over Ethernet, backed up the old image.ub on the same partition,
+  rebooted from TF card, and captured UART/HDMI evidence. No JTAG programming,
+  QSPI, NAND, eMMC, or other nonvolatile board storage writes.
+
 Cycle ID: petalinux-vdma-hdmi-minimal-project
 Result: PASSED. The VDMA HDMI hardware description was made Linux-consumable by
   connecting VDMA MM2S/S2MM interrupts to PS IRQ_F2P. PetaLinux 2018.3 built
@@ -67,9 +80,7 @@ Board action: booted generated image from TF card only; no JTAG programming,
 
 ## Active Cycle
 
-```text
-None.
-```
+No active implementation cycle is open.
 
 ## Resolved Route Gate
 
@@ -122,23 +133,27 @@ layer. Do not resume this work.
 ## Next Cycle Direction
 
 ```text
-Cycle ID: hdmi-dtb-patch
-Objective: if the project image boots and VDMA probes but HDMI output remains
-  absent, add the missing Linux video-output device-tree description for the
-  rgb2dvi / v_axi4s_vid_out / VTC chain and repack image.ub.
-Scope: device-tree patch/repack plus TF-card boot verification only; no Vivado
-  rebuild unless dtb-only patching is proven insufficient; no QSPI, NAND, eMMC,
-  or other nonvolatile board storage writes.
-Verification plan: only open after vdma-boot-probe-verify passes. Patch or
-  overlay the generated dtb, repack image.ub, boot, and verify HDMI capture plus
-  relevant DRM/fb/video dmesg.
-Board action: boot patched image from TF card.
-Evidence target: docs/reports/hdmi-dtb-patch.md
-Closure criteria: HDMI output is visible on the PC capture device, or the report
-  captures the next root blocker.
+Cycle ID: hdmi-linux-fixed-mode-connector
+Objective: make the existing /dev/dri/card0 usable by adding connector/mode
+  information for the fixed 800x600 rgb2dvi HDMI output, without returning to
+  userspace /dev/mem register ownership.
+Scope: Linux display-stack ownership only. Prefer an existing fixed-mode DRM
+  connector/bridge path if one is available in Linux 4.14/Xilinx 2018.3; if not,
+  add the smallest fixed-mode connector/bridge driver or hardware-description
+  change needed to expose a mode. VTC AXI-Lite may be enabled only if it is
+  needed for the selected connector/timing path.
+Verification plan: boot the updated image, require /dev/dri/card0 plus at
+  least one connector mode or /dev/fb0, run a minimal userspace modeset/fb test,
+  and capture HDMI output changing under Linux control.
+Board action: boot updated image from TF card and run a minimal DRM/fb display
+  test. No QSPI, NAND, eMMC, or other nonvolatile board storage writes.
+Evidence target: docs/reports/hdmi-linux-fixed-mode-connector.md
+Closure criteria: a Linux userspace test changes the HDMI image through DRM or
+  fbdev, and HDMI capture records the changed frame.
 Highest-risk assumption this cycle falsifies:
-  The missing HDMI output is primarily a Linux device-tree visibility issue,
-  not a Vivado hardware-path issue.
+  The current rgb2dvi HDMI chain can be represented to Linux as a fixed-mode
+  connector/mode without replacing the whole video pipeline.
 Cheapest alternative way to falsify the same assumption:
-  Inspect dmesg and /dev nodes from the previous cycle before editing any dtb.
+  Inspect local 2018.3 DRM bridge/connector/panel drivers and test a DT-only
+  fixed-mode connector before changing Vivado hardware.
 ```

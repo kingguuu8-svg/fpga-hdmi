@@ -1,0 +1,16 @@
+/include/ "system-conf.dtsi"
+
+/ {
+	drm_pl_disp: drm-pl-disp-drv {
+		compatible = "xlnx,pl-disp";
+		dmas = <&axi_vdma_0 0>;
+		dma-names = "dma0";
+		xlnx,vformat = "RG24";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		pl_disp_port: port@0 {
+			reg = <0>;
+		};
+	};
+};

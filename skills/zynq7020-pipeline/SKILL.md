@@ -114,9 +114,37 @@ Current result for the generated image:
 Boot/probe PASSED: Linux boots, eth0 links at 1000/Full, PC ping is 4/4 with
 0% loss, and 43000000.dma binds to xilinx-vdma.
 
-Display output is not yet Linux-ready: /dev/dri and /dev/fb* are absent. The
-next shortest path is a device-tree/display-stack patch for rgb2dvi /
-v_axi4s_vid_out / VTC, not more Ethernet or VDMA interrupt debugging.
+Display output follow-up (2026-06-30):
+/dev/dri/card0 now exists after enabling CONFIG_DRM_XLNX and
+CONFIG_DRM_XLNX_PL_DISP and adding an xlnx,pl-disp DT node. HDMI capture still
+shows stable 800x600 color bars. The path is not yet Linux-controllable:
+/dev/fb* is absent, card0 has no status/modes/enabled connector files, and
+dmesg reports "[drm] Cannot find any crtc or sizes".
+```
+
+Verified PetaLinux PL-display overlay path (2026-06-30):
+
+```text
+1. Apply the repository overlay to the WSL PetaLinux project:
+   rtk wsl -d Ubuntu-22.04 -- bash /mnt/e/main/fpga-hdml/software/petalinux/hdmi-linux-display-stack/apply-overlay.sh /home/petalinux/fpga-hdml-build/petalinux/vdma-hdmi-minimal-bionic
+2. If kernel config fragments do not refresh, force kernel config metadata:
+   rtk wsl -d Ubuntu-22.04 -u root -- bash /mnt/e/main/fpga-hdml/software/petalinux/hdmi-linux-display-stack/run-command-in-chroot.sh /opt/chroots/ubuntu18-petalinux2018 /home/petalinux/fpga-hdml-build/petalinux/vdma-hdmi-minimal-bionic bash -lc 'source /opt/petalinux-v2018.3/components/yocto/source/layers/core/oe-init-build-env build >/tmp/oe-init.log && bitbake virtual/kernel -c kernel_configme -f'
+3. Build in the verified Ubuntu 18.04 chroot:
+   rtk wsl -d Ubuntu-22.04 -u root -- bash /mnt/e/main/fpga-hdml/software/petalinux/hdmi-linux-display-stack/build-in-chroot.sh /opt/chroots/ubuntu18-petalinux2018 /home/petalinux/fpga-hdml-build/petalinux/vdma-hdmi-minimal-bionic /mnt/e/main/fpga-hdml/build/hdmi-linux-display-stack
+4. Verify generated artifacts before board update:
+   - kernel build .config has CONFIG_DRM_XLNX=y and CONFIG_DRM_XLNX_PL_DISP=y
+   - decompiled system.dtb contains drm-pl-disp-drv compatible "xlnx,pl-disp"
+   - image.ub hash is recorded in the cycle report
+5. If the TF card is in the board, update image.ub without removing it:
+   - serve build/hdmi-linux-display-stack/image.ub from the PC on 192.168.1.2
+   - board wget downloads to /tmp/image.ub.new
+   - board verifies sha256, backs up /run/media/mmcblk0p1/image.ub, copies the
+     new image, syncs, and reboots
+6. After reboot, require:
+   - Linux kernel build number changed
+   - /dev/dri/card0 exists
+   - dmesg shows xilinx-vdma probe and xlnx-pl-disp probe
+   - current known blocker is recorded if no connector/modes exist
 ```
 
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is

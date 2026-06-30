@@ -91,7 +91,12 @@ Phase A:
   DONE - official Linux image boots and responds to ping over Ethernet
 
 Phase B:
-  PetaLinux project + Linux socket receiver + Ethernet video + HDMI output
+  IN PROGRESS - PetaLinux project + Linux socket receiver + Ethernet video +
+  HDMI output
+  Current gate: Linux now exposes /dev/dri/card0 for xlnx,pl-disp, but HDMI is
+  not yet Linux-controllable because there is no connector/mode/fbdev provider.
+  Resolve the fixed-mode HDMI connector/mode gate before opening the Ethernet
+  video receiver cycle.
 
 Phase C:
   Same command protocol over TCP/UDP
