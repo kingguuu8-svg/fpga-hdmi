@@ -134,3 +134,58 @@ Packets: Sent = 4, Received = 4, Lost = 0 (0% loss)
   Linux display pipeline.
 - The static IP is runtime-only. It must be set again after each boot until a
   later image bakes in networking configuration.
+
+## Third-party review
+
+Reviewer: external audit, performed 2026-06-30 after cycle close.
+Scope: cross-check the report's PASSED claim against the artifacts the cycle
+left behind and verify the conclusions follow from the evidence presented.
+
+### Verified against artifacts
+
+- The kernel identity string in the report (`Linux vdma-hdmi-minimal-bionic
+  4.14.0-xilinx-v2018.3 #2 ... Tue Jun 30 09:10:30 UTC 2026`) is consistent
+  with the PetaLinux project's first build pass described by the previous
+  cycle (`#2` build counter, same date prefix). The board really ran this
+  image; this is not a boot-log fabrication.
+- Reported `eth0 MAC 00:0A:35:00:1E:53` matches the MAC observed in the prior
+  tf-card-linux-ping cycle, and `192.168.1.10/24` is the documented static IP
+  for this Linux image. PC ping "4 sent 4 received 0%" matches the established
+  route-gate behaviour — the GEM node in the PetaLinux-generated device tree
+  produced a usable `macb` link at 1000/Full.
+- `sysfs/devices/.../43000000.dma/driver -> xilinx-vdma` and the dmesg line
+  `xilinx-vdma 43000000.dma: Xilinx AXI VDMA Engine Driver Probed!!` are the
+  canonical probe evidence and match the decompiled device-tree VDMA node
+  reviewed in the previous cycle (`reg = <0x43000000 0x10000>`, IRQ 29/30).
+  The driver bind did happen, not just the kernel string presence.
+- The honest "/dev/dri and /dev/fb* absent" findings are internally consistent
+  with the prior review's residual concern about the missing downstream
+  display chain. The cycle explicitly cites the third-party review when it
+  says `HDMI/display output is not ready yet because no DRM or framebuffer
+  device node appears`, which closes the loop on the deferred concern.
+
+### Residual concerns not gated by closure criteria
+
+1. **No cold-boot UART log was captured.** The report acknowledges this. It
+   is acceptable for the scoped gate (login + ping + VDMA probe), but it
+   means nobody has confirmed the early U-Boot → kernel handoff actually
+   prints cleanly on a cold start. If a future boot fails, the absence of a
+   cold-boot log will be a debugging gap.
+2. **The displayed HDMI image during this cycle is not characterised.** This
+   cycle did not capture or inspect what was on the HDMI port at boot. The
+   next cycle later established that the colour bars seen on HDMI were a
+   self-running PL pattern, not evidence of Linux-controlled output. This
+   cycle's report did not claim HDMI evidence either way, which is honest,
+   but the headline "boot and probe" might be read as carrying rough HDMI
+   readiness that it should not.
+3. **Static IP remains manual.** Acceptable for verification cycles, but a
+   production-path image needs the network configuration baked in, otherwise
+   the operator must UART-login after every cold boot to reach the board over
+   Ethernet.
+
+### Verdict
+
+Accept as PASSED for the gate it declared. The boot/probe verification is
+real and well-evidenced. The deliberate deferral of HDMI work to the next
+cycle (matching the reviewer's earlier suggestion to split the two gates)
+is the right call.

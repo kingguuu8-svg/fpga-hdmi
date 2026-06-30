@@ -191,3 +191,100 @@ Report:
 - The FAT boot partition reported an unclean unmount warning after reboot.
   This did not block boot, but the old-image backup should remain until the next
   known-good image is proven.
+
+## Third-party review
+
+Reviewer: external audit, performed 2026-06-30 after cycle close.
+Scope: independently verify the new image's SHA256 and the device-tree content
+of both the image.ub FIT blob and the standalone system.dtb; assess whether
+the PARTIAL status honestly reflects the actual state.
+
+### Independently verified
+
+- **Artifacts are real.** SHA256 of
+  `build/hdmi-linux-display-stack/image.ub` is
+  `1611905a44de1100e6fb30ba1b18c4fc61927063d041b7c01bede6ddbf3165a1`,
+  matching the cycle report exactly. SHA256 of `system.dtb` is
+  `2be6088b4598a90a4d6b1fd089c784ba53fd2c6a74674d005aee3b6fee73070f`, also
+  matching.
+- **The pl-disp device-tree node is real and consistent across both blobs.**
+  Independently extracted the FIT image.ub and decompiled its embedded FDT,
+  and also decompiled the standalone system.dtb. Both contain the same
+  `drm-pl-disp-drv` node:
+  ```
+  compatible = "xlnx,pl-disp";
+  dmas = <0x06 0x00>;       /* phandle to axi_vdma_0, channel 0 */
+  dma-names = "dma0";
+  xlnx,vformat = "RG24";
+  port@0 { reg = <0x00>; };
+  ```
+  This matches the `system-user.dtsi` committed to git. The DMA phandle 0x06
+  resolves correctly; the kernel `dmesg` line `xlnx-drm xlnx-drm.0: bound
+  drm-pl-disp-drv` is the expected driver binding output for this node.
+- **The kernel rebuild really happened.** The report's kernel version string
+  (`#4 SMP PREEMPT Tue Jun 30 12:01:21 UTC 2026`) is a higher build counter
+  than the previous cycle's `#2`, and the CONFIG_DRM_XLNX=y setting is the
+  added fragment changed via bbappend + user.cfg. The `linux-xlnx_%.bbappend`
+  mechanism in `software/petalinux/hdmi-linux-display-stack/` is committed
+  and tracks the kernel config delta durably — this is the legitimate way to
+  inject `CONFIG_*` overrides in PetaLinux 2018.3, not a hack of the cached
+  kernel source.
+- **The HTTP-push update path is plausibly real.** The board was running
+  (TF card in board, not in the reader), and the report describes using wget
+  from the board against a PC HTTP server at 192.168.1.2:8000 plus SHA256
+  verification before replacing image.ub. The D: drive is no longer visible
+  from Windows, which is consistent with the card being held by the board.
+  This update path eliminated a card-swap cycle and proved an in-place Linux
+  updater works — useful infrastructure for future cycles.
+
+### Residual concerns the closure criteria did not cover
+
+1. **The cycle's HDMI capture evidence does not prove Linux owns the
+   displayed image.** The report correctly recognises this risk in its
+   Residual Risks section, but the headline `/dev/dri/card0 exists` plus
+   "800x600 SMPTE-like color bars on capture" can be misread. The actual
+   state is:
+   - `/dev/dri/card0` exists and the `xlnx-pl-disp` driver probed.
+   - DRM KMS reported `Cannot find any crtc or sizes` — Linux has no CRTC,
+     no connector, no encoder, and therefore no modeset capability.
+   - The 800x600 colour bars on the HDMI output are almost certainly the
+     PL design's self-running pattern (carried by the VDMA + rgb2dvi PL
+     pipeline from the BOOT.BIN bitstream, independent of Linux). Linux did
+     not produce them.
+   - So the captured image proves the physical HDMI port is alive; it does
+     not prove Linux can drive any pixel of it.
+2. **The `port@0` node in system-user.dtsi is empty.** A real DRM bridge
+   node (a `rgb2dvi` or fixed-mode encoder/connector) would normally connect
+   here via the OF graph (`endpoint`). The empty port is why DRM sees no
+   endpoint/bridge. Codex correctly diagnosed this as requiring the
+   downstream VTC/rgb2dvi bridge, but the dtsi stops short of declaring even
+   a dummy/fixed-mode connector. The next cycle should explore adding a
+   fixed-mode `drm_bridge` / `panel`/`connector` node under `port@0`, since
+   the existing `rgb2dvi` PL IP has no Linux encoder driver — a fixed
+   800x600 connector of type `panel-dpi` or a custom `drm_bridge` stub may
+   be enough to get a controllable CRTC.
+3. **Empirical verification of userspace DRM display is still missing.** No
+   cycle has yet run `modetest` or `kmstest` against `/dev/dri/card0` to show
+   that a Linux application can actually push a frame to the HDMI output.
+   Until that exists, "Linux-managed HDMI output" is an architectural
+   expectation, not a demonstrated fact.
+4. **The PetaLinux project work dir still contains the old image.ub SHA** —
+   `build/petalinux/vdma-hdmi-minimal-bionic/images/image.ub` hashes to
+   `8fc698...` (previous cycle's VDMA-only build), not the new DRM build.
+   This is likely because Codex copied the new image elsewhere before the
+   bbappend rebuild fully wrote to the canonical path, but it means the
+   PetaLinux project directory is not itself a faithful snapshot of the
+   currently booting image. Future cycles should keep a single source of
+   truth for "what is on the card right now".
+
+### Verdict
+
+Accept as PARTIAL, exactly as the cycle declares. The cycle did real work:
+it identified that a kernel config bump (CONFIG_DRM_XLNX=y) was required,
+made it via the correct PetaLinux bbappend mechanism, generated real
+artifacts with verified hashes, and boot-on-board confirmed the new driver
+probed and a DRM card node appeared. The deferred-but-correctly-flagged gap
+is that `/dev/dri/card0` is an empty KMS cage: a card node with no
+connector, no CRTC, no modes, no modeset capability. The 800x600 capture
+proves HDMI physical output, not Linux ownership of any pixel. The next
+cycle must add a connector/bridge node so DRM actually owns the output.
