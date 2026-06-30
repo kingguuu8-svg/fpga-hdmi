@@ -454,3 +454,71 @@ Residual risks:
   `/home/petalinux/fpga-hdml-build/petalinux/vdma-hdmi-minimal-bionic`; the
   repo only keeps source changes and concise evidence, not the full generated
   Yocto project.
+
+## 2026-06-30 - vdma-boot-probe-verify
+
+Commit: this commit (`cycle: verify project image boot and VDMA probe`)
+
+Objective:
+
+Boot the generated project TF-card image and verify the shortest Linux runtime
+gate: UART login, Ethernet ping, VDMA driver binding, and display device-node
+status.
+
+Changed scope:
+
+- Opened and closed `vdma-boot-probe-verify` in `docs/current-cycle.md`.
+- Added `docs/reports/vdma-boot-probe-verify.md`.
+- Added `tools/uart_run_commands.ps1`, a reusable UART command runner for
+  hardware cycles that need to log in and collect shell evidence.
+- Updated the pipeline skill with the verified project-image boot/probe path.
+
+Verification:
+
+- UART COM16 is still the CH340 board UART.
+- Project image reached PetaLinux userspace and login prompt.
+- Login succeeded with `root/root`.
+- Kernel identity:
+  `Linux vdma-hdmi-minimal-bionic 4.14.0-xilinx-v2018.3`.
+- Runtime Ethernet configuration:
+  `eth0 192.168.1.10/24`, MAC `00:0A:35:00:1E:53`, link `1000/Full`.
+- PC ping result: 4/4 received, 0% loss.
+- VDMA probe evidence:
+  `xilinx-vdma 43000000.dma: Xilinx AXI VDMA Engine Driver Probed!!`.
+- sysfs binding evidence:
+  `/sys/bus/platform/devices/43000000.dma/driver` points to
+  `bus/platform/drivers/xilinx-vdma`.
+- VDMA compatible strings:
+  `xlnx,axi-vdma-6.3`, `xlnx,axi-vdma-1.00.a`.
+- Display-device evidence:
+  `/dev/dri` and `/dev/fb*` do not exist.
+
+Board action:
+
+- Booted generated image from TF card. No JTAG programming, SRAM programming,
+  QSPI, NAND, eMMC, or other nonvolatile board storage writes.
+
+Evidence:
+
+- `docs/reports/vdma-boot-probe-verify.md`
+- `build/vdma-boot-probe-verify/uart_newline_probe.log`
+- `build/vdma-boot-probe-verify/uart_probe_session_root_root.log`
+- `build/vdma-boot-probe-verify/uart_sysfs_vdma_probe_session.log`
+
+Result:
+
+- Boot/probe gate PASSED. The project-built TF-card image boots, Ethernet
+  works, and VDMA probes under Linux.
+- HDMI/display output remains unresolved. The next cycle should patch/repack
+  the Linux device tree or display stack for the rgb2dvi / v_axi4s_vid_out /
+  VTC chain, rather than revisiting boot, Ethernet, or VDMA interrupt wiring.
+
+Residual risks:
+
+- A full cold-boot UART log was not captured because the board was already at
+  the login prompt when probed. Userspace login and runtime kernel evidence were
+  captured, so this does not block the boot/probe gate.
+- Static IP is runtime-only and must be set again after reboot until a later
+  image bakes in networking configuration.
+- No HDMI output device exists yet from Linux's perspective; this is the next
+  cycle's target.

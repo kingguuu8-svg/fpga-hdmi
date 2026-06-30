@@ -89,5 +89,35 @@ Verified PetaLinux build path for the active VDMA HDMI image (2026-06-30):
    verify hashes before booting the board.
 ```
 
+Verified project-image boot/probe path (2026-06-30):
+
+```text
+1. Boot the generated project image from the TF card.
+2. If no new UART output appears, send Enter on COM16; an already-booted board
+   may be sitting at:
+   vdma-hdmi-minimal-bionic login:
+3. Log in as root/root for the generated PetaLinux image.
+4. Configure direct-link Ethernet when DHCP is absent:
+   ifconfig eth0 192.168.1.10 netmask 255.255.255.0 up
+5. Clear stale PC ARP and ping 192.168.1.10 from the PC.
+6. Require 4/4 ping before continuing video work.
+7. Confirm VDMA probe:
+   dmesg | grep -i vdma
+   readlink /sys/bus/platform/devices/43000000.dma/driver
+8. Confirm whether Linux exposes a display node:
+   ls -l /dev/dri /dev/fb* 2>&1
+```
+
+Current result for the generated image:
+
+```text
+Boot/probe PASSED: Linux boots, eth0 links at 1000/Full, PC ping is 4/4 with
+0% loss, and 43000000.dma binds to xilinx-vdma.
+
+Display output is not yet Linux-ready: /dev/dri and /dev/fb* are absent. The
+next shortest path is a device-tree/display-stack patch for rgb2dvi /
+v_axi4s_vid_out / VTC, not more Ethernet or VDMA interrupt debugging.
+```
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

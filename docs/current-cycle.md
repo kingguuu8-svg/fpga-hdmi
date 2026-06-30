@@ -53,6 +53,16 @@ Result: PASSED. The VDMA HDMI hardware description was made Linux-consumable by
   image.ub to the ZYNQBOOT TF-card partition with matching SHA256 hashes.
 Evidence: docs/reports/petalinux-vdma-hdmi-minimal-project.md
 Board action: TF-card file write only; no board boot or nonvolatile flash write.
+
+Cycle ID: vdma-boot-probe-verify
+Result: PASSED. The project-built TF-card image boots to Linux userspace,
+  accepts root/root over UART, eth0 links at 1000/Full and pings from the PC
+  with 0% loss, and the VDMA node binds to the xilinx-vdma platform driver.
+  No /dev/dri or /dev/fb* node appears, so HDMI/display output remains a
+  separate device-tree/display-stack follow-up.
+Evidence: docs/reports/vdma-boot-probe-verify.md
+Board action: booted generated image from TF card only; no JTAG programming,
+  QSPI, NAND, eMMC, or other nonvolatile board storage writes.
 ```
 
 ## Active Cycle
@@ -112,21 +122,23 @@ layer. Do not resume this work.
 ## Next Cycle Direction
 
 ```text
-Cycle ID: petalinux-vdma-hdmi-boot-verify
-Objective: boot the generated TF-card image and confirm UART login, eth0 link,
-  static IP, PC ping, and any HDMI/VDMA-related kernel/device-tree status.
-Scope: hardware boot verification only; no QSPI, NAND, eMMC, or other
-  nonvolatile board storage writes.
-Verification plan: insert TF card, SD boot, UART capture, static IP, ping,
-  inspect dmesg for macb and VDMA/video nodes.
-Board action: boot generated image from TF card.
-Evidence target: docs/reports/petalinux-vdma-hdmi-boot-verify.md
-Closure criteria: generated image boots and preserves Ethernet ping, or the
-  report captures the boot failure root evidence.
+Cycle ID: hdmi-dtb-patch
+Objective: if the project image boots and VDMA probes but HDMI output remains
+  absent, add the missing Linux video-output device-tree description for the
+  rgb2dvi / v_axi4s_vid_out / VTC chain and repack image.ub.
+Scope: device-tree patch/repack plus TF-card boot verification only; no Vivado
+  rebuild unless dtb-only patching is proven insufficient; no QSPI, NAND, eMMC,
+  or other nonvolatile board storage writes.
+Verification plan: only open after vdma-boot-probe-verify passes. Patch or
+  overlay the generated dtb, repack image.ub, boot, and verify HDMI capture plus
+  relevant DRM/fb/video dmesg.
+Board action: boot patched image from TF card.
+Evidence target: docs/reports/hdmi-dtb-patch.md
+Closure criteria: HDMI output is visible on the PC capture device, or the report
+  captures the next root blocker.
 Highest-risk assumption this cycle falsifies:
-  The project-built image preserves the board's known-good Linux Ethernet path
-  while using our VDMA HDMI hardware description.
+  The missing HDMI output is primarily a Linux device-tree visibility issue,
+  not a Vivado hardware-path issue.
 Cheapest alternative way to falsify the same assumption:
-  Boot without HDMI validation first; if UART or Ethernet fails, stop before
-  debugging the video stack.
+  Inspect dmesg and /dev nodes from the previous cycle before editing any dtb.
 ```
