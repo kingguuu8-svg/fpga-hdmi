@@ -70,5 +70,24 @@ for network-video work):
 8. ping 192.168.1.10 from PC.
 ```
 
+Verified PetaLinux build path for the active VDMA HDMI image (2026-06-30):
+
+```text
+1. Build or rebuild examples/eth-ps-pl-hdmi-pass-through with:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File examples\eth-ps-pl-hdmi-pass-through\tcl\build-stage1-vdma-board-wsl.ps1
+2. Require STAGE1_VDMA_BOARD_BUILD_OK, non-negative WNS, and DRC with no errors.
+3. Inspect the HDF if device-tree generation fails. The VDMA interrupts must
+   terminate at processing_system7_0/IRQ_F2P. In the verified design:
+   axi_vdma_0/mm2s_introut -> vdma_irq_concat/In0
+   axi_vdma_0/s2mm_introut -> vdma_irq_concat/In1
+   vdma_irq_concat/dout -> processing_system7_0/IRQ_F2P[15:0]
+4. Use the Ubuntu 18.04 chroot at /opt/chroots/ubuntu18-petalinux2018, not
+   direct Ubuntu 22.04, for PetaLinux 2018.3 full image builds.
+5. Re-import the HDF, run petalinux-build, then package:
+   petalinux-package --boot --fsbl images/linux/zynq_fsbl.elf --fpga <bit> --u-boot images/linux/u-boot.elf --force -o images/linux/BOOT.BIN
+6. Copy BOOT.BIN and image.ub to the ZYNQBOOT FAT32 TF-card partition and
+   verify hashes before booting the board.
+```
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

@@ -383,3 +383,74 @@ Residual risks:
   TF-card boot first.
 - The next cycle must still prove that a project-built PetaLinux image preserves
   the known-good Ethernet path and exposes a usable VDMA/HDMI path.
+
+## 2026-06-30 - petalinux-vdma-hdmi-minimal-project
+
+Commit: this commit (`cycle: build PetaLinux VDMA HDMI TF image`)
+
+Objective:
+
+Create and build a minimal PetaLinux 2018.3 project from the VDMA HDMI hardware
+description, package boot artifacts, and write them to the TF-card boot
+partition.
+
+Changed scope:
+
+- Fixed the VDMA HDMI Vivado BD generator so `axi_vdma_0/mm2s_introut` and
+  `axi_vdma_0/s2mm_introut` connect through `vdma_irq_concat` to
+  `processing_system7_0/IRQ_F2P`.
+- Added a hard Tcl check that fails the Vivado build if PS `IRQ_F2P` is not
+  exposed after enabling fabric interrupts.
+- Recorded the Ubuntu 18.04 chroot as the preferred PetaLinux 2018.3 build
+  host under WSL.
+- Added the cycle report for the PetaLinux VDMA HDMI minimal project.
+- Updated the current-cycle file to close this cycle and point the next cycle
+  at board boot verification.
+
+Verification:
+
+- Vivado batch rebuild passed for `eth_ps_vdma_hdmi_stage1_board`.
+- Timing passed with WNS = 0.347 ns.
+- Post-route DRC reported 0 errors and 0 critical warnings.
+- HDF inspection confirmed `PCW_IRQ_F2P_INTR=1`,
+  `C_NUM_F2P_INTR_INPUTS=16`, and VDMA IRQ connections to PS `IRQ_F2P`.
+- PetaLinux `petalinux-build` succeeded in the Ubuntu 18.04 chroot:
+  3065 tasks attempted, all succeeded.
+- `petalinux-package --boot` generated `BOOT.BIN`.
+- SHA256 hashes matched between PetaLinux output, repo artifact snapshot, and
+  `D:\` TF-card boot partition.
+- Simulation was not run; this cycle used Vivado BD validation, implementation,
+  timing/DRC, HDF inspection, and PetaLinux device-tree generation as the
+  automated verification gates for the interrupt-topology fix.
+
+Board action:
+
+- TF-card file write only: copied `BOOT.BIN` and `image.ub` to `D:\`
+  (`ZYNQBOOT`, FAT32, removable). No board boot, SRAM programming, QSPI, NAND,
+  or eMMC write in this cycle.
+
+Evidence:
+
+- `docs/reports/petalinux-vdma-hdmi-minimal-project.md`
+- `build/eth-ps-pl-hdmi-pass-through/vdma-board/reports/stage1_vdma_board_console.log`
+- `build/petalinux/vdma-hdmi-minimal-bionic/images/BOOT.BIN`
+- `build/petalinux/vdma-hdmi-minimal-bionic/images/image.ub`
+- `D:\BOOT.BIN`
+- `D:\image.ub`
+
+Result:
+
+- PetaLinux VDMA HDMI boot artifacts are built and written to the TF card.
+- The original PetaLinux device-tree failure is resolved at the correct layer:
+  the hardware description now exposes VDMA interrupts to the PS interrupt
+  controller.
+
+Residual risks:
+
+- The generated TF-card image has not yet been booted on the board.
+- Ethernet and HDMI behavior under this project-built image remain unverified
+  until the next hardware cycle.
+- The PetaLinux project lives under the WSL ext4 path
+  `/home/petalinux/fpga-hdml-build/petalinux/vdma-hdmi-minimal-bionic`; the
+  repo only keeps source changes and concise evidence, not the full generated
+  Yocto project.

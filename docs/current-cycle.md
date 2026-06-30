@@ -33,12 +33,19 @@ cycle open time; they are not a self-audit checklist for cycle close.
 ## Recently Closed Cycle
 
 ```text
-Cycle ID: petalinux-wsl-install-2018.3
-Result: PASSED. PetaLinux 2018.3 is installed in WSL Ubuntu 22.04 at
-  /opt/petalinux-v2018.3. Core commands are available after sourcing
-  settings.sh in a clean non-root petalinux user environment.
-Evidence: docs/reports/petalinux-wsl-install-2018.3-2026-06-29.md
-Board action: none; host tooling only.
+Cycle ID: petalinux-vdma-hdmi-minimal-project
+Result: PASSED. The VDMA HDMI hardware description was made Linux-consumable by
+  connecting VDMA MM2S/S2MM interrupts to PS IRQ_F2P. PetaLinux 2018.3 built
+  image.ub in the Ubuntu 18.04 chroot, packaged BOOT.BIN, and copied BOOT.BIN +
+  image.ub to the ZYNQBOOT TF-card partition with matching SHA256 hashes.
+Evidence: docs/reports/petalinux-vdma-hdmi-minimal-project.md
+Board action: TF-card file write only; no board boot or nonvolatile flash write.
+```
+
+## Active Cycle
+
+```text
+None.
 ```
 
 ## Resolved Route Gate
@@ -92,26 +99,21 @@ layer. Do not resume this work.
 ## Next Cycle Direction
 
 ```text
-Cycle ID: petalinux-vdma-hdmi-minimal-project
-Objective: create the first minimal PetaLinux project from the VDMA HDMI
-  hardware design and build/boot an image that preserves the confirmed Ethernet
-  path.
-Scope: project creation, hardware-description import, minimal rootfs/kernel
-  configuration, image build, TF-card boot, UART + Ethernet verification.
-Verification plan: petalinux-create/config/build/package, boot from TF card,
-  confirm UART login, eth0 link, static IP, and PC ping.
-Board action: boot generated image from TF card only; do not write QSPI, NAND,
-  eMMC, or other nonvolatile board storage.
-Evidence target: docs/reports/petalinux-vdma-hdmi-minimal-project.md
-Closure criteria: generated image boots, eth0 works at least as well as the
-  official Linux route-gate image, and the report records build commands and
-  residual VDMA/HDMI risks.
+Cycle ID: petalinux-vdma-hdmi-boot-verify
+Objective: boot the generated TF-card image and confirm UART login, eth0 link,
+  static IP, PC ping, and any HDMI/VDMA-related kernel/device-tree status.
+Scope: hardware boot verification only; no QSPI, NAND, eMMC, or other
+  nonvolatile board storage writes.
+Verification plan: insert TF card, SD boot, UART capture, static IP, ping,
+  inspect dmesg for macb and VDMA/video nodes.
+Board action: boot generated image from TF card.
+Evidence target: docs/reports/petalinux-vdma-hdmi-boot-verify.md
+Closure criteria: generated image boots and preserves Ethernet ping, or the
+  report captures the boot failure root evidence.
 Highest-risk assumption this cycle falsifies:
-  A project-built PetaLinux 2018.3 image can reproduce the board's known-good
-  Linux Ethernet path while using our VDMA HDMI hardware description.
+  The project-built image preserves the board's known-good Linux Ethernet path
+  while using our VDMA HDMI hardware description.
 Cheapest alternative way to falsify the same assumption:
-  Before a full image build, create/configure the project and inspect generated
-  device tree / macb / PHY / clock nodes against the official boot log and board
-  facts. If the hardware import cannot preserve Ethernet, stop before a full
-  build.
+  Boot without HDMI validation first; if UART or Ethernet fails, stop before
+  debugging the video stack.
 ```

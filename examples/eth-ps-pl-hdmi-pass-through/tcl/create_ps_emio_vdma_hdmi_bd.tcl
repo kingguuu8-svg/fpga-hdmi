@@ -41,6 +41,8 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
         CONFIG.PCW_EN_ENET0 {1} \
         CONFIG.PCW_EN_EMIO_UART0 {1} \
         CONFIG.PCW_EN_UART0 {1} \
+        CONFIG.PCW_IRQ_F2P_INTR {1} \
+        CONFIG.PCW_USE_FABRIC_INTERRUPT {1} \
         CONFIG.PCW_UART0_BAUD_RATE {115200} \
         CONFIG.PCW_UART0_PERIPHERAL_ENABLE {1} \
         CONFIG.PCW_UART0_UART0_IO {EMIO} \
@@ -83,6 +85,48 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
     if {[llength [get_bd_ports -quiet IDELAY_REF_CLK]] == 0} {
         create_bd_port -dir O IDELAY_REF_CLK
         connect_bd_net [get_bd_ports IDELAY_REF_CLK] [get_bd_pins clk_wiz_0/clk_out2]
+    }
+
+    # PetaLinux device-tree generation requires the AXI VDMA interrupt outputs
+    # to terminate at the PS interrupt controller. The official HDMI-only
+    # project can run without these connections, but Linux cannot describe the
+    # VDMA node correctly when the interrupt pins are left floating.
+    if {[llength [get_bd_cells -quiet vdma_irq_concat]] == 0} {
+        create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat:2.1 vdma_irq_concat
+        set_property -dict [list CONFIG.NUM_PORTS {16}] [get_bd_cells vdma_irq_concat]
+    }
+    if {[llength [get_bd_cells -quiet vdma_irq_zero]] == 0} {
+        create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 vdma_irq_zero
+        set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0}] \
+            [get_bd_cells vdma_irq_zero]
+    }
+
+    if {[llength [get_bd_nets -quiet vdma_mm2s_irq]] == 0} {
+        connect_bd_net -net vdma_mm2s_irq \
+            [get_bd_pins axi_vdma_0/mm2s_introut] \
+            [get_bd_pins vdma_irq_concat/In0]
+    }
+    if {[llength [get_bd_nets -quiet vdma_s2mm_irq]] == 0} {
+        connect_bd_net -net vdma_s2mm_irq \
+            [get_bd_pins axi_vdma_0/s2mm_introut] \
+            [get_bd_pins vdma_irq_concat/In1]
+    }
+    if {[llength [get_bd_nets -quiet vdma_irq_zero_net]] == 0} {
+        set zero_sinks {}
+        for {set irq_idx 2} {$irq_idx < 16} {incr irq_idx} {
+            lappend zero_sinks [get_bd_pins vdma_irq_concat/In$irq_idx]
+        }
+        connect_bd_net -net vdma_irq_zero_net \
+            [get_bd_pins vdma_irq_zero/dout] \
+            {*}$zero_sinks
+    }
+    if {[llength [get_bd_nets -quiet ps_irq_f2p]] == 0} {
+        if {[llength [get_bd_pins -quiet processing_system7_0/IRQ_F2P]] == 0} {
+            error "processing_system7_0/IRQ_F2P is not exposed after enabling PS fabric interrupts"
+        }
+        connect_bd_net -net ps_irq_f2p \
+            [get_bd_pins vdma_irq_concat/dout] \
+            [get_bd_pins processing_system7_0/IRQ_F2P]
     }
 
     validate_bd_design
