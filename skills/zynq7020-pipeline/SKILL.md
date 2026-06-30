@@ -254,5 +254,28 @@ The receiver can be controlled from the UART shell without stopping UDP receive
 or breaking HDMI output. The FIFO is the current fallback transport; TCP/UDP
 control remains a later transport for the same command semantics.
 
+Verified first board-side effect path (preferred when checking the software
+effect stage, 2026-06-30):
+
+```text
+1. Run the integrated probe:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_first_effect_probe.ps1
+2. The helper builds and host-tests the receiver, deploys it through a
+   one-shot PowerShell/.NET file server, starts it with --effect invert, sends
+   a deterministic generated rgb-stripes UDP frame, and captures HDMI.
+3. Require:
+   VIDEO_EFFECT_TEST_OK
+   /tmp/fb_video_udp_receiver: OK
+   VIDEO_UDP_LINUX_RECEIVER_READY ... effect=invert
+   VIDEO_UDP_FRAME_WRITTEN frame_id=200 ... effect=invert
+   VIDEO_UDP_RECEIVER_DONE frames=1 skipped=0 packets=1200 dropped=0
+   HDMI_CAPTURE_OK with validation-profile inverted-rgb-stripes
+   FIRST_EFFECT_PROBE_OK
+```
+
+Verified outcome:
+The board applies RGB invert to generated PC UDP input. This path does not use
+camera/webcam input; HDMI capture is only output verification.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

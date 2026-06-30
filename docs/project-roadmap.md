@@ -112,6 +112,8 @@ Phase C:
   IN PROGRESS - control path
   UART fallback gate: PASSED. The Linux receiver accepts pause/resume/status
   through a FIFO endpoint driven from the UART shell.
+  First effect gate: PASSED. The Linux receiver applies a board-side RGB invert
+  effect to generated PC UDP input; HDMI validates inverted output.
   Later: carry the same command semantics over TCP/UDP.
 
 Phase D:

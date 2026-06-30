@@ -158,6 +158,30 @@ def validate_rgb_stripes(frame: np.ndarray) -> tuple[bool, list[dict]]:
     return all(item["pass"] for item in results), results
 
 
+def validate_inverted_rgb_stripes(frame: np.ndarray) -> tuple[bool, list[dict]]:
+    h, w = frame.shape[:2]
+    x0 = w // 8
+    x1 = w - x0
+    stripe_rois = [
+        ("top_yellow", frame[h // 12 : h // 4, x0:x1], (0, 1), 2),
+        ("middle_magenta", frame[5 * h // 12 : 7 * h // 12, x0:x1], (0, 2), 1),
+        ("bottom_cyan", frame[3 * h // 4 : 11 * h // 12, x0:x1], (1, 2), 0),
+    ]
+    results = []
+    for name, roi, high_indices, low_index in stripe_rois:
+        rgb = roi.mean(axis=(0, 1))[::-1]
+        highs = [float(rgb[index]) for index in high_indices]
+        low = float(rgb[low_index])
+        passed = min(highs) > 180 and low < 60
+        results.append({
+            "name": name,
+            "expected": "two_channels_gt_180_and_remaining_channel_lt_60",
+            "rgb_mean": [round(float(value), 2) for value in rgb],
+            "pass": bool(passed),
+        })
+    return all(item["pass"] for item in results), results
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", default="auto", help="'auto' or a numeric OpenCV device index")
@@ -167,7 +191,7 @@ def main() -> int:
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--frames", type=int, default=45)
     parser.add_argument("--save-samples", type=int, default=0, help="save N evenly spaced captured frames")
-    parser.add_argument("--validation-profile", default="pip", choices=["pip", "rgb-stripes"])
+    parser.add_argument("--validation-profile", default="pip", choices=["pip", "rgb-stripes", "inverted-rgb-stripes"])
     parser.add_argument("--out-dir", default="build/reports/hdmi-capture")
     args = parser.parse_args()
 
@@ -178,7 +202,12 @@ def main() -> int:
     backends = BACKENDS if args.backend == "all" else [(args.backend, BACKEND_BY_NAME[args.backend])]
     attempts = []
     best = None
-    validator = validate_pip_frame if args.validation_profile == "pip" else validate_rgb_stripes
+    if args.validation_profile == "pip":
+        validator = validate_pip_frame
+    elif args.validation_profile == "rgb-stripes":
+        validator = validate_rgb_stripes
+    else:
+        validator = validate_inverted_rgb_stripes
 
     for index in indices:
         for backend_name, backend in backends:

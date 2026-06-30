@@ -70,6 +70,7 @@ Buffer: PS DDR framebuffer
 Output: official VDMA-style 800x600 HDMI path
 Status: stage-1 UDP framebuffer HDMI pass-through passed
 Control: UART fallback FIFO pause/resume/status passed
+Effect: first board-side RGB invert effect passed with generated PC input
 ```
 
 The previous PL-only video effects demo remains available as a side demo, not

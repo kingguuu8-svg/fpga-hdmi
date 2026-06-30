@@ -833,3 +833,61 @@ Residual risks:
 - The FIFO endpoint is intentionally minimal and not yet packaged as a daemon.
 - TCP/UDP command transport is not implemented.
 - Board-side visual effects remain the next cycle.
+
+## 2026-06-30 - first-board-side-effect
+
+Commit: this commit (`cycle: add first board-side video effect`)
+
+Objective:
+
+Add the first board-side visual effect to the Linux receiver and prove that the
+board changes the displayed frame while the PC sends the same deterministic
+non-camera input pattern.
+
+Changed scope:
+
+- Added `software/eth_pass_through/src/video_effect.*`.
+- Added `software/eth_pass_through/tests/test_video_effect.c`.
+- Added `--effect none|invert` to the Linux receiver.
+- Added `inverted-rgb-stripes` validation to `tools/capture_hdmi.py`.
+- Added `tools/run_first_effect_probe.ps1`.
+- Added `docs/reports/first-board-side-effect.md`.
+- Updated current-cycle, cycle-log, roadmap, README, and pipeline skill entries.
+
+Verification:
+
+- Host tests passed: `VIDEO_UDP_RECEIVER_TEST_OK`, `VIDEO_FB_COPY_TEST_OK`,
+  `VIDEO_CONTROL_TEST_OK`, and `VIDEO_EFFECT_TEST_OK`.
+- ARM cross-compile passed. Output binary SHA-256:
+  `73ef6f5b0e6ac03528ad1c73eb5d2bdcd665ad12514e1d436bff4bdcab1c35ab`.
+- Board SHA-256 check passed after Ethernet download.
+- PC sent a deterministic generated `rgb-stripes` frame; no camera/webcam input
+  was used.
+- Board log showed `VIDEO_UDP_FRAME_WRITTEN frame_id=200 ... effect=invert`
+  and `VIDEO_UDP_RECEIVER_DONE frames=1 skipped=0 packets=1200 dropped=0`.
+- HDMI capture with `inverted-rgb-stripes` validation returned
+  `HDMI_CAPTURE_OK`.
+
+Board action:
+
+- Ran a userspace binary from `/tmp`, sent one generated UDP frame from the PC,
+  and captured HDMI for output verification. No camera/webcam input, no Vivado
+  rebuild, no PetaLinux rebuild, no JTAG programming, and no board flash write.
+
+Evidence:
+
+- `docs/reports/first-board-side-effect.md`
+- `build/first-board-side-effect/test_video_effect.log`
+- `build/first-board-side-effect/uart_after_effect_frame.log`
+- `build/first-board-side-effect/hdmi-after-invert-effect/latest-validation.json`
+
+Result:
+
+- PASSED. The receiver applies a verified board-side RGB invert transform before
+  framebuffer output.
+
+Residual risks:
+
+- This is a CPU software effect, not yet a PL PIP/rotate/scale pipeline.
+- Runtime effect switching through UART is not implemented yet.
+- Throughput remains unoptimized.

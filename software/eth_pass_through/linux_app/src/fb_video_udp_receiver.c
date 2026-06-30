@@ -16,6 +16,7 @@
 #include <unistd.h>
 
 #include "video_control.h"
+#include "video_effect.h"
 #include "video_framebuffer.h"
 #include "video_udp_protocol.h"
 #include "video_udp_receiver.h"
@@ -26,6 +27,7 @@ typedef struct {
     unsigned int frames;
     unsigned int timeout_seconds;
     const char *control_fifo_path;
+    video_effect_t effect;
 } app_config_t;
 
 typedef struct {
@@ -42,7 +44,7 @@ typedef struct {
 static void usage(const char *argv0)
 {
     fprintf(stderr,
-            "usage: %s [--fb /dev/fb0] [--port 5005] [--frames 1] [--timeout-sec 20] [--control-fifo /tmp/video_ctl]\n",
+            "usage: %s [--fb /dev/fb0] [--port 5005] [--frames 1] [--timeout-sec 20] [--control-fifo /tmp/video_ctl] [--effect none|invert]\n",
             argv0);
 }
 
@@ -69,6 +71,7 @@ static int parse_args(int argc, char **argv, app_config_t *config)
     config->frames = 1u;
     config->timeout_seconds = 20u;
     config->control_fifo_path = 0;
+    config->effect = VIDEO_EFFECT_NONE;
 
     for (i = 1; i < argc; i++) {
         unsigned int value;
@@ -89,6 +92,10 @@ static int parse_args(int argc, char **argv, app_config_t *config)
             }
         } else if (strcmp(argv[i], "--control-fifo") == 0 && i + 1 < argc) {
             config->control_fifo_path = argv[++i];
+        } else if (strcmp(argv[i], "--effect") == 0 && i + 1 < argc) {
+            if (video_effect_parse(argv[++i], &config->effect) != 0) {
+                return -1;
+            }
         } else if (strcmp(argv[i], "--help") == 0) {
             usage(argv[0]);
             exit(0);
@@ -308,6 +315,21 @@ static int write_framebuffer(fb_target_t *target, const uint8_t *frame)
     return 0;
 }
 
+static const uint8_t *prepare_output_frame(
+    video_effect_t effect,
+    uint8_t *effect_buffer,
+    const uint8_t *frame
+)
+{
+    if (effect == VIDEO_EFFECT_NONE) {
+        return frame;
+    }
+    if (video_effect_apply(effect, effect_buffer, VIDEO_UDP_FRAME_BYTES, frame, VIDEO_UDP_FRAME_BYTES) != 0) {
+        return 0;
+    }
+    return effect_buffer;
+}
+
 static int open_udp_socket(uint16_t port, unsigned int timeout_seconds)
 {
     int fd;
@@ -364,6 +386,7 @@ int main(int argc, char **argv)
     video_control_state_t control;
     uint8_t *buffer_a = 0;
     uint8_t *buffer_b = 0;
+    uint8_t *effect_buffer = 0;
     uint8_t packet[VIDEO_UDP_HEADER_LEN + VIDEO_UDP_CHUNK_BYTES];
     unsigned int packets = 0u;
     unsigned int frames_written = 0u;
@@ -380,7 +403,8 @@ int main(int argc, char **argv)
 
     buffer_a = (uint8_t *)malloc(VIDEO_UDP_FRAME_BYTES);
     buffer_b = (uint8_t *)malloc(VIDEO_UDP_FRAME_BYTES);
-    if (buffer_a == 0 || buffer_b == 0) {
+    effect_buffer = (uint8_t *)malloc(VIDEO_UDP_FRAME_BYTES);
+    if (buffer_a == 0 || buffer_b == 0 || effect_buffer == 0) {
         fprintf(stderr, "failed to allocate frame buffers\n");
         goto cleanup;
     }
@@ -401,11 +425,12 @@ int main(int argc, char **argv)
     }
 
     video_udp_receiver_init(&receiver, buffer_a, buffer_b);
-    printf("VIDEO_UDP_LINUX_RECEIVER_READY port=%u frames=%u timeout_sec=%u control=%s\n",
+    printf("VIDEO_UDP_LINUX_RECEIVER_READY port=%u frames=%u timeout_sec=%u control=%s effect=%s\n",
            config.port,
            config.frames,
            config.timeout_seconds,
-           config.control_fifo_path == 0 ? "none" : config.control_fifo_path);
+           config.control_fifo_path == 0 ? "none" : config.control_fifo_path,
+           video_effect_name(config.effect));
     fflush(stdout);
     start_ms = monotonic_ms();
 
@@ -483,16 +508,18 @@ int main(int argc, char **argv)
                     fflush(stdout);
                     continue;
                 }
+                frame = prepare_output_frame(config.effect, effect_buffer, frame);
                 if (frame == 0 || write_framebuffer(&fb, frame) != 0) {
                     goto cleanup;
                 }
                 frames_written++;
-                printf("VIDEO_UDP_FRAME_WRITTEN frame_id=%lu frames=%u packets=%u dropped=%lu skipped=%u elapsed_ms=%llu\n",
+                printf("VIDEO_UDP_FRAME_WRITTEN frame_id=%lu frames=%u packets=%u dropped=%lu skipped=%u effect=%s elapsed_ms=%llu\n",
                        (unsigned long)receiver.frame_id,
                        frames_written,
                        packets,
                        (unsigned long)receiver.dropped_packets,
                        frames_skipped,
+                       video_effect_name(config.effect),
                        monotonic_ms() - start_ms);
                 fflush(stdout);
             }
@@ -517,5 +544,6 @@ cleanup:
     close_framebuffer(&fb);
     free(buffer_a);
     free(buffer_b);
+    free(effect_buffer);
     return exit_code;
 }

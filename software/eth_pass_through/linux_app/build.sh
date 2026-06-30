@@ -34,9 +34,15 @@ common_cflags=(
     "$repo_root/software/eth_pass_through/src/video_control.c" \
     -o "$out_dir/test_video_control"
 
+"$host_cc" "${common_cflags[@]}" \
+    "$repo_root/software/eth_pass_through/tests/test_video_effect.c" \
+    "$repo_root/software/eth_pass_through/src/video_effect.c" \
+    -o "$out_dir/test_video_effect"
+
 "$out_dir/test_video_udp_receiver" | tee "$out_dir/test_video_udp_receiver.log"
 "$out_dir/test_linux_framebuffer_writer" | tee "$out_dir/test_linux_framebuffer_writer.log"
 "$out_dir/test_video_control" | tee "$out_dir/test_video_control.log"
+"$out_dir/test_video_effect" | tee "$out_dir/test_video_effect.log"
 
 "$cross_cc" "${common_cflags[@]}" \
     "$repo_root/software/eth_pass_through/linux_app/src/fb_video_udp_receiver.c" \
@@ -44,6 +50,7 @@ common_cflags=(
     "$repo_root/software/eth_pass_through/src/video_udp_protocol.c" \
     "$repo_root/software/eth_pass_through/src/video_framebuffer.c" \
     "$repo_root/software/eth_pass_through/src/video_control.c" \
+    "$repo_root/software/eth_pass_through/src/video_effect.c" \
     -o "$out_dir/fb_video_udp_receiver"
 
 file "$out_dir/fb_video_udp_receiver" | tee "$out_dir/fb_video_udp_receiver.file.txt"

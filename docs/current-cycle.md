@@ -46,6 +46,18 @@ placeholder.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: first-board-side-effect
+Result: PASSED. The Linux receiver now supports a board-side RGB invert effect.
+  PC sent the deterministic non-camera rgb-stripes UDP frame; board logs showed
+  VIDEO_UDP_FRAME_WRITTEN frame_id=200 effect=invert and
+  VIDEO_UDP_RECEIVER_DONE frames=1 packets=1200 dropped=0. HDMI capture using
+  the inverted-rgb-stripes profile returned HDMI_CAPTURE_OK.
+Evidence: docs/reports/first-board-side-effect.md
+Board action: ran a userspace binary from /tmp, sent one generated UDP frame
+  from the PC, and captured HDMI for output verification. No camera/webcam
+  video input, no Vivado rebuild, no PetaLinux rebuild, no JTAG programming,
+  and no board flash writes.
+
 Cycle ID: uart-control-endpoint
 Result: PASSED. The Linux receiver now supports a FIFO control endpoint that
   can be driven from the UART shell. UART `pause` caused a complete UDP frame
@@ -178,6 +190,8 @@ Project Linux userspace UDP receiver handles a five-frame low-FPS stream with
 6000 UDP packets, dropped=0, and HDMI capture validation after the stream.
 Project Linux receiver accepts UART-shell-driven pause/resume/status commands
 through a FIFO control endpoint without breaking UDP receive or HDMI output.
+Project Linux receiver applies a board-side RGB invert effect to generated PC
+UDP input and HDMI capture validates the inverted output.
 ```
 
 Retired dead end:
@@ -191,6 +205,6 @@ layer. Do not resume this work.
 
 ## Next Cycle Direction
 
-Open `first-board-side-effect` next: add one minimal board-side visual effect
-to the Linux receiver and prove that the board, not the PC sender, changes the
-displayed frame. Do not combine this with TCP/UDP control transport.
+The requested three-cycle sequence is complete. Suggested next cycle:
+runtime-selectable effect command over the existing UART FIFO, or a fixed
+non-camera demo video file sender.
