@@ -1558,3 +1558,61 @@ Residual risks:
   define what a calibration record must contain.
 - Historical cycle-log entries before this rule keep prose `Result:` lines;
   the rule applies forward only, by design.
+
+## 2026-07-01 - unified-passthrough-validator-calibration
+
+Commit: this commit (`cycle: calibrate unified passthrough validator`)
+
+Objective:
+
+Introduce and calibrate a reusable pass-through validator so future hardware
+closed-loop claims use frame_id correspondence, latency, drop rate, order, and
+content identity instead of luma/hash/color-set heuristics.
+
+Changed scope:
+
+- Added `tools/validate_passthrough_trace.py`.
+- Added `docs/protocols/unified-passthrough-trace.md`.
+- Registered the trace schema in `AGENTS.md`.
+- Updated README, roadmap, current-cycle, report, and pipeline skill.
+
+Verification:
+
+- Ran:
+  `rtk powershell.exe -NoProfile -Command "python -m py_compile tools\validate_passthrough_trace.py"`
+- Ran:
+  `rtk powershell.exe -NoProfile -Command "python .\tools\validate_passthrough_trace.py --calibration --out-dir build\unified-passthrough-validator-calibration"`
+- Marker:
+  `UNIFIED_PASSTHROUGH_VALIDATOR_CALIBRATION_OK known_bad_black_fail=1 known_bad_latency_fail=1 known_bad_missing_frame_fail=1 known_bad_wrong_content_fail=1 known_bad_wrong_order_fail=1 known_good_pass=1`.
+- Calibration cases:
+  `known_good` passed; `known_bad_black` failed with `black_frame`;
+  `known_bad_wrong_order` failed with `frame_order_violation`;
+  `known_bad_missing_frame` failed with `match_rate_below_min`;
+  `known_bad_wrong_content` failed with `content_mismatch`;
+  `known_bad_latency` failed with `latency_above_max`.
+
+Board action:
+
+- None. PC-side validator/calibration cycle only. No Vivado build, PetaLinux
+  build, JTAG programming, TF-card write, UART action, Ethernet transmission,
+  HDMI capture, or board flash write.
+
+Evidence:
+
+- `docs/reports/unified-passthrough-validator-calibration.md`
+- `docs/protocols/unified-passthrough-trace.md`
+- `tools/validate_passthrough_trace.py`
+- `build/unified-passthrough-validator-calibration/calibration-summary.json`
+- `build/unified-passthrough-validator-calibration/cases/*/trace.json`
+- `build/unified-passthrough-validator-calibration/cases/*/result.json`
+
+Result: pass_condition=(known_good_pass == 1 and known_bad_black_fail == 1 and known_bad_wrong_order_fail == 1 and known_bad_missing_frame_fail == 1 and known_bad_wrong_content_fail == 1 and known_bad_latency_fail == 1), measured=(known_good_pass=1, known_bad_black_fail=1, known_bad_wrong_order_fail=1, known_bad_missing_frame_fail=1, known_bad_wrong_content_fail=1, known_bad_latency_fail=1) -> PASSED.
+
+Residual risks:
+
+- The validator consumes decoded traces; the next hardware cycle still needs a
+  runner that extracts `frame_id`, `content_id`, and timestamps from HDMI
+  capture.
+- Synthetic fixtures prove validator behavior, not board throughput.
+- The next hardware cycle must use this committed validator as the frozen pass
+  gate rather than introducing another ad-hoc check.

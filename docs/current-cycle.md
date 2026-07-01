@@ -64,6 +64,18 @@ placeholder.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: unified-passthrough-validator-calibration
+Result: PASSED. Added and calibrated the reusable temporal pass-through
+  validator. pass_condition=(known_good_pass == 1 and known_bad_black_fail ==
+  1 and known_bad_wrong_order_fail == 1 and known_bad_missing_frame_fail == 1
+  and known_bad_wrong_content_fail == 1 and known_bad_latency_fail == 1),
+  measured=(known_good_pass=1, known_bad_black_fail=1,
+  known_bad_wrong_order_fail=1, known_bad_missing_frame_fail=1,
+  known_bad_wrong_content_fail=1, known_bad_latency_fail=1).
+Evidence: docs/reports/unified-passthrough-validator-calibration.md
+Board action: none. PC-side validator/calibration cycle only; no Vivado,
+  PetaLinux, JTAG, TF-card, UART, Ethernet, HDMI, or board flash action.
+
 Cycle ID: verification-standard-governance
 Result: PASSED. Added three structural rules to AGENTS.md (pass-condition
   preregistration/freeze, validator same-cycle prohibition, cycle-log
@@ -352,6 +364,9 @@ PC source and validates the live HDMI return stream by classifying returned
 MJPEG frames as the source colors.
 Dashboard UART pause/resume/status actions now return real receiver markers
 from the running board receiver through `/tmp/video_ctl`.
+Unified pass-through trace validator is calibrated against synthetic good/bad
+cases and is the required pass gate for future faithful live pass-through
+claims.
 ```
 
 Retired dead end:
@@ -365,6 +380,7 @@ layer. Do not resume this work.
 
 ## Next Cycle Direction
 
-No active implementation cycle is open. A natural next cycle is runtime effect
-switching or a recorded-demo choreography that uses the now-verified
-color-block loop and UART control path.
+After the active validator-calibration cycle closes, the natural next hardware
+cycle is a 15 fps unified pass-through run that uses the already-committed
+validator as its frozen pass gate and reports frame_id correspondence, latency,
+and sustained drop rate.

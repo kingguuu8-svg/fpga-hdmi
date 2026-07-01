@@ -24,6 +24,8 @@
   probe, or downloaded reference project is inspected.
 - `docs/protocols/video-udp.md`: first-stage raw-video UDP chunk protocol used
   by the PC sender and PS baremetal receiver.
+- `docs/protocols/unified-passthrough-trace.md`: decoded sender/capture trace
+  schema for reusable temporal pass-through validation.
 - `docs/current-cycle.md`: the current active cycle, or an explicit statement
   that no implementation cycle is open.
 - `docs/cycle-log.md`: completed cycle ledger with commit IDs, verification

@@ -149,6 +149,11 @@ Phase C:
   returned HDMI MJPEG stream as source colors, removed the Linux console cursor
   overlay, and verified Dashboard UART pause/resume/status responses from the
   running receiver.
+  Unified pass-through validator calibration gate: PASSED. The reusable trace
+  validator now rejects black/no-frame output, wrong frame order, missing
+  frames, wrong content, and excessive latency in synthetic calibration. The
+  next hardware loop must use this already-committed validator for 15 fps
+  frame_id correspondence, latency, and drop-rate evidence.
   Later: carry the same command semantics over TCP/UDP.
 
 Phase D:

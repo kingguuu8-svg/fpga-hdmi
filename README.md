@@ -190,6 +190,32 @@ LED2: P21, LVCMOS33, active-high
 Programming: PL SRAM only
 ```
 
+## Unified Pass-Through Validator
+
+Run the calibrated validator self-check:
+
+```powershell
+rtk powershell.exe -NoProfile -Command "python .\tools\validate_passthrough_trace.py --calibration --out-dir build\unified-passthrough-validator-calibration"
+```
+
+Expected marker:
+
+```text
+UNIFIED_PASSTHROUGH_VALIDATOR_CALIBRATION_OK
+```
+
+Trace schema:
+
+```text
+docs/protocols/unified-passthrough-trace.md
+```
+
+This validator checks temporal frame correspondence, latency, drop rate,
+ordering, content identity, and black/no-frame rejection. It is the required
+validator for future hardware cycles that claim faithful live pass-through.
+The calibration cycle is PC-side only; it does not itself prove board HDMI
+pass-through at 15 fps.
+
 ## Ethernet Video Pass-Through
 
 Current active artifacts:
@@ -199,10 +225,12 @@ docs/project-roadmap.md
 docs/current-cycle.md
 docs/reports/eth-ps-pl-hdmi-pass-through.md
 docs/reports/tf-card-linux-resume-2026-06-26.md
+docs/protocols/unified-passthrough-trace.md
 examples/eth-ps-pl-hdmi-pass-through/
 software/eth_pass_through/
 tools/send_demo_video_udp.py
 tools/send_video_udp.py
+tools/validate_passthrough_trace.py
 ```
 
 Known good subchains:

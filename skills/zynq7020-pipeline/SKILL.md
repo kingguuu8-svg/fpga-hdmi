@@ -489,5 +489,33 @@ console cursor; the helper disables it before starting the receiver. Dashboard
 UART pause/resume/status actions now return real receiver log markers from the
 running board receiver.
 
+Verified unified pass-through validator calibration path (required before any
+future faithful live pass-through claim, 2026-07-01):
+
+```text
+1. Run the calibration:
+   rtk powershell.exe -NoProfile -Command "python .\tools\validate_passthrough_trace.py --calibration --out-dir build\unified-passthrough-validator-calibration"
+2. Require:
+   UNIFIED_PASSTHROUGH_VALIDATOR_CALIBRATION_OK
+3. Require the calibration summary booleans:
+   known_good_pass=1
+   known_bad_black_fail=1
+   known_bad_wrong_order_fail=1
+   known_bad_missing_frame_fail=1
+   known_bad_wrong_content_fail=1
+   known_bad_latency_fail=1
+4. Use docs/protocols/unified-passthrough-trace.md for the trace schema.
+5. In the next hardware cycle, the runner must emit a decoded trace and call:
+   python .\tools\validate_passthrough_trace.py <trace.json> --result-json <result.json>
+```
+
+Verified outcome:
+The reusable validator is calibrated against synthetic known-good and known-bad
+traces. It checks frame_id correspondence, drop rate, latency, ordering,
+content identity, black/no-frame rejection, and optional image fixture hashes.
+This calibration is PC-side only; it does not claim board pass-through at
+15 fps. It exists so the next hardware cycle cannot introduce a new ad-hoc
+pass condition.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.
