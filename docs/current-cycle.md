@@ -46,6 +46,19 @@ placeholder.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: dashboard-board-live-loop
+Result: PASSED. Added a displayable board-live loop helper. It builds/deploys
+  the Linux receiver to /tmp, starts it with /tmp/video_ctl, starts the
+  dashboard, triggers Dashboard `start-stream`, sends five generated RGB888
+  frames, verifies five VIDEO_UDP_FRAME_WRITTEN markers and
+  VIDEO_UDP_RECEIVER_DONE frames=5 packets=6000 dropped=0, and validates HDMI
+  capture with non-black mean_luma=136.39. The captured image shows the
+  generated demo frame.
+Evidence: docs/reports/dashboard-board-live-loop.md
+Board action: ran a Linux userspace receiver from /tmp, sent UDP frames from
+  the PC through Dashboard, and captured HDMI. No Vivado/PetaLinux/JTAG/flash
+  action.
+
 Cycle ID: dashboard-hdmi-capture-timeout-fix
 Result: PASSED. Real dashboard `start-stream` initially hit
   HDMI_CAPTURE_TIMEOUT because the dashboard timeout was shorter than the
@@ -269,6 +282,9 @@ refresh the output panel. Current live preview capture opened the adapter but
 returned a near-black frame, so board receiver readiness remains separate.
 Real dashboard `start-stream` now returns HDMI_CAPTURE_OK and image_exists=true
 after the capture timeout fix; the captured frame is still near black.
+Dashboard board-live loop now deploys/starts the receiver, drives Dashboard
+`start-stream`, receives/writes five generated frames with dropped=0, and
+captures a non-black generated HDMI image.
 ```
 
 Retired dead end:
@@ -282,6 +298,6 @@ layer. Do not resume this work.
 
 ## Next Cycle Direction
 
-No active implementation cycle is open. The next live-board cycle should
-deploy/start the board receiver, ensure `/tmp/video_ctl` exists, send the demo
-stream from the dashboard, and verify the HDMI preview shows non-black output.
+No active implementation cycle is open. A natural next cycle is dashboard
+control demonstration: exercise pause/resume through `/tmp/video_ctl`, then add
+an effect launch/switch flow suitable for a recorded demo.

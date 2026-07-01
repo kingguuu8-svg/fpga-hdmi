@@ -73,7 +73,7 @@ Control: UART fallback FIFO pause/resume/status passed
 Effect: first board-side RGB invert effect passed with generated PC input
 Dashboard: PC visual scaffold and fixed generated demo sender passed; custom
   input files deferred after MVP; minimal live sender control and HDMI capture
-  binding passed
+  binding passed; dashboard-driven board live loop passed
 ```
 
 ## PC Dashboard
@@ -94,6 +94,18 @@ Run the dashboard HDMI-capture binding self-test:
 
 ```powershell
 rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-hdmi-capture-binding"
+```
+
+Run the displayable dashboard board-live loop:
+
+```powershell
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_dashboard_board_live_loop.ps1 -OutDir build\dashboard-board-live-loop -CaptureDevice auto -CaptureFrames 8 -Frames 5 -Fps 1 -InterPacketUs 200
+```
+
+Expected marker:
+
+```text
+DASHBOARD_BOARD_LIVE_LOOP_OK
 ```
 
 Run the fixed demo-video sender self-test:

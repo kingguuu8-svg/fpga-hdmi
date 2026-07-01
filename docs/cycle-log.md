@@ -1198,3 +1198,62 @@ Residual risks:
 - The captured frame is still near black (`mean_luma=0.14`), so the remaining
   issue is board receiver/output readiness.
 - Output preview is not continuous realtime capture yet.
+
+## 2026-07-01 - dashboard-board-live-loop
+
+Commit: this commit (`cycle: close dashboard board live loop`)
+
+Objective:
+
+Complete a displayable dashboard-driven board video loop.
+
+Changed scope:
+
+- Added `tools/run_dashboard_board_live_loop.ps1`.
+- Added `non-black` HDMI validation to `tools/capture_hdmi.py`.
+- Allowed `tools/dashboard/pc_dashboard.py` to use
+  `--capture-profile non-black`.
+- Added the cycle report and updated README, dashboard README, roadmap,
+  current-cycle, cycle-log, and pipeline skill.
+
+Verification:
+
+- Ran script parse check, Python compile check, and dashboard self-test.
+- Ran:
+  `rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_dashboard_board_live_loop.ps1 -OutDir build\dashboard-board-live-loop -CaptureDevice auto -CaptureFrames 8 -Frames 5 -Fps 1 -InterPacketUs 200`
+- Marker file:
+  `DASHBOARD_BOARD_LIVE_LOOP_OK frames=5 written=5`.
+- Receiver deployment showed `/tmp/fb_video_udp_receiver: OK`,
+  `CONTROL_FIFO_READY`, and `VIDEO_UDP_LINUX_RECEIVER_READY`.
+- Dashboard `start-stream` returned `HDMI_CAPTURE_OK`, `capture_status=ok`,
+  and `image_exists=true`.
+- Sender sent five generated RGB888 frames as 6000 UDP packets.
+- Receiver wrote five frames and reported
+  `VIDEO_UDP_RECEIVER_DONE frames=5 skipped=0 packets=6000 dropped=0`.
+- HDMI capture profile `non-black` passed with `mean_luma=136.39` on selected
+  DirectShow index 1.
+
+Board action:
+
+- Ran a Linux userspace receiver from `/tmp`, sent UDP frames from the PC
+  through Dashboard, and captured HDMI. No Vivado rebuild, PetaLinux rebuild,
+  JTAG programming, or board flash write.
+
+Evidence:
+
+- `docs/reports/dashboard-board-live-loop.md`
+- `build/dashboard-board-live-loop/dashboard_board_live_loop.marker.txt`
+- `build/dashboard-board-live-loop/dashboard_start_stream.json`
+- `build/dashboard-board-live-loop/uart_after_dashboard_stream.log`
+- `build/dashboard-board-live-loop/hdmi-capture/latest-validation.json`
+- `build/dashboard-board-live-loop/hdmi-capture/latest.png`
+
+Result:
+
+- PASSED. The project now has a displayable dashboard-driven closed loop.
+
+Residual risks:
+
+- Output preview is action-triggered HDMI capture, not continuous live video.
+- Pause/resume controls were not exercised in this cycle.
+- Runtime effect switching remains future work.

@@ -955,7 +955,7 @@ def main() -> int:
     parser.add_argument("--capture-width", type=int, default=DEFAULT_CAPTURE_WIDTH)
     parser.add_argument("--capture-height", type=int, default=DEFAULT_CAPTURE_HEIGHT)
     parser.add_argument("--capture-frames", type=int, default=DEFAULT_CAPTURE_FRAMES)
-    parser.add_argument("--capture-profile", default=DEFAULT_CAPTURE_PROFILE, choices=["none", "pip", "rgb-stripes", "inverted-rgb-stripes"])
+    parser.add_argument("--capture-profile", default=DEFAULT_CAPTURE_PROFILE, choices=["none", "non-black", "pip", "rgb-stripes", "inverted-rgb-stripes"])
     parser.add_argument("--action-mode", choices=["live", "dry-run"], default="live")
     parser.add_argument("--actions-disabled", action="store_true")
     parser.add_argument("--output-image", default="")

@@ -40,6 +40,15 @@ Run the HDMI-capture binding self-test:
 rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-hdmi-capture-binding"
 ```
 
+Run the displayable board-live loop:
+
+```powershell
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_dashboard_board_live_loop.ps1 -OutDir build\dashboard-board-live-loop -CaptureDevice auto -CaptureFrames 8 -Frames 5 -Fps 1 -InterPacketUs 200
+```
+
+This deploys the receiver to `/tmp`, starts the dashboard, triggers
+`start-stream`, and requires non-black HDMI capture.
+
 Run the fixed demo-video sender self-test:
 
 ```powershell

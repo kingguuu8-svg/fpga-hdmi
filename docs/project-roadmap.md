@@ -132,6 +132,10 @@ Phase C:
   the output panel. The latest preview capture opened the adapter but saw a
   near-black frame, so board receiver/display readiness remains the next live
   issue.
+  Dashboard board-live loop gate: PASSED. The helper deployed the board
+  receiver, drove Dashboard `start-stream`, sent five generated RGB888 frames,
+  wrote five frames to /dev/fb0 with dropped=0, and HDMI capture validated a
+  non-black generated demo image.
   Later: carry the same command semantics over TCP/UDP.
 
 Phase D:

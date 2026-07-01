@@ -195,6 +195,20 @@ def validate_any_frame(frame: np.ndarray) -> tuple[bool, list[dict]]:
     ]
 
 
+def validate_non_black(frame: np.ndarray) -> tuple[bool, list[dict]]:
+    mean_luma = float(frame.mean()) if frame.size else 0.0
+    non_black = frame.size > 0 and mean_luma > 8.0
+    return non_black, [
+        {
+            "name": "frame_non_black",
+            "expected": "mean_luma_gt_8",
+            "shape": list(frame.shape),
+            "mean_luma": round(mean_luma, 2),
+            "pass": bool(non_black),
+        }
+    ]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", default="auto", help="'auto' or a numeric OpenCV device index")
@@ -204,7 +218,7 @@ def main() -> int:
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--frames", type=int, default=45)
     parser.add_argument("--save-samples", type=int, default=0, help="save N evenly spaced captured frames")
-    parser.add_argument("--validation-profile", default="pip", choices=["none", "pip", "rgb-stripes", "inverted-rgb-stripes"])
+    parser.add_argument("--validation-profile", default="pip", choices=["none", "non-black", "pip", "rgb-stripes", "inverted-rgb-stripes"])
     parser.add_argument("--out-dir", default="build/reports/hdmi-capture")
     args = parser.parse_args()
 
@@ -217,6 +231,8 @@ def main() -> int:
     best = None
     if args.validation_profile == "none":
         validator = validate_any_frame
+    elif args.validation_profile == "non-black":
+        validator = validate_non_black
     elif args.validation_profile == "pip":
         validator = validate_pip_frame
     elif args.validation_profile == "rgb-stripes":
