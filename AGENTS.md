@@ -81,6 +81,64 @@ Load the following child skills only when the corresponding stage is needed:
 - Backlog ideas are not active requirements. Promote an idea by adding it to the
   registered roadmap or asking the user to confirm the scope.
 
+## Verification standard governance
+
+These three rules exist to stop a cycle from lowering its own pass bar. They
+were added after a third-party review found that the project grew four
+mutually inconsistent ad-hoc validation standards along the dashboard line,
+each weaker than the last, while the strong validator was only ever used on
+static content and abandoned once content became dynamic. The fix is
+structural: make a weak standard unable to masquerade as a strong one, rather
+than relying on the cycle author to self-regulate.
+
+### Rule 1 — pass-condition preregistration and freeze
+
+- Every implementation cycle must state its pass gate up front in
+  `docs/current-cycle.md` as two frozen fields, not as free-text `Closure
+  criteria:`:
+  - `pass_condition:` — a precise, numeric or boolean threshold. Examples:
+    `mean_luma > 8`, `frame_id match rate >= 95% over 50 captured frames`,
+    `grep -c finds the three named rules == 3`. Prose such as "capture looks
+    right" or "loop works" is not a valid pass_condition.
+  - `validator:` — the already-committed script, command, or check that
+    produces the measured value, named by path or command.
+- These two lines are frozen the moment the cycle becomes active. They must
+  not be edited during the work phase. To change the pass bar, close the
+  current cycle and open a new one that states the new bar up front.
+- A cycle that closes with a `measured=` value failing its own preregistered
+  `pass_condition` must record Result as FAILED, not PASSED. Lowering the bar
+  to make a failing run pass is a governance violation, not a rescue.
+
+### Rule 2 — validator same-cycle prohibition
+
+- A validator script that serves as a cycle's primary pass gate must have been
+  committed in a prior cycle. A cycle may not both introduce a new validator
+  and use it to judge itself PASSED in the same commit.
+- The single exception is a cycle whose explicit objective is to introduce a
+  new validator. Such a cycle must calibrate the validator against both a
+  known-good case (the validator passes on correct output) and a known-bad
+  case (the validator fails on black screen, wrong color, or wrong frame
+  order). Both calibration results must be recorded in the cycle report. A
+  validator that passes everything, or that has only ever been run on the
+  output it was written to judge, is not calibrated and may not be used as a
+  pass gate by later cycles until it is calibrated.
+- This rule exists because `probe_mjpeg_stream.py` color classification,
+  `capture_hdmi.py` `non-black`/`none` profiles, and the `best-of-45` selection
+  were all written and used to judge PASSED in the same cycle that introduced
+  them. That is "building the ruler to fit the result".
+
+### Rule 3 — cycle-log records threshold and measured value
+
+- The `Result:` line in every `docs/cycle-log.md` entry must carry
+  `pass_condition=...` and `measured=...`, so a black-screen PASSED
+  (`pass_condition=mean_luma>8, measured=0.05`) is visible in the ledger
+  without excavating each report's residual risks.
+- Historical entries before this rule keep their existing prose `Result:`;
+  the rule applies forward from the cycle that introduced it. Rewriting
+  history is not required and not preferred.
+- A `Result:` line that says only `PASSED` or `FAILED` without the two fields
+  is non-conformant and must be amended in the same commit.
+
 ## Fact consistency
 
 Drift-prone facts each have a single owner document. Non-owner documents must
@@ -92,6 +150,7 @@ not hold the concrete value of these facts; they may only reference the owner.
 | Active cycle state | `docs/current-cycle.md` |
 | Board hard facts (pins, clocks, voltage, IP parameters) | `docs/boards/hellofpga-smart-zynq-sl.md` |
 | Workflow entry points and shortest paths | `skills/zynq7020-pipeline/SKILL.md` |
+| Pass-condition preregistration, validator same-cycle prohibition, cycle-log threshold/measured rules | `AGENTS.md` (this file, "Verification standard governance") |
 
 When an owner document changes one of these facts, every reference to it must
 be updated in the same commit. References must say "see `<owner>`" rather than

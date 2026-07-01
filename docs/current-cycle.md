@@ -17,7 +17,8 @@ Scope:
 Verification plan:
 Board action:
 Evidence target:
-Closure criteria:
+pass_condition:
+validator:
 Highest-risk assumption this cycle falsifies:
 Cheapest alternative way to falsify the same assumption:
 ```
@@ -29,6 +30,23 @@ same assumption. If the "cheapest alternative" line names a much shorter path
 than the planned scope, the cycle direction should be reconsidered before
 approval, not after debugging. These two lines exist to be read by a human at
 cycle open time; they are not a self-audit checklist for cycle close.
+
+The `pass_condition:` and `validator:` lines replace the former free-text
+`Closure criteria:`. They are governed by the "Verification standard
+governance" section of `AGENTS.md`:
+
+- `pass_condition:` is a precise, numeric or boolean threshold (for example
+  `mean_luma > 8`, `frame_id match rate >= 95%`, `grep finds the three named
+  rules`). Free-text prose like "capture looks right" is not acceptable.
+- `validator:` names the already-committed script, command, or check that
+  produces the measured value. It must point to a script that existed in a
+  prior commit (see the validator same-cycle prohibition rule in `AGENTS.md`),
+  unless this cycle's explicit objective is to introduce a new validator, in
+  which case the cycle must calibrate it against a known-good and a known-bad
+  case before it may be used as the pass gate.
+- These two lines are frozen once the cycle becomes active: they must not be
+  edited during the work phase. To change the pass bar, close this cycle and
+  open a new one with the new bar stated up front.
 
 ### Optional third-party review (recorded after cycle close, non-blocking)
 
@@ -46,6 +64,15 @@ placeholder.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: verification-standard-governance
+Result: PASSED. Added three structural rules to AGENTS.md (pass-condition
+  preregistration/freeze, validator same-cycle prohibition, cycle-log
+  threshold+measured) and updated the Cycle Template and cycle-log Entry
+  Template to match. pass_condition=(three named rules present; template
+  fields present), measured=(grep audit 0 missing).
+Evidence: docs/cycle-log.md (2026-07-01 verification-standard-governance)
+Board action: none; docs-only governance cycle.
+
 Cycle ID: dashboard-color-block-loop-and-uart-audit
 Result: PASSED. Replaced the ambiguous generated demo with full-screen
   sequential color blocks, classified the live HDMI MJPEG return stream as the

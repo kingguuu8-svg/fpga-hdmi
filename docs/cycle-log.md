@@ -13,7 +13,8 @@ Changed scope:
 Verification:
 Board action:
 Evidence:
-Result:
+Result:            (must include pass_condition=... and measured=..., per the
+                    verification-standard-governance rule in AGENTS.md)
 Residual risks:
 ```
 
@@ -1483,3 +1484,77 @@ Residual risks:
 - Input preview and HDMI return preview are not frame-locked.
 - `-KeepRunning` is a long finite demo mode, not a persistent system service.
 - Runtime effect switching remains a follow-up cycle.
+
+## 2026-07-01 - verification-standard-governance
+
+Commit: this commit (`docs: add verification standard governance rules`)
+
+Objective:
+
+Add three structural rules that stop a cycle from lowering its own pass bar,
+so that the "standards adapted to code" pattern found in the dashboard-line
+third-party review cannot recur. The fix is structural (a weak standard
+cannot masquerade as a strong one) rather than advisory (relying on the cycle
+author to self-regulate).
+
+Changed scope:
+
+- Added `## Verification standard governance` to `AGENTS.md` with three named
+  rules: Rule 1 pass-condition preregistration and freeze, Rule 2 validator
+  same-cycle prohibition, Rule 3 cycle-log records threshold and measured
+  value.
+- Added a Fact consistency owner row assigning those rules to `AGENTS.md`, so
+  the cycle template and reports reference rather than restate them.
+- Replaced the free-text `Closure criteria:` line in the `docs/current-cycle.md`
+  Cycle Template with two frozen fields: `pass_condition:` (precise numeric or
+  boolean threshold) and `validator:` (an already-committed script or check),
+  plus an explanatory note cross-referencing the governance rules.
+- Updated the `docs/cycle-log.md` Entry Template so the `Result:` line must
+  carry `pass_condition=...` and `measured=...`, with a cross-reference to the
+  governance rule.
+- Opened and closed this cycle in `docs/current-cycle.md` using the new
+  template, as the first conforming example.
+
+Verification:
+
+- Documentation-only cycle; no simulation or board programming required or
+  run.
+- grep audit (the preregistered validator) confirmed:
+  - `AGENTS.md` contains `Verification standard governance` and Rule 1, Rule 2,
+    Rule 3 by name (4 matches).
+  - `docs/current-cycle.md` Cycle Template contains literal `pass_condition:`
+    and `validator:` lines (2 matches) and no remaining `Closure criteria:` in
+    the template body.
+  - `docs/cycle-log.md` Entry Template `Result:` line references both
+    `pass_condition` and `measured` and cross-references the
+    `verification-standard-governance` rule.
+  - Fact consistency table contains the new owner row.
+
+Board action:
+
+- Not run; this cycle changes project governance documents only.
+
+Evidence:
+
+- This commit and this log entry.
+- `AGENTS.md` (`## Verification standard governance`, Fact consistency table).
+- `docs/current-cycle.md` (Cycle Template, Active Cycle example).
+- `docs/cycle-log.md` (Entry Template).
+
+Result: pass_condition=(AGENTS.md contains the three named rules; current-cycle
+Cycle Template has frozen pass_condition + validator lines; cycle-log Entry
+Template Result requires pass_condition + measured), measured=(Rule 1/2/3
+present in AGENTS.md; fact-owner row present; template fields present and
+cross-referenced; grep audit 0 missing) -> PASSED.
+
+Residual risks:
+
+- The rules are mechanically checkable for presence but not for semantic
+  tightness: a cycle could still write a vague `pass_condition:` and a
+  self-serving `validator:` that nominally satisfy the field names. The
+  human review gate at cycle open (the risk-field lines) is the backstop.
+- Rule 2's "known-good and known-bad calibration" exception is not yet backed
+  by a concrete calibration artifact template; a future cycle may need to
+  define what a calibration record must contain.
+- Historical cycle-log entries before this rule keep prose `Result:` lines;
+  the rule applies forward only, by design.
