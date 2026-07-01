@@ -46,6 +46,16 @@ placeholder.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: fixed-demo-video-sender
+Result: PASSED. Added a fixed built-in deterministic RGB888 dynamic video
+  source and UDP sender for the dashboard MVP. Self-test proved generated frame
+  size, dynamic frame difference, localhost UDP packetization, 30/30 received
+  packets, full payload byte count, and stable frame id. Parser inspection
+  confirmed there is no camera/webcam/file input option. The result explicitly
+  keeps camera/webcam input disabled and custom-file input deferred after MVP.
+Evidence: docs/reports/fixed-demo-video-sender.md
+Board action: none. PC-side fixed demo-video sender only.
+
 Cycle ID: visual-dashboard-scaffold
 Result: PASSED. Added a Python-stdlib PC dashboard scaffold with three visual
   regions: generated input preview, FPGA HDMI-output preview slot, and
@@ -152,7 +162,9 @@ Board action: booted generated image from TF card only; no JTAG programming,
 
 ## Active Cycle
 
-No active implementation cycle is open.
+```text
+None.
+```
 
 ## Resolved Route Gate
 
@@ -203,6 +215,9 @@ Project Linux receiver applies a board-side RGB invert effect to generated PC
 UDP input and HDMI capture validates the inverted output.
 PC dashboard scaffold exposes generated input preview, FPGA output preview,
 and function-control/log panel regions without camera or custom-file input.
+PC fixed demo sender generates deterministic dynamic RGB888 frames and
+packetizes them through the existing UDP protocol without camera or custom-file
+input.
 ```
 
 Retired dead end:
@@ -216,5 +231,4 @@ layer. Do not resume this work.
 
 ## Next Cycle Direction
 
-Open `fixed-demo-video-sender` next: add the built-in dynamic demo-video sender
-for the dashboard. Do not implement user custom-file input in that cycle.
+Open `dashboard-control-integration` next.

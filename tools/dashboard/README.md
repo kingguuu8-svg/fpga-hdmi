@@ -15,14 +15,21 @@ FPGA Output:
   output verification only, not an input source
 
 Function Control Panel:
-  visual control skeleton first
-  sender and UART actions are wired in later cycles
+  visual control skeleton
+  fixed demo-video sender is available as a standalone CLI
+  UART actions are wired in later cycles
 ```
 
 Run the scaffold self-test:
 
 ```powershell
 rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\visual-dashboard-scaffold"
+```
+
+Run the fixed demo-video sender self-test:
+
+```powershell
+rtk powershell.exe -NoProfile -Command "python .\tools\send_demo_video_udp.py --self-test --out-dir build\fixed-demo-video-sender"
 ```
 
 Run the local dashboard:

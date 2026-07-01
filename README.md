@@ -71,7 +71,8 @@ Output: official VDMA-style 800x600 HDMI path
 Status: stage-1 UDP framebuffer HDMI pass-through passed
 Control: UART fallback FIFO pause/resume/status passed
 Effect: first board-side RGB invert effect passed with generated PC input
-Dashboard: PC visual scaffold passed; custom input files deferred after MVP
+Dashboard: PC visual scaffold and fixed generated demo sender passed; custom
+  input files deferred after MVP
 ```
 
 ## PC Dashboard
@@ -80,6 +81,18 @@ Run the dashboard scaffold self-test:
 
 ```powershell
 rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\visual-dashboard-scaffold"
+```
+
+Run the fixed demo-video sender self-test:
+
+```powershell
+rtk powershell.exe -NoProfile -Command "python .\tools\send_demo_video_udp.py --self-test --out-dir build\fixed-demo-video-sender"
+```
+
+Send the fixed generated demo stream to the board receiver:
+
+```powershell
+rtk powershell.exe -NoProfile -Command "python .\tools\send_demo_video_udp.py 192.168.1.10 --frames 5 --fps 1"
 ```
 
 Run the local dashboard:
@@ -127,6 +140,7 @@ docs/reports/eth-ps-pl-hdmi-pass-through.md
 docs/reports/tf-card-linux-resume-2026-06-26.md
 examples/eth-ps-pl-hdmi-pass-through/
 software/eth_pass_through/
+tools/send_demo_video_udp.py
 tools/send_video_udp.py
 ```
 

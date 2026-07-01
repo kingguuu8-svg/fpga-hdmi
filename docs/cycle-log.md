@@ -937,3 +937,54 @@ Residual risks:
 - UDP sender integration and UART control integration remain later dashboard
   cycles.
 - FPGA output preview is a slot/placeholder until a capture file is supplied.
+
+## 2026-07-01 - fixed-demo-video-sender
+
+Commit: this commit (`cycle: add fixed dashboard demo sender`)
+
+Objective:
+
+Add a fixed built-in dynamic video source for the dashboard MVP without adding
+camera/webcam capture or user-selected input files.
+
+Changed scope:
+
+- Added `tools/dashboard/demo_source.py`, a deterministic RGB888 dynamic frame
+  generator.
+- Added `tools/send_demo_video_udp.py`, a PC-side UDP sender that uses the
+  existing project video packet format.
+- Added `tools/dashboard/__init__.py` for package imports.
+- Updated dashboard, roadmap, current-cycle, README, and pipeline skill docs.
+
+Verification:
+
+- Ran:
+  `rtk powershell.exe -NoProfile -Command "python .\tools\send_demo_video_udp.py --self-test --out-dir build\fixed-demo-video-sender"`
+- Result: `DEMO_VIDEO_SENDER_SELF_TEST_OK`.
+- Parser inspection returned
+  `DEMO_VIDEO_SENDER_CLI_NO_CAMERA_OR_FILE_OK` and showed no camera/webcam/file
+  option.
+- Self-test proved generated frame size, dynamic frame difference, localhost UDP
+  packetization, received packet count, payload byte count, and frame id.
+- Self-test recorded `camera_input=false` and `custom_file_input=false`.
+
+Board action:
+
+- None. PC-side fixed demo sender only.
+
+Evidence:
+
+- `docs/reports/fixed-demo-video-sender.md`
+- `build/fixed-demo-video-sender/self-test.json`
+
+Result:
+
+- PASSED. The dashboard MVP now has a deterministic dynamic source that can feed
+  the existing board UDP receiver without a camera, webcam, file picker, or
+  custom media path.
+
+Residual risks:
+
+- The generated source is not arbitrary video-file playback.
+- This cycle proves localhost packetization, not board receive/display.
+- Dashboard action integration remains the next cycle.

@@ -39,8 +39,9 @@ Video source policy:
 
 ```text
 Do not use a camera or webcam as the project video input source.
-Use deterministic PC-generated frames first, then a fixed preselected demo
-video file when dynamic content is needed.
+Use deterministic PC-generated frames first. A fixed preselected demo video
+file is allowed after MVP, but user-selectable custom files are not part of the
+MVP.
 HDMI capture devices may be used only as output verification instruments, not
 as input video sources.
 ```
@@ -117,6 +118,8 @@ Phase C:
   Dashboard scaffold gate: PASSED. The PC dashboard has input preview, FPGA
   output preview, and control/log panel regions. Custom file input remains
   deferred after MVP.
+  Fixed demo-video sender gate: PASSED. The PC can generate deterministic
+  dynamic RGB888 frames and packetize them through the existing UDP protocol.
   Later: carry the same command semantics over TCP/UDP.
 
 Phase D:

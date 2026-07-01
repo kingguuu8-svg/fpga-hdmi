@@ -297,5 +297,29 @@ Verified outcome:
 The dashboard scaffold can run locally without external Python UI dependencies.
 It is a PC-side console, not board firmware.
 
+Verified fixed demo-video sender path (preferred for PC generated-video input,
+2026-07-01):
+
+```text
+1. Run the self-test:
+   rtk powershell.exe -NoProfile -Command "python .\tools\send_demo_video_udp.py --self-test --out-dir build\fixed-demo-video-sender"
+2. Require:
+   DEMO_VIDEO_SENDER_SELF_TEST_OK
+3. The self-test proves:
+   - generated RGB888 frame size is correct
+   - multiple generated frames differ
+   - one generated frame packetizes through localhost UDP loopback
+   - all expected packets and payload bytes are received
+   - camera/webcam input is disabled
+   - custom-file input is disabled/deferred
+4. To send the generated stream to the board receiver after it is running:
+   rtk powershell.exe -NoProfile -Command "python .\tools\send_demo_video_udp.py 192.168.1.10 --frames 5 --fps 1"
+```
+
+Verified outcome:
+The dashboard MVP has a deterministic PC generated-video source that reuses the
+existing UDP frame protocol. It does not use camera/webcam input, and
+user-selectable custom input files remain deferred after MVP.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.
