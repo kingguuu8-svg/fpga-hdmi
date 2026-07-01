@@ -1148,3 +1148,53 @@ Residual risks:
   path being active.
 - `start-stream` does not deploy or start the board receiver.
 - The output preview is action-triggered capture, not continuous live video.
+
+## 2026-07-01 - dashboard-hdmi-capture-timeout-fix
+
+Commit: this commit (`fix: extend dashboard HDMI capture timeout`)
+
+Objective:
+
+Fix the real dashboard `start-stream` path timing out during HDMI capture.
+
+Changed scope:
+
+- Increased the dashboard capture subprocess timeout to at least 90 seconds.
+- Reduced default dashboard preview capture frames from 20 to 8.
+- Added the timeout-fix report.
+
+Verification:
+
+- Ran Python compile check for `tools/dashboard/pc_dashboard.py`.
+- Ran:
+  `rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-hdmi-capture-timeout-fix"`
+- Results:
+  `DASHBOARD_SCAFFOLD_SELF_TEST_OK`,
+  `DASHBOARD_CONTROL_INTEGRATION_SELF_TEST_OK`,
+  `DASHBOARD_MINIMAL_UI_SELF_TEST_OK`, and
+  `DASHBOARD_LIVE_SENDER_CONTROL_SELF_TEST_OK`.
+- Restarted the local dashboard and tested the actual user path:
+  `start-stream` returned `HDMI_CAPTURE_OK`, `capture_status=ok`, and
+  `image_exists=true`; `stop-stream` stopped the sender.
+
+Board action:
+
+- PC-side dashboard process and HDMI capture only. No Vivado, PetaLinux, JTAG,
+  or board flash action.
+
+Evidence:
+
+- `docs/reports/dashboard-hdmi-capture-timeout-fix.md`
+- `build/dashboard-hdmi-capture-timeout-fix/final-state.json`
+- `build/dashboard-live/hdmi-capture/latest-validation.json`
+- `build/dashboard-live/hdmi-capture/latest.png`
+
+Result:
+
+- PASSED. Clicking `start-stream` now triggers HDMI capture successfully.
+
+Residual risks:
+
+- The captured frame is still near black (`mean_luma=0.14`), so the remaining
+  issue is board receiver/output readiness.
+- Output preview is not continuous realtime capture yet.

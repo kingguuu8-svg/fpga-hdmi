@@ -46,6 +46,16 @@ placeholder.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: dashboard-hdmi-capture-timeout-fix
+Result: PASSED. Real dashboard `start-stream` initially hit
+  HDMI_CAPTURE_TIMEOUT because the dashboard timeout was shorter than the
+  DirectShow capture latency. The timeout is now at least 90 seconds and the
+  default preview capture frame count is 8. Retest returned HDMI_CAPTURE_OK,
+  capture_status=ok, and image_exists=true.
+Evidence: docs/reports/dashboard-hdmi-capture-timeout-fix.md
+Board action: PC-side dashboard process and HDMI capture only. No
+  Vivado/PetaLinux/JTAG/flash action.
+
 Cycle ID: dashboard-hdmi-capture-binding
 Result: PASSED. Added HDMI preview capture binding to the dashboard. The
   capture tool now supports validation-profile none for preview captures.
@@ -257,6 +267,8 @@ but require a ready board receiver FIFO.
 PC dashboard `start-stream` and `capture-output` call HDMI preview capture and
 refresh the output panel. Current live preview capture opened the adapter but
 returned a near-black frame, so board receiver readiness remains separate.
+Real dashboard `start-stream` now returns HDMI_CAPTURE_OK and image_exists=true
+after the capture timeout fix; the captured frame is still near black.
 ```
 
 Retired dead end:

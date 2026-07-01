@@ -402,5 +402,13 @@ preview capture opened DirectShow device index 0 and wrote `latest.png`, but
 the captured frame was near black. Treat that as a board receiver/output
 readiness issue, not a dashboard capture wiring issue.
 
+Timeout fix:
+If dashboard `start-stream` reports `HDMI_CAPTURE_TIMEOUT`, use the version
+after `docs/reports/dashboard-hdmi-capture-timeout-fix.md`. The verified
+dashboard path uses a capture timeout of at least 90 seconds and 8 preview
+frames by default. Retest returned `HDMI_CAPTURE_OK`, `capture_status=ok`, and
+`image_exists=true`; the captured frame was still near black, so the remaining
+problem was board output readiness.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

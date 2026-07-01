@@ -40,7 +40,7 @@ DEFAULT_CAPTURE_DEVICE = "auto"
 DEFAULT_CAPTURE_BACKEND = "dshow"
 DEFAULT_CAPTURE_WIDTH = 800
 DEFAULT_CAPTURE_HEIGHT = 600
-DEFAULT_CAPTURE_FRAMES = 20
+DEFAULT_CAPTURE_FRAMES = 8
 DEFAULT_CAPTURE_PROFILE = "none"
 NO_CAMERA_POLICY = "Generated PC input only. Camera/webcam and custom file input are disabled for MVP."
 
@@ -420,7 +420,7 @@ class DashboardState:
             return False, "HDMI_CAPTURE_DISABLED"
 
         cmd, report_path, stdout_path, stderr_path = self._capture_command_locked()
-        timeout_s = max(12.0, 6.0 + self.capture_frames / 5.0)
+        timeout_s = max(90.0, 10.0 + self.capture_frames * 3.0)
         self.capture_status = "running"
         try:
             result = subprocess.run(
