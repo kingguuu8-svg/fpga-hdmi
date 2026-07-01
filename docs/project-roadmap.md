@@ -144,6 +144,11 @@ Phase C:
   the live HDMI MJPEG return endpoint, and the board-live helper verified 80
   returned MJPEG frames with dynamic changes while the receiver wrote 12
   no-effect source frames with dropped=0.
+  Dashboard color-block loop and UART audit gate: PASSED. The PC source is now
+  full-screen sequential color blocks; the board-live helper classified the
+  returned HDMI MJPEG stream as source colors, removed the Linux console cursor
+  overlay, and verified Dashboard UART pause/resume/status responses from the
+  running receiver.
   Later: carry the same command semantics over TCP/UDP.
 
 Phase D:

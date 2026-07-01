@@ -12,11 +12,14 @@ param(
     [double]$StreamFps = 10.0,
     [int]$MjpegFrames = 80,
     [int]$MjpegMinUnique = 2,
+    [int]$MjpegMinColors = 3,
     [int]$Frames = 12,
+    [int]$KeepRunningReceiverFrames = 1000000,
     [double]$Fps = 2.0,
     [int]$InterPacketUs = 200,
     [string]$ControlFifo = "/tmp/video_ctl",
-    [string]$OutDir = "build\dashboard-board-live-loop"
+    [string]$OutDir = "build\dashboard-board-live-loop",
+    [switch]$KeepRunning
 )
 
 $ErrorActionPreference = "Stop"
@@ -88,6 +91,9 @@ function Invoke-DashboardAction {
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $outPath = Join-Path $repoRoot $OutDir
 New-Item -ItemType Directory -Force -Path $outPath | Out-Null
+$receiverFrames = if ($KeepRunning) { $KeepRunningReceiverFrames } else { $Frames }
+$senderFrames = if ($KeepRunning) { 0 } else { $Frames }
+$receiverTimeout = if ($KeepRunning) { 3600 } else { 180 }
 
 Stop-DashboardListener -Port $DashboardPort
 Stop-StaleDemoSenders
@@ -151,7 +157,10 @@ try {
         "wget -q -O /tmp/fb_video_udp_receiver http://$($PcIp):$($HttpPort)/fb_video_udp_receiver",
         "echo '$receiverSha  /tmp/fb_video_udp_receiver' | sha256sum -c -",
         "chmod +x /tmp/fb_video_udp_receiver",
-        "/tmp/fb_video_udp_receiver --port $UdpPort --frames $Frames --timeout-sec 180 --control-fifo $ControlFifo > /tmp/fb_video_udp_receiver.log 2>&1 & echo RECEIVER_PID=`$!",
+        "echo 0 > /sys/class/graphics/fbcon/cursor_blink 2>/dev/null || true",
+        "printf '\033[?25l' > /dev/tty0 2>/dev/null || true",
+        "setterm -cursor off -blank 0 -powersave off < /dev/tty0 > /dev/tty0 2>/dev/null || true",
+        "/tmp/fb_video_udp_receiver --port $UdpPort --frames $receiverFrames --timeout-sec $receiverTimeout --control-fifo $ControlFifo > /tmp/fb_video_udp_receiver.log 2>&1 & echo RECEIVER_PID=`$!",
         "sleep 1",
         "cat /tmp/fb_video_udp_receiver.log"
     ) | Set-Content -LiteralPath $deployCommands -Encoding ASCII
@@ -187,7 +196,7 @@ try {
         "--port", "$DashboardPort",
         "--board-host", $BoardIp,
         "--udp-port", "$UdpPort",
-        "--sender-frames", "$Frames",
+        "--sender-frames", "$senderFrames",
         "--sender-fps", "$Fps",
         "--sender-payload", "1200",
         "--sender-inter-packet-us", "$InterPacketUs",
@@ -236,6 +245,8 @@ try {
         --out-dir $mjpegOut `
         --frames $MjpegFrames `
         --min-unique $MjpegMinUnique `
+        --expect-color-blocks `
+        --min-colors $MjpegMinColors `
         --timeout-sec 30
     if ($LASTEXITCODE -ne 0) {
         throw "dashboard live HDMI return MJPEG probe failed"
@@ -260,17 +271,28 @@ try {
 
     $afterLog = Get-Content -Raw -LiteralPath (Join-Path $outPath "uart_after_dashboard_stream.log")
     $writtenCount = ([regex]::Matches($afterLog, "VIDEO_UDP_FRAME_WRITTEN")).Count
-    if ($writtenCount -lt 1 -or $afterLog -notmatch "VIDEO_UDP_RECEIVER_DONE frames=$Frames .*dropped=0") {
+    if ($writtenCount -lt 1) {
         throw "dashboard-driven receiver write/done markers missing"
     }
+    if (-not $KeepRunning -and $afterLog -notmatch "VIDEO_UDP_RECEIVER_DONE frames=$Frames .*dropped=0") {
+        throw "dashboard-driven receiver done marker missing"
+    }
+    if ($afterLog -match "dropped=[1-9]") {
+        throw "dashboard-driven receiver reported dropped packets"
+    }
 
-    $stopResult = Invoke-DashboardAction -Url $dashboardUrl -Action "stop-stream" -TimeoutSec 30
-    $stopResult | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $outPath "dashboard_stop_stream.json") -Encoding UTF8
+    if (-not $KeepRunning) {
+        $stopResult = Invoke-DashboardAction -Url $dashboardUrl -Action "stop-stream" -TimeoutSec 30
+        $stopResult | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $outPath "dashboard_stop_stream.json") -Encoding UTF8
+    }
 
     $finalState = Invoke-RestMethod -Uri "$dashboardUrl/api/state" -TimeoutSec 5
     $finalState | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $outPath "dashboard_final_state.json") -Encoding UTF8
 
-    $marker = "DASHBOARD_BOARD_LIVE_LOOP_OK frames=$Frames written=$writtenCount mjpeg_frames=$($mjpegReport.frames) mjpeg_unique=$($mjpegReport.unique_hashes) out=$outPath"
+    $colorCount = @($mjpegReport.unique_colors).Count
+    $colors = ($mjpegReport.unique_colors -join ",")
+    $mode = if ($KeepRunning) { "keep-running" } else { "finite" }
+    $marker = "DASHBOARD_BOARD_LIVE_LOOP_OK mode=$mode receiver_frames=$receiverFrames sender_frames=$senderFrames written=$writtenCount mjpeg_frames=$($mjpegReport.frames) mjpeg_unique=$($mjpegReport.unique_hashes) mjpeg_colors=$colorCount color_names=$colors out=$outPath"
     Set-Content -LiteralPath (Join-Path $outPath "dashboard_board_live_loop.marker.txt") -Value $marker -Encoding ASCII
     Write-Host $marker
 }

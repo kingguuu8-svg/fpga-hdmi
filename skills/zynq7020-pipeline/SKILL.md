@@ -410,8 +410,8 @@ frames by default. Retest returned `HDMI_CAPTURE_OK`, `capture_status=ok`, and
 `image_exists=true`; the captured frame was still near black, so the remaining
 problem was board output readiness.
 
-Verified live dashboard pass-through preview path (preferred for displayable
-demo closure, 2026-07-01):
+Historical live dashboard pass-through preview path (superseded by the
+color-block classification path, 2026-07-01):
 
 ```text
 1. Run the helper:
@@ -440,9 +440,54 @@ Verified outcome:
 The connected board displayed the generated PC demo stream through HDMI, the
 Dashboard served the exact generated UDP source as its input preview, and the
 right panel consumed a live MJPEG stream from the HDMI return adapter. The
-saved MJPEG frames showed visible PIP/checker motion. This is the current
-preferred displayable closed-loop demo path. It runs the receiver from `/tmp`
-and does not write board flash.
+saved MJPEG frames showed visible PIP/checker motion. This path is kept as
+recovery context only; use the color-block classification path below for new
+closed-loop checks. It runs the receiver from `/tmp` and does not write board
+flash.
+
+Verified color-block live dashboard loop and UART audit path (preferred for
+displayable closed-loop checks, 2026-07-01):
+
+```text
+1. Run the finite helper:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_dashboard_board_live_loop.ps1 -OutDir build\dashboard-color-block-loop-and-uart-audit\finite-loop -CaptureDevice 1 -CaptureBackend dshow -StreamFps 10 -MjpegFrames 80 -MjpegMinUnique 2 -MjpegMinColors 3 -Frames 12 -Fps 2 -InterPacketUs 200
+2. Require:
+   build/dashboard-color-block-loop-and-uart-audit/finite-loop/dashboard_board_live_loop.marker.txt
+   contains DASHBOARD_BOARD_LIVE_LOOP_OK mode=finite
+   receiver_frames=12 sender_frames=12 written=12
+   mjpeg_frames=80 mjpeg_unique=8 mjpeg_colors=8
+   color_names=black,blue,cyan,green,magenta,red,white,yellow
+3. Require sender evidence:
+   demo_frame=0 color=red
+   demo_frame=1 color=green
+   demo_frame=2 color=blue
+   DEMO_VIDEO_SEND_OK frames=12 packets=14400 target=192.168.1.10:5005
+4. Require receiver evidence:
+   CONTROL_FIFO_READY path=/tmp/video_ctl
+   VIDEO_UDP_LINUX_RECEIVER_READY ... effect=none
+   twelve VIDEO_UDP_FRAME_WRITTEN markers
+   VIDEO_UDP_RECEIVER_DONE frames=12 skipped=0 packets=14400 dropped=0
+5. Require live HDMI return evidence:
+   tools/probe_mjpeg_stream.py reads /api/output-stream.mjpeg
+   MJPEG_STREAM_PROBE_OK frames=80 unique=8
+   colors=black,blue,cyan,green,magenta,red,white,yellow
+6. To leave a live demo running, add -KeepRunning and use a live-demo out dir:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_dashboard_board_live_loop.ps1 -OutDir build\dashboard-color-block-loop-and-uart-audit\live-demo -CaptureDevice 1 -CaptureBackend dshow -StreamFps 10 -MjpegFrames 40 -MjpegMinUnique 2 -MjpegMinColors 3 -Frames 12 -Fps 2 -InterPacketUs 200 -KeepRunning
+7. To audit UART controls through the dashboard, POST:
+   pause-receiver, receiver-status, resume-receiver, receiver-status
+   and require CONTROL_PAUSED, CONTROL_STATUS paused=1, CONTROL_RESUMED,
+   and CONTROL_STATUS paused=0 in the Dashboard action responses.
+```
+
+Verified outcome:
+The source is now full-screen sequential color blocks instead of a decorative
+PIP/checker pattern. The finite board loop proves the PC sender, Linux receiver,
+/dev/fb0, HDMI output, HDMI capture adapter, and Dashboard right-panel MJPEG
+stream carry the same color-block sequence with `effect=none` and dropped=0.
+The small black blinking overlay seen during testing was the Linux framebuffer
+console cursor; the helper disables it before starting the receiver. Dashboard
+UART pause/resume/status actions now return real receiver log markers from the
+running board receiver.
 
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

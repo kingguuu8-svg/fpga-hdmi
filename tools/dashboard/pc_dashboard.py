@@ -630,9 +630,17 @@ class DashboardState:
 
     def _uart_commands_for_action(self, action: str) -> list[str]:
         if action == "pause-receiver":
-            return [f"echo pause > {self.control_fifo}"]
+            return [
+                f"echo pause > {self.control_fifo}",
+                "sleep 1",
+                "tail -n 30 /tmp/fb_video_udp_receiver.log 2>/dev/null || true",
+            ]
         if action == "resume-receiver":
-            return [f"echo resume > {self.control_fifo}"]
+            return [
+                f"echo resume > {self.control_fifo}",
+                "sleep 1",
+                "tail -n 30 /tmp/fb_video_udp_receiver.log 2>/dev/null || true",
+            ]
         if action == "receiver-status":
             return [
                 f"echo status > {self.control_fifo}",
@@ -647,7 +655,11 @@ class DashboardState:
 
         self.log_dir.mkdir(parents=True, exist_ok=True)
         stamp = int(time.time() * 1000)
-        rel_output = Path("build") / "dashboard-live" / f"uart-{action}-{stamp}.log"
+        rel_output = self.log_dir / f"uart-{action}-{stamp}.log"
+        rel_commands = self.log_dir / f"uart-{action}-{stamp}.commands"
+        command_path = self.repo_root / rel_commands
+        command_path.parent.mkdir(parents=True, exist_ok=True)
+        command_path.write_text("\n".join(self._uart_commands_for_action(action)) + "\n", encoding="ascii")
         script = self.repo_root / "tools" / "uart_run_commands.ps1"
         cmd = [
             "powershell.exe",
@@ -660,6 +672,8 @@ class DashboardState:
             self.uart_port,
             "-BaudRate",
             str(self.uart_baud),
+            "-CommandFile",
+            str(rel_commands),
             "-InitialReadSeconds",
             "0",
             "-InterCommandDelayMilliseconds",
@@ -668,8 +682,6 @@ class DashboardState:
             "1",
             "-OutputPath",
             str(rel_output),
-            "-Command",
-            *self._uart_commands_for_action(action),
         ]
         try:
             result = subprocess.run(
@@ -687,7 +699,16 @@ class DashboardState:
             detail = (result.stderr or result.stdout).strip().replace("\r", " ").replace("\n", " ")
             return False, f"UART_COMMAND_FAILED port={self.uart_port} detail={detail[:300]}"
 
-        return True, f"uart command sent port={self.uart_port} log={rel_output}"
+        log_path = self.repo_root / rel_output
+        markers: list[str] = []
+        if log_path.exists():
+            log_text = log_path.read_text(encoding="utf-8", errors="replace")
+            for line in log_text.splitlines():
+                stripped = line.strip()
+                if any(token in stripped for token in ("CONTROL_", "VIDEO_UDP_", "FB_INFO", "UART_RUN_COMMANDS_OK")):
+                    markers.append(stripped)
+        marker_tail = " | ".join(markers[-6:]) if markers else "no receiver response marker"
+        return True, f"uart command sent port={self.uart_port} log={rel_output} response={marker_tail[:600]}"
 
     def run_action(self, action: str) -> dict[str, Any]:
         action_ids = {item["id"] for item in ACTION_DEFINITIONS}

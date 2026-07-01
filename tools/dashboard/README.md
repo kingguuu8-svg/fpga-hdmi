@@ -43,12 +43,18 @@ rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py
 Run the displayable board-live loop:
 
 ```powershell
-rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_dashboard_board_live_loop.ps1 -OutDir build\dashboard-live-pass-through-preview -CaptureDevice 1 -CaptureBackend dshow -StreamFps 10 -MjpegFrames 80 -MjpegMinUnique 2 -Frames 12 -Fps 2 -InterPacketUs 200
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_dashboard_board_live_loop.ps1 -OutDir build\dashboard-color-block-loop-and-uart-audit\finite-loop -CaptureDevice 1 -CaptureBackend dshow -StreamFps 10 -MjpegFrames 80 -MjpegMinUnique 2 -MjpegMinColors 3 -Frames 12 -Fps 2 -InterPacketUs 200
 ```
 
 This deploys the receiver to `/tmp`, starts the dashboard, triggers
 `start-stream`, reads `/api/output-stream.mjpeg`, and requires the returned
-MJPEG stream to contain dynamic output changes.
+MJPEG stream to classify as the generated full-screen color-block source.
+
+Run the board-live loop and leave the dashboard/sender running:
+
+```powershell
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_dashboard_board_live_loop.ps1 -OutDir build\dashboard-color-block-loop-and-uart-audit\live-demo -CaptureDevice 1 -CaptureBackend dshow -StreamFps 10 -MjpegFrames 40 -MjpegMinUnique 2 -MjpegMinColors 3 -Frames 12 -Fps 2 -InterPacketUs 200 -KeepRunning
+```
 
 Run the fixed demo-video sender self-test:
 
@@ -80,14 +86,18 @@ Current behavior:
 
 ```text
 start-stream / stop-stream:
-  live local sender subprocess control
+  live local color-block sender subprocess control
+
+right panel:
+  live HDMI return through /api/output-stream.mjpeg
 
 capture-output:
   manual HDMI snapshot capture through tools/capture_hdmi.py; not the primary
   right-panel video path
 
 pause-receiver / resume-receiver / receiver-status:
-  UART command helper, requiring --uart-port and a ready board receiver FIFO
+  UART command helper, requiring --uart-port and a ready board receiver FIFO;
+  live mode returns tailed receiver CONTROL_/VIDEO_UDP_ markers
 
 effect-none / effect-invert:
   dashboard state only; applies to later receiver launch flow

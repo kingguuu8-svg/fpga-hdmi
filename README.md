@@ -74,7 +74,8 @@ Effect: first board-side RGB invert effect passed with generated PC input
 Dashboard: PC visual scaffold and fixed generated demo sender passed; custom
   input files deferred after MVP; minimal live sender control and HDMI capture
   binding passed; dashboard-driven board live loop passed with truthful input
-  preview, dynamic HDMI sample validation, and live HDMI MJPEG return preview
+  preview, live HDMI MJPEG return preview, color-block source classification,
+  and UART pause/resume/status audit
 ```
 
 ## PC Dashboard
@@ -100,13 +101,19 @@ rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py
 Run the displayable dashboard board-live loop:
 
 ```powershell
-rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_dashboard_board_live_loop.ps1 -OutDir build\dashboard-live-pass-through-preview -CaptureDevice 1 -CaptureBackend dshow -StreamFps 10 -MjpegFrames 80 -MjpegMinUnique 2 -Frames 12 -Fps 2 -InterPacketUs 200
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_dashboard_board_live_loop.ps1 -OutDir build\dashboard-color-block-loop-and-uart-audit\finite-loop -CaptureDevice 1 -CaptureBackend dshow -StreamFps 10 -MjpegFrames 80 -MjpegMinUnique 2 -MjpegMinColors 3 -Frames 12 -Fps 2 -InterPacketUs 200
 ```
 
 Expected marker:
 
 ```text
-DASHBOARD_BOARD_LIVE_LOOP_OK frames=12 written=12 mjpeg_frames=80 mjpeg_unique=26
+DASHBOARD_BOARD_LIVE_LOOP_OK mode=finite receiver_frames=12 sender_frames=12 written=12 mjpeg_frames=80 mjpeg_unique=8 mjpeg_colors=8 color_names=black,blue,cyan,green,magenta,red,white,yellow
+```
+
+Run the board-live loop and leave the dashboard/sender running for inspection:
+
+```powershell
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_dashboard_board_live_loop.ps1 -OutDir build\dashboard-color-block-loop-and-uart-audit\live-demo -CaptureDevice 1 -CaptureBackend dshow -StreamFps 10 -MjpegFrames 40 -MjpegMinUnique 2 -MjpegMinColors 3 -Frames 12 -Fps 2 -InterPacketUs 200 -KeepRunning
 ```
 
 Run the fixed demo-video sender self-test:
@@ -128,7 +135,9 @@ rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py
 ```
 
 The MVP dashboard uses generated PC input. It does not use camera/webcam input,
-and user-selectable custom input files are deferred after MVP.
+and user-selectable custom input files are deferred after MVP. The current
+generated source is full-screen sequential color blocks so the HDMI return path
+can be verified by programmatic color classification.
 
 The dashboard UI is intentionally plain. It keeps only the input preview, FPGA
 live HDMI return preview, control buttons, status, and log. The right panel
@@ -150,11 +159,11 @@ POST /api/action {"action":"stop-stream"}
 ```
 
 `start-stream` and `stop-stream` now control a real local
-`tools/send_demo_video_udp.py` process. `start-stream` also triggers one HDMI
-preview capture through `tools/capture_hdmi.py`, and `capture-output` can
-refresh the output panel manually. UART/FIFO controls use
-`tools/uart_run_commands.ps1` when `--uart-port` is configured and the board
-receiver has created `/tmp/video_ctl`; otherwise they return an explicit error.
+`tools/send_demo_video_udp.py` process. `start-stream` exposes the live HDMI
+return stream at `/api/output-stream.mjpeg`; `capture-output` is only a manual
+still-capture fallback. UART/FIFO controls use `tools/uart_run_commands.ps1`
+when `--uart-port` is configured and the board receiver has created
+`/tmp/video_ctl`; otherwise they return an explicit error.
 
 The previous PL-only video effects demo remains available as a side demo, not
 the current network-video MVP:

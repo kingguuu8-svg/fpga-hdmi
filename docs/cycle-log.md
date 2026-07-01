@@ -1403,3 +1403,83 @@ Residual risks:
   HDMI/UVC capture and MJPEG encoding can change exact pixels.
 - The browser input preview and HDMI return preview are not frame-locked.
 - Pause/resume/effect live choreography remains a later demo cycle.
+
+## 2026-07-01 - dashboard-color-block-loop-and-uart-audit
+
+Commit: this commit (`cycle: validate color block loop and uart`)
+
+Objective:
+
+Replace the ambiguous generated demo with full-screen sequential color blocks,
+then verify that the Dashboard right-panel video is a live HDMI return stream
+derived from the PC source. Audit Dashboard UART pause/resume/status controls
+against the running board receiver.
+
+Changed scope:
+
+- Replaced the generated PIP/checker demo source with full-screen RGB888 color
+  blocks.
+- Added sender color-name logging and a source self-test that verifies every
+  palette frame is one solid color.
+- Extended the MJPEG stream probe to classify returned HDMI frames against the
+  source palette.
+- Extended the board-live helper with color classification, a keep-running demo
+  mode, and Linux console cursor suppression before receiver start.
+- Fixed Dashboard UART actions by passing a command file to
+  `uart_run_commands.ps1` and returning tailed receiver markers in the action
+  response.
+- Updated report, roadmap, README, dashboard README, current-cycle, and
+  pipeline skill.
+
+Verification:
+
+- Ran Python compile checks for the touched Python tools.
+- Ran sender self-test:
+  `DEMO_VIDEO_SENDER_SELF_TEST_OK`.
+- Ran Dashboard self-test:
+  `DASHBOARD_SCAFFOLD_SELF_TEST_OK`,
+  `DASHBOARD_CONTROL_INTEGRATION_SELF_TEST_OK`,
+  `DASHBOARD_MINIMAL_UI_SELF_TEST_OK`, and
+  `DASHBOARD_LIVE_SENDER_CONTROL_SELF_TEST_OK`.
+- Ran PowerShell parse check for `tools/run_dashboard_board_live_loop.ps1`.
+- Ran finite board-live loop. Marker:
+  `DASHBOARD_BOARD_LIVE_LOOP_OK mode=finite receiver_frames=12 sender_frames=12 written=12 mjpeg_frames=80 mjpeg_unique=8 mjpeg_colors=8 color_names=black,blue,cyan,green,magenta,red,white,yellow`.
+- Sender sent 12 frames as 14400 UDP packets; receiver wrote 12 frames with
+  dropped=0 and `effect=none`.
+- Ran keep-running board-live loop. Marker:
+  `DASHBOARD_BOARD_LIVE_LOOP_OK mode=keep-running receiver_frames=1000000 sender_frames=0 written=19 mjpeg_frames=40 mjpeg_unique=7 mjpeg_colors=7`.
+- Ran UART control probe and Dashboard action API probe. Pause caused skipped
+  frames, status returned `paused=1`, resume restarted frame writes, and final
+  status returned `paused=0`.
+
+Board action:
+
+- Ran Linux userspace receivers from `/tmp`, sent generated UDP frames from the
+  PC, streamed HDMI through the PC capture adapter, and sent UART shell
+  commands to `/tmp/video_ctl`. No Vivado rebuild, PetaLinux rebuild, JTAG
+  programming, TF-card write, or board flash write.
+
+Evidence:
+
+- `docs/reports/dashboard-color-block-loop-and-uart-audit.md`
+- `build/dashboard-color-block-loop-and-uart-audit/sender-selftest/self-test.json`
+- `build/dashboard-color-block-loop-and-uart-audit/finite-loop/dashboard_board_live_loop.marker.txt`
+- `build/dashboard-color-block-loop-and-uart-audit/finite-loop/sender.out.log`
+- `build/dashboard-color-block-loop-and-uart-audit/finite-loop/uart_after_dashboard_stream.log`
+- `build/dashboard-color-block-loop-and-uart-audit/finite-loop/mjpeg-return/mjpeg-stream-probe.json`
+- `build/dashboard-color-block-loop-and-uart-audit/live-demo/dashboard_board_live_loop.marker.txt`
+- `build/dashboard-color-block-loop-and-uart-audit/dashboard-uart-actions.json`
+
+Result:
+
+- PASSED. The demo now has a machine-checkable source and a live, source-derived
+  HDMI return preview. UART pause/resume/status is controllable from the
+  Dashboard and returns real board receiver responses.
+
+Residual risks:
+
+- HDMI/UVC capture and MJPEG encoding mean this is not a pixel-perfect equality
+  proof.
+- Input preview and HDMI return preview are not frame-locked.
+- `-KeepRunning` is a long finite demo mode, not a persistent system service.
+- Runtime effect switching remains a follow-up cycle.

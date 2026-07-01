@@ -10,7 +10,7 @@ import struct
 import time
 from pathlib import Path
 
-from dashboard.demo_source import frame_sha256, make_demo_frame
+from dashboard.demo_source import COLOR_BLOCKS, color_block_for_frame, frame_sha256, make_demo_frame
 
 
 MAGIC = b"ZVID"
@@ -86,6 +86,7 @@ def run_sender(args: argparse.Namespace) -> int:
         index = 0
         while args.frames == 0 or index < args.frames:
             frame_id = args.start_frame_id + index
+            color_name, _ = color_block_for_frame(frame_id)
             started = time.perf_counter()
             frame = make_demo_frame(args.width, args.height, frame_id)
             packets = send_frame(
@@ -101,7 +102,7 @@ def run_sender(args: argparse.Namespace) -> int:
             total_packets += packets
             elapsed = time.perf_counter() - started
             print(
-                f"demo_frame={frame_id} bytes={len(frame)} packets={packets} "
+                f"demo_frame={frame_id} color={color_name} bytes={len(frame)} packets={packets} "
                 f"sha256={frame_sha256(frame)} elapsed_s={elapsed:.3f}",
                 flush=True,
             )
@@ -126,6 +127,13 @@ def run_self_test(out_dir: Path) -> int:
         raise AssertionError("unexpected frame size")
     if frame0 == frame1:
         raise AssertionError("demo frames are not dynamic")
+    for frame_id, (_, expected_rgb) in enumerate(COLOR_BLOCKS):
+        frame = make_demo_frame(width, height, frame_id)
+        first_pixel = tuple(frame[:3])
+        if first_pixel != expected_rgb:
+            raise AssertionError(f"frame {frame_id} first pixel {first_pixel} != {expected_rgb}")
+        if frame != bytes(expected_rgb) * (width * height):
+            raise AssertionError(f"frame {frame_id} is not a full-screen color block")
 
     receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     receiver.bind(("127.0.0.1", 0))
@@ -159,6 +167,8 @@ def run_self_test(out_dir: Path) -> int:
     result = {
         "status": "pass",
         "source": "built-in-generated-demo",
+        "pattern": "full-screen-sequential-color-blocks",
+        "palette": [{"name": name, "rgb": list(rgb)} for name, rgb in COLOR_BLOCKS],
         "camera_input": False,
         "custom_file_input": False,
         "width": width,

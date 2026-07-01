@@ -46,6 +46,20 @@ placeholder.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: dashboard-color-block-loop-and-uart-audit
+Result: PASSED. Replaced the ambiguous generated demo with full-screen
+  sequential color blocks, classified the live HDMI MJPEG return stream as the
+  source color set, fixed the Linux console cursor overlay, and made Dashboard
+  UART pause/resume/status actions return real receiver markers. The finite
+  board loop sent 12 color-block frames, the receiver wrote 12 frames with
+  packets=14400 and dropped=0, and the MJPEG probe read 80 returned frames with
+  8 unique colors.
+Evidence: docs/reports/dashboard-color-block-loop-and-uart-audit.md
+Board action: ran Linux userspace receivers from /tmp, sent generated UDP
+  frames from the PC, streamed HDMI through the PC capture adapter, and sent
+  UART shell commands to /tmp/video_ctl. No Vivado/PetaLinux/JTAG/TF-card/flash
+  action.
+
 Cycle ID: dashboard-live-pass-through-preview
 Result: PASSED. Added a live HDMI MJPEG return endpoint for the dashboard right
   panel and changed the board-live helper to validate that same stream. The
@@ -240,9 +254,7 @@ Board action: booted generated image from TF card only; no JTAG programming,
 
 ## Active Cycle
 
-```text
-None.
-```
+No active implementation cycle is open.
 
 ## Resolved Route Gate
 
@@ -308,6 +320,11 @@ Dashboard board-live loop now deploys/starts the receiver, drives Dashboard
 `start-stream`, receives/writes twelve generated no-effect frames with
 dropped=0, and validates the right-panel `/api/output-stream.mjpeg` HDMI return
 stream with 80 returned frames and 26 unique hashes.
+Dashboard color-block loop now uses full-screen sequential color blocks as the
+PC source and validates the live HDMI return stream by classifying returned
+MJPEG frames as the source colors.
+Dashboard UART pause/resume/status actions now return real receiver markers
+from the running board receiver through `/tmp/video_ctl`.
 ```
 
 Retired dead end:
@@ -321,6 +338,6 @@ layer. Do not resume this work.
 
 ## Next Cycle Direction
 
-No active implementation cycle is open. A natural next cycle is dashboard
-control demonstration: exercise pause/resume through `/tmp/video_ctl`, then add
-an effect launch/switch flow suitable for a recorded demo.
+No active implementation cycle is open. A natural next cycle is runtime effect
+switching or a recorded-demo choreography that uses the now-verified
+color-block loop and UART control path.

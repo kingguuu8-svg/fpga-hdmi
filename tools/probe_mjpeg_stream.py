@@ -10,6 +10,8 @@ import time
 import urllib.request
 from pathlib import Path
 
+from dashboard.demo_source import COLOR_BLOCKS
+
 
 def extract_jpegs(buffer: bytearray) -> list[bytes]:
     frames: list[bytes] = []
@@ -29,12 +31,50 @@ def extract_jpegs(buffer: bytearray) -> list[bytes]:
     return frames
 
 
+def classify_color_block(payload: bytes, threshold: float) -> dict[str, object]:
+    try:
+        import cv2
+        import numpy as np
+    except ImportError as exc:
+        raise RuntimeError("OpenCV and NumPy are required for color-block classification") from exc
+
+    encoded = np.frombuffer(payload, dtype=np.uint8)
+    bgr = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+    if bgr is None or not bgr.size:
+        return {
+            "color": "decode-failed",
+            "rgb_mean": [0.0, 0.0, 0.0],
+            "distance": 999.0,
+            "pass": False,
+        }
+
+    rgb_mean = bgr[:, :, ::-1].mean(axis=(0, 1))
+    best_name = ""
+    best_distance = 999999.0
+    for name, rgb in COLOR_BLOCKS:
+        target = np.array(rgb, dtype=np.float32)
+        distance = float(np.linalg.norm(rgb_mean.astype(np.float32) - target))
+        if distance < best_distance:
+            best_name = name
+            best_distance = distance
+
+    return {
+        "color": best_name,
+        "rgb_mean": [round(float(value), 2) for value in rgb_mean],
+        "distance": round(best_distance, 2),
+        "pass": best_distance <= threshold,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("url")
     parser.add_argument("--out-dir", default="build/mjpeg-stream-probe")
     parser.add_argument("--frames", type=int, default=12)
     parser.add_argument("--min-unique", type=int, default=2)
+    parser.add_argument("--expect-color-blocks", action="store_true")
+    parser.add_argument("--min-colors", type=int, default=3)
+    parser.add_argument("--color-distance-threshold", type=float, default=90.0)
     parser.add_argument("--timeout-sec", type=float, default=20.0)
     args = parser.parse_args()
 
@@ -61,26 +101,40 @@ def main() -> int:
                     "sha256": hashlib.sha256(payload).hexdigest(),
                     "bytes": len(payload),
                 })
+                if args.expect_color_blocks:
+                    saved[-1]["color_block"] = classify_color_block(payload, args.color_distance_threshold)
                 if len(saved) >= args.frames:
                     break
 
     unique_hashes = sorted({str(item["sha256"]) for item in saved})
+    colors = [
+        str(item.get("color_block", {}).get("color"))
+        for item in saved
+        if isinstance(item.get("color_block"), dict) and item["color_block"].get("pass")
+    ]
+    unique_colors = sorted(set(colors))
+    color_pass = (not args.expect_color_blocks) or len(unique_colors) >= args.min_colors
     report = {
         "url": args.url,
         "frames": len(saved),
         "unique_hashes": len(unique_hashes),
         "min_unique": args.min_unique,
+        "expect_color_blocks": args.expect_color_blocks,
+        "unique_colors": unique_colors,
+        "min_colors": args.min_colors,
+        "color_distance_threshold": args.color_distance_threshold,
         "saved": saved,
-        "status": "pass" if len(saved) >= args.frames and len(unique_hashes) >= args.min_unique else "fail",
+        "status": "pass" if len(saved) >= args.frames and len(unique_hashes) >= args.min_unique and color_pass else "fail",
     }
     report_path = out_dir / "mjpeg-stream-probe.json"
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
     if report["status"] == "pass":
-        print(f"MJPEG_STREAM_PROBE_OK frames={len(saved)} unique={len(unique_hashes)} report={report_path}")
+        color_text = ",".join(unique_colors) if args.expect_color_blocks else "not-checked"
+        print(f"MJPEG_STREAM_PROBE_OK frames={len(saved)} unique={len(unique_hashes)} colors={color_text} report={report_path}")
         return 0
 
-    print(f"MJPEG_STREAM_PROBE_FAIL frames={len(saved)} unique={len(unique_hashes)} report={report_path}")
+    print(f"MJPEG_STREAM_PROBE_FAIL frames={len(saved)} unique={len(unique_hashes)} colors={','.join(unique_colors)} report={report_path}")
     print(json.dumps(report, indent=2))
     return 1
 
