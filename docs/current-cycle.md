@@ -46,6 +46,17 @@ placeholder.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: dashboard-live-pass-through-preview
+Result: PASSED. Added a live HDMI MJPEG return endpoint for the dashboard right
+  panel and changed the board-live helper to validate that same stream. The
+  connected board wrote 12 no-effect generated frames, 14400 packets, dropped=0;
+  the MJPEG probe read 80 returned HDMI frames from /api/output-stream.mjpeg
+  with 26 unique hashes.
+Evidence: docs/reports/dashboard-live-pass-through-preview.md
+Board action: ran a Linux userspace receiver from /tmp, sent generated UDP
+  frames from the PC through Dashboard, and streamed HDMI through the PC
+  capture adapter. No Vivado/PetaLinux/JTAG/TF-card/flash action.
+
 Cycle ID: dashboard-truthful-loop-validation
 Result: PASSED. Corrected the dashboard closed-loop demo so the input preview
   is generated from the exact sender source, start-stream schedules HDMI
@@ -280,8 +291,9 @@ Project Linux receiver accepts UART-shell-driven pause/resume/status commands
 through a FIFO control endpoint without breaking UDP receive or HDMI output.
 Project Linux receiver applies a board-side RGB invert effect to generated PC
 UDP input and HDMI capture validates the inverted output.
-PC dashboard scaffold exposes generated input preview, FPGA output preview,
-and function-control/log panel regions without camera or custom-file input.
+PC dashboard scaffold exposes generated input preview, FPGA HDMI return
+preview, and function-control/log panel regions without camera or custom-file
+input.
 PC fixed demo sender generates deterministic dynamic RGB888 frames and
 packetizes them through the existing UDP protocol without camera or custom-file
 input.
@@ -290,14 +302,12 @@ actions without camera or custom-file input.
 PC dashboard is now minimal and `start-stream`/`stop-stream` control a real
 local demo sender subprocess. UART/FIFO controls are wired to the UART helper
 but require a ready board receiver FIFO.
-PC dashboard `start-stream` and `capture-output` call HDMI preview capture and
-refresh the output panel. Current live preview capture opened the adapter but
-returned a near-black frame, so board receiver readiness remains separate.
-Real dashboard `start-stream` now returns HDMI_CAPTURE_OK and image_exists=true
-after the capture timeout fix; the captured frame is still near black.
+PC dashboard `start-stream` starts the real demo sender and exposes the live
+HDMI return endpoint. `capture-output` remains a manual still-capture fallback.
 Dashboard board-live loop now deploys/starts the receiver, drives Dashboard
-`start-stream`, receives/writes five generated frames with dropped=0, and
-captures a non-black generated HDMI image.
+`start-stream`, receives/writes twelve generated no-effect frames with
+dropped=0, and validates the right-panel `/api/output-stream.mjpeg` HDMI return
+stream with 80 returned frames and 26 unique hashes.
 ```
 
 Retired dead end:

@@ -410,39 +410,39 @@ frames by default. Retest returned `HDMI_CAPTURE_OK`, `capture_status=ok`, and
 `image_exists=true`; the captured frame was still near black, so the remaining
 problem was board output readiness.
 
-Verified truthful dashboard board-live loop path (preferred for displayable
+Verified live dashboard pass-through preview path (preferred for displayable
 demo closure, 2026-07-01):
 
 ```text
 1. Run the helper:
-   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_dashboard_board_live_loop.ps1 -OutDir build\dashboard-truthful-loop-validation -CaptureDevice 1 -CaptureFrames 90 -CaptureSaveSamples 6 -Frames 12 -Fps 2 -InterPacketUs 200
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_dashboard_board_live_loop.ps1 -OutDir build\dashboard-live-pass-through-preview -CaptureDevice 1 -CaptureBackend dshow -StreamFps 10 -MjpegFrames 80 -MjpegMinUnique 2 -Frames 12 -Fps 2 -InterPacketUs 200
 2. Require:
-   build/dashboard-truthful-loop-validation/dashboard_board_live_loop.marker.txt
+   build/dashboard-live-pass-through-preview/dashboard_board_live_loop.marker.txt
    contains DASHBOARD_BOARD_LIVE_LOOP_OK frames=12 written=12
-   dynamic_samples_unique=5
+   mjpeg_frames=80 mjpeg_unique=26
 3. Require receiver evidence:
    CONTROL_FIFO_READY path=/tmp/video_ctl
    VIDEO_UDP_LINUX_RECEIVER_READY
    twelve VIDEO_UDP_FRAME_WRITTEN markers
    VIDEO_UDP_RECEIVER_DONE frames=12 skipped=0 packets=14400 dropped=0
 4. Require Dashboard evidence:
-   ACTION_OK action=start-stream ... HDMI_CAPTURE_SCHEDULED
+   ACTION_OK action=start-stream ... HDMI_RETURN_STREAM_READY
    input_source.preview_matches_sender_source=true
-   capture_status=ok
-   image_exists=true
-5. Require HDMI evidence:
-   validation_profile=non-black
-   status=pass
-   mean_luma greater than 8
-   saved HDMI sample hashes contain at least two unique values
+   output_preview.live_stream_endpoint=/api/output-stream.mjpeg
+   output_preview.semantic names still capture as manual fallback
+5. Require live HDMI return evidence:
+   tools/probe_mjpeg_stream.py reads /api/output-stream.mjpeg
+   MJPEG_STREAM_PROBE_OK
+   returned frame hashes contain at least two unique values
 ```
 
 Verified outcome:
-The connected board displayed the generated PC demo stream through HDMI,
-Dashboard served the exact generated UDP source as its input preview, and HDMI
-samples captured during the stream showed visible PIP/checker motion. This is
-the current preferred displayable closed-loop demo path. It runs the receiver
-from `/tmp` and does not write board flash.
+The connected board displayed the generated PC demo stream through HDMI, the
+Dashboard served the exact generated UDP source as its input preview, and the
+right panel consumed a live MJPEG stream from the HDMI return adapter. The
+saved MJPEG frames showed visible PIP/checker motion. This is the current
+preferred displayable closed-loop demo path. It runs the receiver from `/tmp`
+and does not write board flash.
 
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

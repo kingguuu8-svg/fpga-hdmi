@@ -41,13 +41,14 @@ DEFAULT_SENDER_INTER_PACKET_US = 200.0
 DEFAULT_UART_PORT = "COM16"
 DEFAULT_UART_BAUD = 115200
 DEFAULT_CONTROL_FIFO = "/tmp/video_ctl"
-DEFAULT_CAPTURE_DEVICE = "auto"
+DEFAULT_CAPTURE_DEVICE = "1"
 DEFAULT_CAPTURE_BACKEND = "dshow"
 DEFAULT_CAPTURE_WIDTH = 800
 DEFAULT_CAPTURE_HEIGHT = 600
 DEFAULT_CAPTURE_FRAMES = 8
 DEFAULT_CAPTURE_PROFILE = "none"
 DEFAULT_CAPTURE_SAVE_SAMPLES = 0
+DEFAULT_STREAM_FPS = 10.0
 NO_CAMERA_POLICY = "Generated PC input only. Camera/webcam and custom file input are disabled for MVP."
 
 
@@ -56,7 +57,7 @@ ACTION_DEFINITIONS = [
         "id": "start-stream",
         "label": "Start stream",
         "kind": "sender-process",
-        "semantics": "start dashboard-owned fixed demo UDP sender",
+        "semantics": "start dashboard-owned fixed demo UDP sender; right panel reads HDMI return MJPEG",
     },
     {
         "id": "stop-stream",
@@ -68,7 +69,7 @@ ACTION_DEFINITIONS = [
         "id": "capture-output",
         "label": "Capture output",
         "kind": "hdmi-capture",
-        "semantics": "capture latest FPGA HDMI output image",
+        "semantics": "manual still capture fallback for FPGA HDMI output",
     },
     {
         "id": "pause-receiver",
@@ -224,9 +225,9 @@ custom file: deferred</div>
     </section>
     <section data-panel="output">
       <h2>FPGA output</h2>
-      <img class="preview" id="output-preview" src="/api/output-preview" alt="FPGA HDMI output preview">
-      <div class="meta">source: HDMI output snapshot via capture adapter
-role: output verification only
+      <img class="preview" id="output-preview" src="/api/output-stream.mjpeg" alt="live FPGA HDMI return preview">
+      <div class="meta">source: live HDMI return stream via capture adapter
+role: no-effect pass-through preview
 note: Windows may label the HDMI/UVC adapter as a camera device</div>
     </section>
     <section data-panel="control">
@@ -260,7 +261,6 @@ note: Windows may label the HDMI/UVC adapter as a camera device</div>
     async function refreshState() {{
       frame = (frame + 1) % 100000;
       document.getElementById("input-preview").src = "/api/input-preview.bmp?frame=" + frame;
-      document.getElementById("output-preview").src = "/api/output-preview?t=" + Date.now();
       const state = await fetch("/api/state").then(r => r.json());
       applyState(state);
     }}
@@ -312,6 +312,8 @@ class DashboardState:
         capture_frames: int = DEFAULT_CAPTURE_FRAMES,
         capture_profile: str = DEFAULT_CAPTURE_PROFILE,
         capture_save_samples: int = DEFAULT_CAPTURE_SAVE_SAMPLES,
+        stream_fps: float = DEFAULT_STREAM_FPS,
+        auto_capture_on_start: bool = False,
         actions_enabled: bool = True,
         action_mode: str = "live",
         log_dir: Path | None = None,
@@ -337,6 +339,8 @@ class DashboardState:
         self.capture_frames = capture_frames
         self.capture_profile = capture_profile
         self.capture_save_samples = capture_save_samples
+        self.stream_fps = stream_fps
+        self.auto_capture_on_start = auto_capture_on_start
         self.actions_enabled = actions_enabled
         self.action_mode = action_mode
         self.log_dir = log_dir or self.repo_root / "build" / "dashboard-live"
@@ -352,6 +356,9 @@ class DashboardState:
         self.capture_started_at_s: float | None = None
         self.capture_finished_at_s: float | None = None
         self.capture_last_error: str | None = None
+        self.live_stream_status = "enabled" if capture_enabled else "disabled"
+        self.live_stream_detail = ""
+        self.live_stream_clients = 0
         self.receiver_paused = False
         self.selected_effect = "none"
         self.last_action: dict[str, Any] | None = None
@@ -361,7 +368,7 @@ class DashboardState:
             f"sender target: {board_host}:{udp_port}",
             f"sender frames: {'continuous' if sender_frames == 0 else sender_frames}",
             f"hdmi capture: {'enabled' if capture_enabled else 'disabled'}",
-            "hdmi capture role: output snapshot; Windows may report the HDMI capture adapter as camera access",
+            "hdmi return: live MJPEG preview; Windows may report the HDMI capture adapter as camera access",
             f"uart: {uart_port or 'not configured'}",
             "camera/webcam input: disabled",
             "custom file input: deferred",
@@ -530,11 +537,63 @@ class DashboardState:
         self.capture_thread.start()
         return True, f"HDMI_CAPTURE_SCHEDULED count={self.capture_count} report={report_path}"
 
+    def _set_live_stream_status(self, status: str, detail: str, delta_clients: int = 0) -> None:
+        with self.lock:
+            self.live_stream_status = status
+            self.live_stream_detail = detail
+            self.live_stream_clients = max(0, self.live_stream_clients + delta_clients)
+
+    def _open_live_capture(self) -> tuple[Any, int, str]:
+        if not self.capture_enabled:
+            raise RuntimeError("HDMI_STREAM_DISABLED")
+
+        try:
+            import cv2
+        except ImportError as exc:
+            raise RuntimeError("OPENCV_NOT_AVAILABLE") from exc
+
+        backend_by_name = {
+            "dshow": cv2.CAP_DSHOW,
+            "msmf": cv2.CAP_MSMF,
+            "any": cv2.CAP_ANY,
+        }
+        backend = backend_by_name.get(self.capture_backend, cv2.CAP_DSHOW)
+        indices = range(9) if self.capture_device == "auto" else [int(self.capture_device)]
+        fallback: tuple[Any, int, str] | None = None
+        for index in indices:
+            cap = cv2.VideoCapture(index, backend)
+            if not cap.isOpened():
+                cap.release()
+                continue
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.capture_width)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.capture_height)
+            cap.set(cv2.CAP_PROP_FPS, max(1.0, self.stream_fps))
+            ok, frame = cap.read()
+            actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            detail = f"device={index} backend={self.capture_backend} size={actual_w}x{actual_h}"
+            if ok and frame is not None and frame.size:
+                if actual_w == self.capture_width and actual_h == self.capture_height:
+                    if fallback is not None:
+                        fallback[0].release()
+                    return cap, index, detail
+                if fallback is None:
+                    fallback = (cap, index, detail)
+                    continue
+            cap.release()
+
+        if fallback is not None:
+            return fallback
+        raise RuntimeError("HDMI_STREAM_OPEN_FAILED")
+
     def _start_sender_locked(self) -> tuple[bool, str]:
         if self._sender_alive_locked():
             pid = self.sender_process.pid if self.sender_process else "unknown"
-            capture_ok, capture_detail = self._start_capture_thread_locked()
-            suffix = capture_detail if capture_ok else f"capture warning: {capture_detail}"
+            if self.auto_capture_on_start:
+                capture_ok, capture_detail = self._start_capture_thread_locked()
+                suffix = capture_detail if capture_ok else f"capture warning: {capture_detail}"
+            else:
+                suffix = "HDMI_RETURN_STREAM_READY endpoint=/api/output-stream.mjpeg"
             return True, f"sender already running pid={pid}; {suffix}"
 
         stdout_path, stderr_path = self._sender_log_paths()
@@ -548,8 +607,11 @@ class DashboardState:
             )
         self.sender_last_exit_code = None
         time.sleep(0.5)
-        capture_ok, capture_detail = self._start_capture_thread_locked()
-        suffix = capture_detail if capture_ok else f"capture warning: {capture_detail}"
+        if self.auto_capture_on_start:
+            capture_ok, capture_detail = self._start_capture_thread_locked()
+            suffix = capture_detail if capture_ok else f"capture warning: {capture_detail}"
+        else:
+            suffix = "HDMI_RETURN_STREAM_READY endpoint=/api/output-stream.mjpeg"
         return True, f"sender started pid={self.sender_process.pid} log={stdout_path}; {suffix}"
 
     def _stop_sender_locked(self) -> tuple[bool, str]:
@@ -732,7 +794,13 @@ class DashboardState:
                 "capture_started_at_s": self.capture_started_at_s,
                 "capture_finished_at_s": self.capture_finished_at_s,
                 "capture_last_error": self.capture_last_error,
-                "semantic": "snapshot, not a continuous video widget",
+                "semantic": "manual snapshot fallback; the right panel uses live_stream_endpoint",
+                "live_stream_enabled": self.capture_enabled,
+                "live_stream_endpoint": "/api/output-stream.mjpeg",
+                "live_stream_status": self.live_stream_status,
+                "live_stream_detail": self.live_stream_detail,
+                "live_stream_clients": self.live_stream_clients,
+                "stream_fps": self.stream_fps,
             },
             "control_panel": {
                 "actions_enabled": self.actions_enabled,
@@ -769,6 +837,46 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             self.wfile.write(payload)
 
+        def stream_mjpeg(self) -> None:
+            try:
+                import cv2
+                cap, index, detail = state._open_live_capture()
+            except Exception as exc:
+                state._set_live_stream_status("failed", str(exc))
+                self.send_payload(503, "text/plain; charset=utf-8", f"HDMI stream unavailable: {exc}".encode("utf-8"))
+                return
+
+            state._set_live_stream_status("streaming", detail, delta_clients=1)
+            self.send_response(200)
+            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-HDMI-Capture-Device", str(index))
+            self.end_headers()
+            delay_s = 1.0 / max(1.0, state.stream_fps)
+            try:
+                while True:
+                    ok, frame = cap.read()
+                    if not ok or frame is None or not frame.size:
+                        time.sleep(delay_s)
+                        continue
+                    ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+                    if not ok:
+                        time.sleep(delay_s)
+                        continue
+                    payload = encoded.tobytes()
+                    self.wfile.write(b"--frame\r\n")
+                    self.wfile.write(b"Content-Type: image/jpeg\r\n")
+                    self.wfile.write(f"Content-Length: {len(payload)}\r\n\r\n".encode("ascii"))
+                    self.wfile.write(payload)
+                    self.wfile.write(b"\r\n")
+                    self.wfile.flush()
+                    time.sleep(delay_s)
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                pass
+            finally:
+                cap.release()
+                state._set_live_stream_status("enabled", "last client disconnected", delta_clients=-1)
+
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             if parsed.path == "/":
@@ -781,6 +889,9 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
             if parsed.path == "/api/actions":
                 payload = json.dumps({"actions": state.action_catalog()}, indent=2).encode("utf-8")
                 self.send_payload(200, "application/json; charset=utf-8", payload)
+                return
+            if parsed.path == "/api/output-stream.mjpeg":
+                self.stream_mjpeg()
                 return
             if parsed.path == "/api/input-preview.bmp":
                 frame_text = parse_qs(parsed.query).get("frame", ["0"])[0]
@@ -859,6 +970,8 @@ def run_server(
     capture_frames: int,
     capture_profile: str,
     capture_save_samples: int,
+    stream_fps: float,
+    auto_capture_on_start: bool,
     actions_enabled: bool,
     action_mode: str,
     log_dir: Path,
@@ -884,6 +997,8 @@ def run_server(
         capture_frames=capture_frames,
         capture_profile=capture_profile,
         capture_save_samples=capture_save_samples,
+        stream_fps=stream_fps,
+        auto_capture_on_start=auto_capture_on_start,
         actions_enabled=actions_enabled,
         action_mode=action_mode,
         log_dir=log_dir,
@@ -996,6 +1111,8 @@ def run_self_test(out_dir: Path) -> int:
         assert "disabled>start stream" not in page
         assert data["input_source"]["camera_enabled"] is False
         assert data["input_source"]["custom_file_enabled"] is False
+        assert data["output_preview"]["live_stream_endpoint"] == "/api/output-stream.mjpeg"
+        assert data["output_preview"]["semantic"].startswith("manual snapshot fallback")
         assert data["control_panel"]["actions_enabled"] is True
         assert data["control_panel"]["action_mode"] == "live"
         assert "start-stream" in action_ids
@@ -1060,6 +1177,8 @@ def main() -> int:
     parser.add_argument("--capture-frames", type=int, default=DEFAULT_CAPTURE_FRAMES)
     parser.add_argument("--capture-profile", default=DEFAULT_CAPTURE_PROFILE, choices=["none", "non-black", "pip", "rgb-stripes", "inverted-rgb-stripes"])
     parser.add_argument("--capture-save-samples", type=int, default=DEFAULT_CAPTURE_SAVE_SAMPLES)
+    parser.add_argument("--stream-fps", type=float, default=DEFAULT_STREAM_FPS)
+    parser.add_argument("--auto-capture-on-start", action="store_true")
     parser.add_argument("--action-mode", choices=["live", "dry-run"], default="live")
     parser.add_argument("--actions-disabled", action="store_true")
     parser.add_argument("--output-image", default="")
@@ -1094,6 +1213,8 @@ def main() -> int:
         capture_frames=args.capture_frames,
         capture_profile=args.capture_profile,
         capture_save_samples=args.capture_save_samples,
+        stream_fps=args.stream_fps,
+        auto_capture_on_start=args.auto_capture_on_start,
         actions_enabled=not args.actions_disabled,
         action_mode=args.action_mode,
         log_dir=Path(args.log_dir),

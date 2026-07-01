@@ -1330,3 +1330,76 @@ Residual risks:
 - Windows reports the HDMI/UVC adapter as camera access; this is output capture
   only and does not enable webcam/video input.
 - Pause/resume/effect live choreography remains a later demo cycle.
+
+## 2026-07-01 - dashboard-live-pass-through-preview
+
+Commit: this commit (`cycle: add live HDMI return preview`)
+
+Objective:
+
+Make the dashboard right panel show the live HDMI return path for no-effect
+pass-through, instead of presenting a static capture image as video.
+
+Changed scope:
+
+- Added `/api/output-stream.mjpeg` to `tools/dashboard/pc_dashboard.py`.
+- Changed the dashboard right panel to consume the live HDMI MJPEG endpoint.
+- Changed `start-stream` to start the sender and report
+  `HDMI_RETURN_STREAM_READY` by default, leaving still capture as a manual
+  fallback action.
+- Added `tools/probe_mjpeg_stream.py` to validate the same MJPEG stream the
+  browser consumes.
+- Updated `tools/run_dashboard_board_live_loop.ps1` to validate live MJPEG
+  return frames instead of only static HDMI capture artifacts.
+- Updated report, roadmap, README, dashboard README, current-cycle, and
+  pipeline skill.
+
+Verification:
+
+- Ran Python compile check for dashboard, MJPEG probe, demo source, sender, and
+  HDMI capture.
+- Ran PowerShell parse check for `tools/run_dashboard_board_live_loop.ps1`.
+- Ran:
+  `rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-live-pass-through-preview-selftest"`
+- Results:
+  `DASHBOARD_SCAFFOLD_SELF_TEST_OK`,
+  `DASHBOARD_CONTROL_INTEGRATION_SELF_TEST_OK`,
+  `DASHBOARD_MINIMAL_UI_SELF_TEST_OK`, and
+  `DASHBOARD_LIVE_SENDER_CONTROL_SELF_TEST_OK`.
+- Ran:
+  `rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_dashboard_board_live_loop.ps1 -OutDir build\dashboard-live-pass-through-preview -CaptureDevice 1 -CaptureBackend dshow -StreamFps 10 -MjpegFrames 80 -MjpegMinUnique 2 -Frames 12 -Fps 2 -InterPacketUs 200`
+- Marker:
+  `DASHBOARD_BOARD_LIVE_LOOP_OK frames=12 written=12 mjpeg_frames=80 mjpeg_unique=26`.
+- Receiver wrote 12 frames, 14400 UDP packets, dropped=0.
+- MJPEG probe read 80 returned HDMI frames from `/api/output-stream.mjpeg` with
+  26 unique hashes.
+
+Board action:
+
+- Ran a Linux userspace receiver from `/tmp`, sent generated UDP frames from
+  the PC through Dashboard, and streamed HDMI back through the PC HDMI capture
+  adapter. No Vivado rebuild, PetaLinux rebuild, JTAG programming, TF-card
+  write, or board flash write.
+
+Evidence:
+
+- `docs/reports/dashboard-live-pass-through-preview.md`
+- `build/dashboard-live-pass-through-preview/dashboard_board_live_loop.marker.txt`
+- `build/dashboard-live-pass-through-preview/dashboard_start_stream.json`
+- `build/dashboard-live-pass-through-preview/dashboard_final_state.json`
+- `build/dashboard-live-pass-through-preview/uart_after_dashboard_stream.log`
+- `build/dashboard-live-pass-through-preview/mjpeg-return/mjpeg-stream-probe.json`
+- `build/dashboard-live-pass-through-preview/mjpeg-return/mjpeg-frame-00.jpg`
+- `build/dashboard-live-pass-through-preview/mjpeg-return/mjpeg-frame-79.jpg`
+
+Result:
+
+- PASSED. The right dashboard panel now uses a live HDMI return stream for the
+  no-effect pass-through demo.
+
+Residual risks:
+
+- This is live visual pass-through, not pixel-perfect source/output equality.
+  HDMI/UVC capture and MJPEG encoding can change exact pixels.
+- The browser input preview and HDMI return preview are not frame-locked.
+- Pause/resume/effect live choreography remains a later demo cycle.

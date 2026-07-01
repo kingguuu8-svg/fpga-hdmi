@@ -140,6 +140,10 @@ Phase C:
   now comes from the exact generated UDP source, stream/capture actions return
   asynchronously, and HDMI samples captured during the stream show dynamic
   output changes.
+  Dashboard live pass-through preview gate: PASSED. The right panel now uses
+  the live HDMI MJPEG return endpoint, and the board-live helper verified 80
+  returned MJPEG frames with dynamic changes while the receiver wrote 12
+  no-effect source frames with dropped=0.
   Later: carry the same command semantics over TCP/UDP.
 
 Phase D:

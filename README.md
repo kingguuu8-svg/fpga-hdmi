@@ -74,7 +74,7 @@ Effect: first board-side RGB invert effect passed with generated PC input
 Dashboard: PC visual scaffold and fixed generated demo sender passed; custom
   input files deferred after MVP; minimal live sender control and HDMI capture
   binding passed; dashboard-driven board live loop passed with truthful input
-  preview and dynamic HDMI sample validation
+  preview, dynamic HDMI sample validation, and live HDMI MJPEG return preview
 ```
 
 ## PC Dashboard
@@ -100,13 +100,13 @@ rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py
 Run the displayable dashboard board-live loop:
 
 ```powershell
-rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_dashboard_board_live_loop.ps1 -OutDir build\dashboard-truthful-loop-validation -CaptureDevice 1 -CaptureFrames 90 -CaptureSaveSamples 6 -Frames 12 -Fps 2 -InterPacketUs 200
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_dashboard_board_live_loop.ps1 -OutDir build\dashboard-live-pass-through-preview -CaptureDevice 1 -CaptureBackend dshow -StreamFps 10 -MjpegFrames 80 -MjpegMinUnique 2 -Frames 12 -Fps 2 -InterPacketUs 200
 ```
 
 Expected marker:
 
 ```text
-DASHBOARD_BOARD_LIVE_LOOP_OK frames=12 written=12 dynamic_samples_unique=5
+DASHBOARD_BOARD_LIVE_LOOP_OK frames=12 written=12 mjpeg_frames=80 mjpeg_unique=26
 ```
 
 Run the fixed demo-video sender self-test:
@@ -131,7 +131,9 @@ The MVP dashboard uses generated PC input. It does not use camera/webcam input,
 and user-selectable custom input files are deferred after MVP.
 
 The dashboard UI is intentionally plain. It keeps only the input preview, FPGA
-output preview, control buttons, status, and log.
+live HDMI return preview, control buttons, status, and log. The right panel
+uses `/api/output-stream.mjpeg`; still HDMI capture is a manual evidence
+fallback.
 
 Dashboard action endpoints:
 
