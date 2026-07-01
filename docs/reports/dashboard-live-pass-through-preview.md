@@ -102,3 +102,21 @@ or board flash write.
   the browser; they are two live views of the same deterministic source path.
 - Windows may still report HDMI/UVC adapter access as camera access. Webcam
   input remains disabled.
+
+## Third-party review
+
+Non-blocking. This cycle is one of the four dashboard closed-loop cycles that
+share the same sampling architecture and validation philosophy. The unified
+third-party review covering all four is recorded in
+`docs/reports/dashboard-color-block-loop-and-uart-audit.md` under
+"Third-party review". Summary of concerns that apply to this cycle: the
+`mjpeg_unique=26` pass criterion counts distinct JPEG hashes, which for
+non-pure-color content conflates capture/MJPEG-encoding noise with content
+change (unlike the pure-color case, where identical content yields identical
+bytes); the 80 returned frames are not matched to sent frame_ids; and the
+browser input preview and HDMI return preview run on unrelated clocks (1 fps
+preview self-increment vs. 10 fps MJPEG delivery), so the right panel's faster
+visual refresh is delivery rate, not content rate. See the unified review for
+the recommended single-passthrough-standard follow-up. This cycle remains
+PASSED for what it proved: the right panel consumes a live HDMI return stream
+rather than a static snapshot.

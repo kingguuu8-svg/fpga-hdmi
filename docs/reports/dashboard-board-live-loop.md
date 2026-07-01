@@ -142,3 +142,18 @@ UDP frames through the connected Zynq board.
 - Runtime effect switching is still not part of the live dashboard loop.
 - The helper restarts the dashboard process and stops stale demo senders to keep
   the test deterministic.
+
+## Third-party review
+
+Non-blocking. This cycle is one of the four dashboard closed-loop cycles that
+share the same sampling architecture and validation philosophy. The unified
+third-party review covering all four is recorded in
+`docs/reports/dashboard-color-block-loop-and-uart-audit.md` under
+"Third-party review". Summary of concerns that apply to this cycle: the
+`non-black` `mean_luma=136.39` pass criterion is a luma-only check, not a
+source-correspondence check; the captured image being "the generated demo
+frame" was visually asserted, not machine-matched to the sent frame_id; and
+the source/preview/return clocks are unrelated (see the unified review for the
+recommended single-passthrough-standard follow-up). This cycle remains PASSED
+for what it proved: a dashboard-driven board loop produces non-black HDMI
+output from PC UDP input.

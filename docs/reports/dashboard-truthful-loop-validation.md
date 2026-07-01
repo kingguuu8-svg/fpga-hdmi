@@ -96,3 +96,20 @@ flash write.
   output verification and not a webcam/video input source.
 - Pause/resume/effect buttons are wired, but this cycle did not prove a live
   recorded control choreography.
+
+## Third-party review
+
+Non-blocking. This cycle is one of the four dashboard closed-loop cycles that
+share the same sampling architecture and validation philosophy. The unified
+third-party review covering all four is recorded in
+`docs/reports/dashboard-color-block-loop-and-uart-audit.md` under
+"Third-party review". Summary of concerns that apply to this cycle: the
+`dynamic_samples_unique=5` evidence is credible (pure-color frames produce
+byte-identical JPEGs across repeats, so hash diversity reflects content
+change, not capture noise), but it proves "the output changed several times",
+not "captured frame N corresponds to sent frame N"; and the dashboard input
+preview reuses the sender's generator function rather than reading the actual
+sent stream, so `preview_matches_sender_source: true` overstates what is
+shown. See the unified review for the recommended single-passthrough-standard
+follow-up. This cycle remains PASSED for what it proved: the dashboard loop
+has an honest input preview source and dynamic HDMI evidence.
