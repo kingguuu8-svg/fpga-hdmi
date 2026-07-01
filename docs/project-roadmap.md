@@ -114,6 +114,9 @@ Phase C:
   through a FIFO endpoint driven from the UART shell.
   First effect gate: PASSED. The Linux receiver applies a board-side RGB invert
   effect to generated PC UDP input; HDMI validates inverted output.
+  Dashboard scaffold gate: PASSED. The PC dashboard has input preview, FPGA
+  output preview, and control/log panel regions. Custom file input remains
+  deferred after MVP.
   Later: carry the same command semantics over TCP/UDP.
 
 Phase D:

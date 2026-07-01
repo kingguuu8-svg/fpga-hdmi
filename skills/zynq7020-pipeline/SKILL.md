@@ -277,5 +277,25 @@ Verified outcome:
 The board applies RGB invert to generated PC UDP input. This path does not use
 camera/webcam input; HDMI capture is only output verification.
 
+Verified PC dashboard scaffold path (preferred for dashboard layout checks,
+2026-07-01):
+
+```text
+1. Run the self-test:
+   rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\visual-dashboard-scaffold"
+2. Require:
+   DASHBOARD_SCAFFOLD_SELF_TEST_OK
+3. The self-test proves:
+   - input-preview panel exists
+   - FPGA-output preview panel exists
+   - function-control panel exists
+   - camera/webcam input is disabled
+   - custom file input is disabled/deferred
+```
+
+Verified outcome:
+The dashboard scaffold can run locally without external Python UI dependencies.
+It is a PC-side console, not board firmware.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

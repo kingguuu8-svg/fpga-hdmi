@@ -46,6 +46,15 @@ placeholder.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: visual-dashboard-scaffold
+Result: PASSED. Added a Python-stdlib PC dashboard scaffold with three visual
+  regions: generated input preview, FPGA HDMI-output preview slot, and
+  function-control/log panel skeleton. Self-test fetched the HTML, state JSON,
+  generated input SVG, and output placeholder SVG. The state explicitly reports
+  camera_enabled=false and custom_file_enabled=false.
+Evidence: docs/reports/visual-dashboard-scaffold.md
+Board action: none. PC dashboard scaffold only.
+
 Cycle ID: first-board-side-effect
 Result: PASSED. The Linux receiver now supports a board-side RGB invert effect.
   PC sent the deterministic non-camera rgb-stripes UDP frame; board logs showed
@@ -192,6 +201,8 @@ Project Linux receiver accepts UART-shell-driven pause/resume/status commands
 through a FIFO control endpoint without breaking UDP receive or HDMI output.
 Project Linux receiver applies a board-side RGB invert effect to generated PC
 UDP input and HDMI capture validates the inverted output.
+PC dashboard scaffold exposes generated input preview, FPGA output preview,
+and function-control/log panel regions without camera or custom-file input.
 ```
 
 Retired dead end:
@@ -205,6 +216,5 @@ layer. Do not resume this work.
 
 ## Next Cycle Direction
 
-The requested three-cycle sequence is complete. Suggested next cycle:
-runtime-selectable effect command over the existing UART FIFO, or a fixed
-non-camera demo video file sender.
+Open `fixed-demo-video-sender` next: add the built-in dynamic demo-video sender
+for the dashboard. Do not implement user custom-file input in that cycle.

@@ -71,7 +71,25 @@ Output: official VDMA-style 800x600 HDMI path
 Status: stage-1 UDP framebuffer HDMI pass-through passed
 Control: UART fallback FIFO pause/resume/status passed
 Effect: first board-side RGB invert effect passed with generated PC input
+Dashboard: PC visual scaffold passed; custom input files deferred after MVP
 ```
+
+## PC Dashboard
+
+Run the dashboard scaffold self-test:
+
+```powershell
+rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\visual-dashboard-scaffold"
+```
+
+Run the local dashboard:
+
+```powershell
+rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --host 127.0.0.1 --port 8765"
+```
+
+The MVP dashboard uses generated PC input. It does not use camera/webcam input,
+and user-selectable custom input files are deferred after MVP.
 
 The previous PL-only video effects demo remains available as a side demo, not
 the current network-video MVP:

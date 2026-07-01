@@ -891,3 +891,49 @@ Residual risks:
 - This is a CPU software effect, not yet a PL PIP/rotate/scale pipeline.
 - Runtime effect switching through UART is not implemented yet.
 - Throughput remains unoptimized.
+
+## 2026-07-01 - visual-dashboard-scaffold
+
+Commit: this commit (`cycle: add visual dashboard scaffold`)
+
+Objective:
+
+Add the first PC-side visual dashboard scaffold with input preview, FPGA output
+preview, and a control/log panel skeleton.
+
+Changed scope:
+
+- Added `tools/dashboard/pc_dashboard.py`.
+- Added `tools/dashboard/README.md`.
+- Added `docs/reports/visual-dashboard-scaffold.md`.
+- Updated current-cycle, cycle-log, roadmap, README, and pipeline skill entries.
+
+Verification:
+
+- Ran:
+  `rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\visual-dashboard-scaffold"`
+- Result: `DASHBOARD_SCAFFOLD_SELF_TEST_OK`.
+- Self-test fetched dashboard HTML, state JSON, generated input SVG, and FPGA
+  output placeholder SVG.
+- Self-test asserted input, output, and control panel regions exist.
+- Self-test asserted camera input and custom-file input are disabled.
+
+Board action:
+
+- None. PC dashboard scaffold only.
+
+Evidence:
+
+- `docs/reports/visual-dashboard-scaffold.md`
+- `build/visual-dashboard-scaffold/state.json`
+- `build/visual-dashboard-scaffold/index.html`
+
+Result:
+
+- PASSED. The PC dashboard scaffold is available and self-tested.
+
+Residual risks:
+
+- UDP sender integration and UART control integration remain later dashboard
+  cycles.
+- FPGA output preview is a slot/placeholder until a capture file is supplied.
