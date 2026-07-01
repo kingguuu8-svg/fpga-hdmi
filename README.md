@@ -72,7 +72,7 @@ Status: stage-1 UDP framebuffer HDMI pass-through passed
 Control: UART fallback FIFO pause/resume/status passed
 Effect: first board-side RGB invert effect passed with generated PC input
 Dashboard: PC visual scaffold and fixed generated demo sender passed; custom
-  input files deferred after MVP
+  input files deferred after MVP; dry-run control API passed
 ```
 
 ## PC Dashboard
@@ -81,6 +81,12 @@ Run the dashboard scaffold self-test:
 
 ```powershell
 rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\visual-dashboard-scaffold"
+```
+
+Run the dashboard control-integration self-test:
+
+```powershell
+rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-control-integration"
 ```
 
 Run the fixed demo-video sender self-test:
@@ -103,6 +109,22 @@ rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py
 
 The MVP dashboard uses generated PC input. It does not use camera/webcam input,
 and user-selectable custom input files are deferred after MVP.
+
+Dashboard action endpoints:
+
+```text
+GET  /api/actions
+POST /api/action {"action":"start-stream"}
+POST /api/action {"action":"pause-receiver"}
+POST /api/action {"action":"resume-receiver"}
+POST /api/action {"action":"receiver-status"}
+POST /api/action {"action":"effect-none"}
+POST /api/action {"action":"effect-invert"}
+POST /api/action {"action":"stop-stream"}
+```
+
+These actions currently run in dry-run mode. They prove the dashboard control
+surface and command semantics, not live board control from the dashboard.
 
 The previous PL-only video effects demo remains available as a side demo, not
 the current network-video MVP:

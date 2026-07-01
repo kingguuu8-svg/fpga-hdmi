@@ -120,6 +120,9 @@ Phase C:
   deferred after MVP.
   Fixed demo-video sender gate: PASSED. The PC can generate deterministic
   dynamic RGB888 frames and packetize them through the existing UDP protocol.
+  Dashboard control-integration gate: PASSED. The PC dashboard exposes a
+  tested dry-run action API for sender start/stop, UART/FIFO control semantics,
+  and effect launch semantics. Live board binding remains a later cycle.
   Later: carry the same command semantics over TCP/UDP.
 
 Phase D:

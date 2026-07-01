@@ -321,5 +321,29 @@ The dashboard MVP has a deterministic PC generated-video source that reuses the
 existing UDP frame protocol. It does not use camera/webcam input, and
 user-selectable custom input files remain deferred after MVP.
 
+Verified dashboard control-integration path (preferred for PC control-surface
+checks, 2026-07-01):
+
+```text
+1. Run the self-test:
+   rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-control-integration"
+2. Require:
+   DASHBOARD_SCAFFOLD_SELF_TEST_OK
+   DASHBOARD_CONTROL_INTEGRATION_SELF_TEST_OK
+3. The self-test proves:
+   - dashboard HTML/state/previews load
+   - control buttons expose action hooks
+   - /api/actions returns sender, UART/FIFO, and effect action semantics
+   - /api/action accepts six dry-run actions
+   - action logs record the expected command semantics
+   - camera/webcam input is disabled
+   - custom-file input is disabled/deferred
+```
+
+Verified outcome:
+The dashboard has a tested dry-run control surface. This is not live board
+control yet; it is the stable PC-side API surface that later binds to the real
+sender subprocess and UART/FIFO transport.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

@@ -46,6 +46,15 @@ placeholder.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: dashboard-control-integration
+Result: PASSED. The PC dashboard now exposes `/api/actions` and `/api/action`
+  plus active control buttons. Self-test posted six dry-run actions covering
+  sender start/stop, UART/FIFO pause/resume/status semantics, and effect launch
+  semantics. Final state recorded stream_state=stopped, receiver_paused=false,
+  selected_effect=invert, and no camera/custom-file input.
+Evidence: docs/reports/dashboard-control-integration.md
+Board action: none. PC-side dry-run dashboard action surface only.
+
 Cycle ID: fixed-demo-video-sender
 Result: PASSED. Added a fixed built-in deterministic RGB888 dynamic video
   source and UDP sender for the dashboard MVP. Self-test proved generated frame
@@ -218,6 +227,8 @@ and function-control/log panel regions without camera or custom-file input.
 PC fixed demo sender generates deterministic dynamic RGB888 frames and
 packetizes them through the existing UDP protocol without camera or custom-file
 input.
+PC dashboard control API exposes tested dry-run sender, UART/FIFO, and effect
+actions without camera or custom-file input.
 ```
 
 Retired dead end:
@@ -231,4 +242,6 @@ layer. Do not resume this work.
 
 ## Next Cycle Direction
 
-Open `dashboard-control-integration` next.
+No active implementation cycle is open. A natural next cycle is live dashboard
+binding: start/stop the real demo sender process and drive the existing
+UART/FIFO receiver commands from the dashboard.

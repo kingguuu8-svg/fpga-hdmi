@@ -17,13 +17,20 @@ FPGA Output:
 Function Control Panel:
   visual control skeleton
   fixed demo-video sender is available as a standalone CLI
-  UART actions are wired in later cycles
+  dry-run action API covers sender start/stop, UART/FIFO pause/resume/status,
+  and effect selection semantics
 ```
 
 Run the scaffold self-test:
 
 ```powershell
 rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\visual-dashboard-scaffold"
+```
+
+Run the control-integration self-test:
+
+```powershell
+rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-control-integration"
 ```
 
 Run the fixed demo-video sender self-test:
@@ -36,4 +43,17 @@ Run the local dashboard:
 
 ```powershell
 rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --host 127.0.0.1 --port 8765"
+```
+
+The dashboard action API is currently dry-run:
+
+```text
+GET  /api/actions
+POST /api/action {"action":"start-stream"}
+POST /api/action {"action":"stop-stream"}
+POST /api/action {"action":"pause-receiver"}
+POST /api/action {"action":"resume-receiver"}
+POST /api/action {"action":"receiver-status"}
+POST /api/action {"action":"effect-none"}
+POST /api/action {"action":"effect-invert"}
 ```

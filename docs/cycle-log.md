@@ -988,3 +988,53 @@ Residual risks:
 - The generated source is not arbitrary video-file playback.
 - This cycle proves localhost packetization, not board receive/display.
 - Dashboard action integration remains the next cycle.
+
+## 2026-07-01 - dashboard-control-integration
+
+Commit: this commit (`cycle: integrate dashboard controls`)
+
+Objective:
+
+Wire the PC visual dashboard to actionable stream/control commands while
+keeping verification deterministic and PC-side.
+
+Changed scope:
+
+- Extended `tools/dashboard/pc_dashboard.py` with `/api/actions`,
+  `/api/action`, button handlers, dry-run action runner, and control state.
+- Added `docs/reports/dashboard-control-integration.md`.
+- Updated current-cycle, roadmap, README, dashboard README, and pipeline skill.
+- Preserved the no-camera/no-custom-file MVP input policy.
+
+Verification:
+
+- Ran:
+  `rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-control-integration"`
+- Results:
+  `DASHBOARD_SCAFFOLD_SELF_TEST_OK` and
+  `DASHBOARD_CONTROL_INTEGRATION_SELF_TEST_OK`.
+- Self-test fetched HTML/state/previews, fetched `/api/actions`, posted six
+  dry-run actions, and verified final stream, receiver pause, selected effect,
+  logs, and disabled camera/custom-file policy.
+
+Board action:
+
+- None. PC dashboard action-surface integration only.
+
+Evidence:
+
+- `docs/reports/dashboard-control-integration.md`
+- `build/dashboard-control-integration/actions.json`
+- `build/dashboard-control-integration/action-results.json`
+- `build/dashboard-control-integration/final-state.json`
+
+Result:
+
+- PASSED. The dashboard has a tested dry-run control surface for sender,
+  UART/FIFO command semantics, and effect launch semantics.
+
+Residual risks:
+
+- The dashboard does not yet start/stop a real sender subprocess.
+- The dashboard does not yet transmit UART/FIFO commands.
+- Runtime effect switching is not yet proven.

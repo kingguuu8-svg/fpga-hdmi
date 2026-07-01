@@ -23,6 +23,56 @@ from urllib.parse import parse_qs, urlparse
 DEFAULT_WIDTH = 800
 DEFAULT_HEIGHT = 600
 NO_CAMERA_POLICY = "MVP input source is generated on the PC; camera/webcam and custom file input are disabled."
+DEFAULT_BOARD_HOST = "192.168.1.10"
+DEFAULT_UDP_PORT = 5005
+DEFAULT_SENDER_FRAMES = 5
+DEFAULT_SENDER_FPS = 1.0
+
+
+ACTION_DEFINITIONS = [
+    {
+        "id": "start-stream",
+        "label": "Start stream",
+        "kind": "sender",
+        "semantics": "launch fixed built-in demo UDP sender",
+    },
+    {
+        "id": "stop-stream",
+        "label": "Stop stream",
+        "kind": "sender",
+        "semantics": "stop dashboard-owned demo sender process",
+    },
+    {
+        "id": "pause-receiver",
+        "label": "Pause FPGA receiver",
+        "kind": "uart-fifo-control",
+        "semantics": "write pause to receiver control FIFO through UART shell",
+    },
+    {
+        "id": "resume-receiver",
+        "label": "Resume FPGA receiver",
+        "kind": "uart-fifo-control",
+        "semantics": "write resume to receiver control FIFO through UART shell",
+    },
+    {
+        "id": "receiver-status",
+        "label": "Receiver status",
+        "kind": "uart-fifo-control",
+        "semantics": "write status to receiver control FIFO through UART shell",
+    },
+    {
+        "id": "effect-none",
+        "label": "Effect: none",
+        "kind": "receiver-effect",
+        "semantics": "select receiver launch effect argument --effect none",
+    },
+    {
+        "id": "effect-invert",
+        "label": "Effect: invert",
+        "kind": "receiver-effect",
+        "semantics": "select receiver launch effect argument --effect invert",
+    },
+]
 
 
 def make_input_svg(frame: int, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT) -> bytes:
@@ -73,8 +123,9 @@ def make_output_placeholder_svg(width: int = DEFAULT_WIDTH, height: int = DEFAUL
     return svg.encode("utf-8")
 
 
-def dashboard_html() -> bytes:
+def dashboard_html(actions_enabled: bool = True) -> bytes:
     policy = html.escape(NO_CAMERA_POLICY)
+    disabled_attr = "" if actions_enabled else " disabled"
     page = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -178,8 +229,12 @@ def dashboard_html() -> bytes:
       background: linear-gradient(135deg, var(--slate), var(--teal));
       font: inherit;
       font-weight: 700;
+      cursor: pointer;
+      opacity: 0.94;
+    }}
+    button:disabled {{
       cursor: not-allowed;
-      opacity: 0.72;
+      opacity: 0.52;
     }}
     .log {{
       margin: 0 16px 18px;
@@ -191,6 +246,15 @@ def dashboard_html() -> bytes:
       font-family: "Cascadia Mono", Consolas, monospace;
       font-size: 13px;
       white-space: pre-wrap;
+    }}
+    .statusline {{
+      margin: 0 16px 12px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      color: #173b35;
+      background: rgba(45,111,100,0.12);
+      font-size: 14px;
+      font-weight: 700;
     }}
     @media (max-width: 1080px) {{
       main {{ grid-template-columns: 1fr; }}
@@ -226,26 +290,52 @@ def dashboard_html() -> bytes:
     <section class="card" data-panel="control">
       <h2>Function Control Panel</h2>
       <div class="controls">
-        <button disabled>Start stream</button>
-        <button disabled>Stop stream</button>
-        <button disabled>Pause FPGA receiver</button>
-        <button disabled>Resume FPGA receiver</button>
-        <button disabled>Effect: none / invert</button>
+        <button{disabled_attr} data-action="start-stream" onclick="postAction('start-stream')">Start stream</button>
+        <button{disabled_attr} data-action="stop-stream" onclick="postAction('stop-stream')">Stop stream</button>
+        <button{disabled_attr} data-action="pause-receiver" onclick="postAction('pause-receiver')">Pause FPGA receiver</button>
+        <button{disabled_attr} data-action="resume-receiver" onclick="postAction('resume-receiver')">Resume FPGA receiver</button>
+        <button{disabled_attr} data-action="receiver-status" onclick="postAction('receiver-status')">Receiver status</button>
+        <button{disabled_attr} data-action="effect-none" onclick="postAction('effect-none')">Effect: none</button>
+        <button{disabled_attr} data-action="effect-invert" onclick="postAction('effect-invert')">Effect: invert</button>
       </div>
-      <pre class="log" id="log">dashboard scaffold ready
-stream/control actions are wired in later cycles</pre>
+      <div class="statusline" id="action-status">actions: dry-run enabled</div>
+      <pre class="log" id="log">dashboard ready
+stream/control actions are dry-run until bound to live board transports</pre>
     </section>
   </main>
   <script>
     let frame = 0;
+    function applyState(state) {{
+      document.getElementById("log").textContent = state.logs.join("\\n");
+      document.getElementById("action-status").textContent =
+        "actions: " + state.control_panel.action_mode +
+        " | stream: " + state.control_panel.stream_state +
+        " | effect: " + state.control_panel.selected_effect;
+    }}
     async function tick() {{
       frame = (frame + 1) % 100000;
       document.getElementById("input-preview").src = "/api/input-preview.svg?frame=" + frame;
       try {{
         const state = await fetch("/api/state").then(r => r.json());
-        document.getElementById("log").textContent = state.logs.join("\\n");
+        applyState(state);
       }} catch (err) {{
         document.getElementById("log").textContent = "dashboard state fetch failed: " + err;
+      }}
+    }}
+    async function postAction(action) {{
+      try {{
+        const response = await fetch("/api/action", {{
+          method: "POST",
+          headers: {{ "Content-Type": "application/json" }},
+          body: JSON.stringify({{ action }})
+        }});
+        const result = await response.json();
+        if (!response.ok) {{
+          throw new Error(result.error || "action failed");
+        }}
+        applyState(result.state);
+      }} catch (err) {{
+        document.getElementById("log").textContent = "dashboard action failed: " + err;
       }}
     }}
     setInterval(tick, 1000);
@@ -257,19 +347,112 @@ stream/control actions are wired in later cycles</pre>
 
 
 class DashboardState:
-    def __init__(self, output_image: Path | None = None) -> None:
+    def __init__(
+        self,
+        output_image: Path | None = None,
+        *,
+        board_host: str = DEFAULT_BOARD_HOST,
+        udp_port: int = DEFAULT_UDP_PORT,
+        sender_frames: int = DEFAULT_SENDER_FRAMES,
+        sender_fps: float = DEFAULT_SENDER_FPS,
+        actions_enabled: bool = True,
+        action_mode: str = "dry-run",
+    ) -> None:
         self.started_at = time.time()
         self.output_image = output_image
+        self.board_host = board_host
+        self.udp_port = udp_port
+        self.sender_frames = sender_frames
+        self.sender_fps = sender_fps
+        self.actions_enabled = actions_enabled
+        self.action_mode = action_mode
+        self.lock = threading.Lock()
+        self.stream_state = "stopped"
+        self.receiver_paused = False
+        self.selected_effect = "none"
+        self.last_action: dict[str, Any] | None = None
         self.logs = [
-            "dashboard scaffold ready",
+            "dashboard ready",
             "input source: generated PC frames",
+            "demo sender: fixed built-in RGB888 UDP source",
+            f"board target: {board_host}:{udp_port}",
+            f"actions: {action_mode}",
             "custom file input: deferred after MVP",
             "camera/webcam input: disabled",
         ]
 
+    def action_catalog(self) -> list[dict[str, str]]:
+        return [dict(item) for item in ACTION_DEFINITIONS]
+
+    def _append_log(self, line: str) -> None:
+        self.logs.append(line)
+        del self.logs[:-80]
+
+    def run_action(self, action: str) -> dict[str, Any]:
+        action_ids = {item["id"] for item in ACTION_DEFINITIONS}
+        if action not in action_ids:
+            return {
+                "ok": False,
+                "error": f"unknown action: {action}",
+                "state": self.as_json(),
+            }
+
+        with self.lock:
+            if not self.actions_enabled:
+                return {
+                    "ok": False,
+                    "error": "dashboard actions are disabled",
+                    "state": self._as_json_locked(),
+                }
+
+            detail = ""
+            if action == "start-stream":
+                self.stream_state = "running"
+                detail = (
+                    "command=python tools/send_demo_video_udp.py "
+                    f"{self.board_host} --port {self.udp_port} "
+                    f"--frames {self.sender_frames} --fps {self.sender_fps:g}"
+                )
+            elif action == "stop-stream":
+                self.stream_state = "stopped"
+                detail = "target=dashboard-owned-demo-sender-process"
+            elif action == "pause-receiver":
+                self.receiver_paused = True
+                detail = "fifo_command=pause"
+            elif action == "resume-receiver":
+                self.receiver_paused = False
+                detail = "fifo_command=resume"
+            elif action == "receiver-status":
+                detail = f"fifo_command=status paused={int(self.receiver_paused)}"
+            elif action == "effect-none":
+                self.selected_effect = "none"
+                detail = "receiver_launch_arg=--effect none"
+            elif action == "effect-invert":
+                self.selected_effect = "invert"
+                detail = "receiver_launch_arg=--effect invert"
+
+            self.last_action = {
+                "action": action,
+                "mode": self.action_mode,
+                "detail": detail,
+                "timestamp_s": round(time.time() - self.started_at, 3),
+            }
+            self._append_log(f"ACTION_DRY_RUN action={action} {detail}")
+            return {
+                "ok": True,
+                "action": action,
+                "mode": self.action_mode,
+                "detail": detail,
+                "state": self._as_json_locked(),
+            }
+
     def as_json(self) -> dict[str, Any]:
+        with self.lock:
+            return self._as_json_locked()
+
+    def _as_json_locked(self) -> dict[str, Any]:
         return {
-            "status": "scaffold",
+            "status": "action-ready" if self.actions_enabled else "scaffold",
             "panels": ["input-preview", "fpga-output-preview", "function-control-panel"],
             "input_source": {
                 "kind": "generated",
@@ -282,8 +465,15 @@ class DashboardState:
                 "configured_image": str(self.output_image) if self.output_image else None,
             },
             "control_panel": {
-                "actions_enabled": False,
-                "planned_actions": ["start", "stop", "pause", "resume", "effect"],
+                "actions_enabled": self.actions_enabled,
+                "action_mode": self.action_mode,
+                "available_actions": [item["id"] for item in ACTION_DEFINITIONS],
+                "stream_state": self.stream_state,
+                "receiver_paused": self.receiver_paused,
+                "selected_effect": self.selected_effect,
+                "last_action": self.last_action,
+                "live_transport": False,
+                "dry_run_only": self.action_mode == "dry-run",
             },
             "uptime_s": round(time.time() - self.started_at, 3),
             "logs": list(self.logs),
@@ -308,10 +498,14 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             if parsed.path == "/":
-                self.send_payload(200, "text/html; charset=utf-8", dashboard_html())
+                self.send_payload(200, "text/html; charset=utf-8", dashboard_html(state.actions_enabled))
                 return
             if parsed.path == "/api/state":
                 payload = json.dumps(state.as_json(), indent=2).encode("utf-8")
+                self.send_payload(200, "application/json; charset=utf-8", payload)
+                return
+            if parsed.path == "/api/actions":
+                payload = json.dumps({"actions": state.action_catalog()}, indent=2).encode("utf-8")
                 self.send_payload(200, "application/json; charset=utf-8", payload)
                 return
             if parsed.path == "/api/input-preview.svg":
@@ -331,11 +525,56 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
                 return
             self.send_payload(404, "text/plain; charset=utf-8", b"not found")
 
+        def do_POST(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            if parsed.path != "/api/action":
+                self.send_payload(404, "text/plain; charset=utf-8", b"not found")
+                return
+
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length)
+            content_type = self.headers.get("Content-Type", "")
+            try:
+                if "application/json" in content_type:
+                    request = json.loads(body.decode("utf-8") or "{}")
+                    action = str(request.get("action", ""))
+                else:
+                    request = parse_qs(body.decode("utf-8"))
+                    action = request.get("action", [""])[0]
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                payload = json.dumps({"ok": False, "error": "invalid action request"}).encode("utf-8")
+                self.send_payload(400, "application/json; charset=utf-8", payload)
+                return
+
+            result = state.run_action(action)
+            status = 200 if result["ok"] else 400
+            payload = json.dumps(result, indent=2).encode("utf-8")
+            self.send_payload(status, "application/json; charset=utf-8", payload)
+
     return Handler
 
 
-def run_server(host: str, port: int, output_image: Path | None) -> None:
-    state = DashboardState(output_image=output_image)
+def run_server(
+    host: str,
+    port: int,
+    output_image: Path | None,
+    *,
+    board_host: str,
+    udp_port: int,
+    sender_frames: int,
+    sender_fps: float,
+    actions_enabled: bool,
+    action_mode: str,
+) -> None:
+    state = DashboardState(
+        output_image=output_image,
+        board_host=board_host,
+        udp_port=udp_port,
+        sender_frames=sender_frames,
+        sender_fps=sender_fps,
+        actions_enabled=actions_enabled,
+        action_mode=action_mode,
+    )
     server = ThreadingHTTPServer((host, port), make_handler(state))
     print(f"DASHBOARD_READY http://{host}:{server.server_port}", flush=True)
     server.serve_forever()
@@ -351,22 +590,64 @@ def run_self_test(out_dir: Path) -> int:
     try:
         html_bytes = urllib.request.urlopen(url + "/", timeout=5).read()
         state_bytes = urllib.request.urlopen(url + "/api/state", timeout=5).read()
+        actions_bytes = urllib.request.urlopen(url + "/api/actions", timeout=5).read()
         input_bytes = urllib.request.urlopen(url + "/api/input-preview.svg?frame=7", timeout=5).read()
         output_bytes = urllib.request.urlopen(url + "/api/output-preview", timeout=5).read()
 
+        action_results = []
+        for action in [
+            "start-stream",
+            "pause-receiver",
+            "receiver-status",
+            "effect-invert",
+            "resume-receiver",
+            "stop-stream",
+        ]:
+            request = urllib.request.Request(
+                url + "/api/action",
+                data=json.dumps({"action": action}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            action_results.append(json.loads(urllib.request.urlopen(request, timeout=5).read().decode("utf-8")))
+
+        final_state_bytes = urllib.request.urlopen(url + "/api/state", timeout=5).read()
+
         out_dir.joinpath("index.html").write_bytes(html_bytes)
         out_dir.joinpath("state.json").write_bytes(state_bytes)
+        out_dir.joinpath("actions.json").write_bytes(actions_bytes)
+        out_dir.joinpath("action-results.json").write_text(json.dumps(action_results, indent=2), encoding="utf-8")
+        out_dir.joinpath("final-state.json").write_bytes(final_state_bytes)
         out_dir.joinpath("input-preview.svg").write_bytes(input_bytes)
         out_dir.joinpath("output-placeholder.svg").write_bytes(output_bytes)
 
         page = html_bytes.decode("utf-8")
         data = json.loads(state_bytes.decode("utf-8"))
+        actions = json.loads(actions_bytes.decode("utf-8"))
+        final_state = json.loads(final_state_bytes.decode("utf-8"))
+        action_ids = {item["id"] for item in actions["actions"]}
         assert 'data-panel="input"' in page
         assert 'data-panel="output"' in page
         assert 'data-panel="control"' in page
+        assert 'data-action="start-stream"' in page
+        assert 'data-action="pause-receiver"' in page
+        assert "disabled>Start stream" not in page
         assert data["input_source"]["camera_enabled"] is False
         assert data["input_source"]["custom_file_enabled"] is False
+        assert data["control_panel"]["actions_enabled"] is True
+        assert data["control_panel"]["action_mode"] == "dry-run"
         assert "camera/webcam input: disabled" in data["logs"]
+        assert "start-stream" in action_ids
+        assert "pause-receiver" in action_ids
+        assert "resume-receiver" in action_ids
+        assert "effect-invert" in action_ids
+        assert all(result["ok"] is True for result in action_results)
+        assert final_state["control_panel"]["stream_state"] == "stopped"
+        assert final_state["control_panel"]["receiver_paused"] is False
+        assert final_state["control_panel"]["selected_effect"] == "invert"
+        assert any("ACTION_DRY_RUN action=start-stream" in line for line in final_state["logs"])
+        assert any("ACTION_DRY_RUN action=pause-receiver" in line for line in final_state["logs"])
+        assert any("ACTION_DRY_RUN action=effect-invert" in line for line in final_state["logs"])
         assert b"GENERATED INPUT" in input_bytes
         assert b"FPGA OUTPUT PREVIEW" in output_bytes
     finally:
@@ -375,6 +656,7 @@ def run_self_test(out_dir: Path) -> int:
         thread.join(timeout=5)
 
     print(f"DASHBOARD_SCAFFOLD_SELF_TEST_OK out={out_dir}")
+    print(f"DASHBOARD_CONTROL_INTEGRATION_SELF_TEST_OK out={out_dir} actions={len(action_results)}")
     return 0
 
 
@@ -382,6 +664,12 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--board-host", default=DEFAULT_BOARD_HOST)
+    parser.add_argument("--udp-port", type=int, default=DEFAULT_UDP_PORT)
+    parser.add_argument("--sender-frames", type=int, default=DEFAULT_SENDER_FRAMES)
+    parser.add_argument("--sender-fps", type=float, default=DEFAULT_SENDER_FPS)
+    parser.add_argument("--action-mode", choices=["dry-run"], default="dry-run")
+    parser.add_argument("--actions-disabled", action="store_true")
     parser.add_argument("--output-image", default="")
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--out-dir", default="build/visual-dashboard-scaffold")
@@ -390,7 +678,17 @@ def main() -> int:
     output_image = Path(args.output_image) if args.output_image else None
     if args.self_test:
         return run_self_test(Path(args.out_dir))
-    run_server(args.host, args.port, output_image)
+    run_server(
+        args.host,
+        args.port,
+        output_image,
+        board_host=args.board_host,
+        udp_port=args.udp_port,
+        sender_frames=args.sender_frames,
+        sender_fps=args.sender_fps,
+        actions_enabled=not args.actions_disabled,
+        action_mode=args.action_mode,
+    )
     return 0
 
 
