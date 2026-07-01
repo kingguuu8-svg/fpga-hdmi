@@ -47,6 +47,12 @@ governance" section of `AGENTS.md`:
 - These two lines are frozen once the cycle becomes active: they must not be
   edited during the work phase. To change the pass bar, close this cycle and
   open a new one with the new bar stated up front.
+- The freeze must be auditable: commit the `## Active Cycle` block (with the
+  frozen `pass_condition:`/`validator:` and risk-field lines) in a cycle-open
+  commit BEFORE running verification, then record `measured=` in a separate
+  cycle-close commit. See the Rule 1 open-commit sub-rule in `AGENTS.md`.
+  Cycles whose `pass_condition` is purely structural presence may use a single
+  commit.
 
 ### Optional third-party review (recorded after cycle close, non-blocking)
 
@@ -64,6 +70,33 @@ placeholder.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: verification-standard-governance-fix
+Result: PASSED. Closed the Rule 1 auditability gap exposed by the
+  post-governance audit: the frozen pass_condition must now be committed in a
+  cycle-open commit before verification runs, with a structural-presence
+  exception for docs/governance cycles. Git management was reconciled to
+  require two commits (open + close) for implementation cycles with a tunable
+  pass_condition. The boundary-fix report's inaccurate "opened before
+  implementation" claim was corrected. Third-party review sections with
+  independently re-run validator evidence were appended to the boundary-fix
+  and 15fps reports.
+  pass_condition=(check1_open_commit_subrule_in_agents == present and
+  check2_two_commit_in_git_mgmt == present and check3_template_crossref ==
+  present and check4_false_assertion_gone == 0 and
+  check4_correction_present == 1 and check5_boundaryfix_review == present and
+  check6_15fps_review == present),
+  measured=(check1_open_commit_subrule_in_agents=present(grep=2),
+  check2_two_commit_in_git_mgmt=present(grep=1),
+  check3_template_crossref=present(grep=4), check4_false_assertion_gone=0,
+  check4_correction_present=1, check5_boundaryfix_review=present(grep=1),
+  check6_15fps_review=present(grep=1)).
+Evidence: docs/reports/unified-validator-boundary-order-fix.md (corrected
+  residual risk + Third-party review),
+  docs/reports/unified-15fps-image-evidence-pass-through.md (Third-party
+  review), AGENTS.md, docs/current-cycle.md.
+Board action: none; docs/governance cycle only. Independent validator re-runs
+  were PC-side and touched no board hardware.
+
 Cycle ID: unified-15fps-image-evidence-pass-through
 Result: PASSED. The board-live loop now passes the unified validator with
   saved HDMI image evidence. PC sent 30 unique 15 fps validation frames with
@@ -431,6 +464,13 @@ Unified 15 fps image-evidence pass-through is closed: 30 generated validation
 frames with image-decodable markers were received, presented to HDMI, captured
 as saved JPEGs, decoded into a trace with `require_image_paths=true`, and
 accepted by the committed validator with matched_frames=30 and drop_rate=0.0.
+Rule 1 open-commit sub-rule added: implementation cycles with a tunable
+pass_condition must commit the Active Cycle block before verification, so the
+frozen bar is auditable in git history; docs/governance cycles with a
+structural-presence pass_condition are excepted.
+Third-party review with independently re-run validator evidence appended to the
+boundary-fix and 15fps reports; one saved HDMI JPEG was independently
+marker-decoded and matched the trace's claimed frame_id.
 ```
 
 Retired dead end:
@@ -447,4 +487,10 @@ layer. Do not resume this work.
 No active cycle is open. The next implementation cycle can build on the
 verified 15 fps image-evidence pass-through path and should either add a first
 displayable effect/control behavior to the marker-backed stream or improve the
-dashboard presentation around the verified closed-loop evidence.
+dashboard presentation around the verified closed-loop evidence. Because the
+next cycle will carry a tunable numeric `pass_condition`, it must follow the
+Rule 1 open-commit sub-rule: commit the `## Active Cycle` block with the frozen
+`pass_condition:`/`validator:` before running verification, then close in a
+separate commit. A durable follow-up would commit an offline JPEG re-decode
+tool in a prior cycle and run it over all saved frames so the single-source
+trace-builder concern noted in the 15fps review is closed.

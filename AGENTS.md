@@ -107,6 +107,30 @@ than relying on the cycle author to self-regulate.
 - These two lines are frozen the moment the cycle becomes active. They must
   not be edited during the work phase. To change the pass bar, close the
   current cycle and open a new one that states the new bar up front.
+- The freeze must be auditable in git history. The `## Active Cycle` block
+  containing the frozen `pass_condition:` and `validator:` lines must be
+  committed to `docs/current-cycle.md` in a dedicated cycle-open commit BEFORE
+  any verification, simulation, or board action runs. The cycle-close commit
+  (which records `measured=` and moves the entry to `Recently Closed`) is a
+  separate, later commit. A cycle whose open and close land in a single commit
+  leaves no trail proving the bar was set before the result was known, and is
+  non-conformant. This sub-rule exists because
+  `unified-passthrough-validator-calibration`,
+  `unified-validator-boundary-order-fix`, and
+  `unified-15fps-image-evidence-pass-through` each opened and closed in one
+  commit, so `pass_condition` and `measured=` appeared together with no
+  evidence the bar was chosen first; a subsequent audit found the 15 fps cycle
+  had been iterated to convergence (multiple failed probe logs and a
+  discovered `sent_time_offset_ms` alignment parameter) before its frozen bar
+  was committed — exactly the retroactive bar-setting the freeze is meant to
+  prevent.
+- Exception: a cycle whose `pass_condition` is purely structural presence (for
+  example `grep finds the three named rules`, `template field names present`)
+  and that runs no verification whose numeric outcome could inform the bar may
+  close in a single commit, because no measurement could retroactively set a
+  presence check. Documentation-only, governance, and source-checkpoint cycles
+  typically qualify. Historical cycles before this sub-rule keep their
+  single-commit form; it applies forward, like Rule 3.
 - A cycle that closes with a `measured=` value failing its own preregistered
   `pass_condition` must record Result as FAILED, not PASSED. Lowering the bar
   to make a failing run pass is a governance violation, not a rescue.
@@ -195,9 +219,15 @@ single-commit update discipline applies.
 
 ## Git management
 
-- Use one commit per completed work cycle. Do not commit half-finished write,
-  simulation, or board-programming states unless the user explicitly asks for a
-  checkpoint commit.
+- Implementation cycles that preregister a frozen `pass_condition` require two
+  commits per cycle: (1) a cycle-open commit recording the `## Active Cycle`
+  block with the frozen `pass_condition:`/`validator:` and risk-field lines,
+  before verification runs; (2) a cycle-close commit recording `measured=` and
+  moving the entry to `Recently Closed`. Documentation-only, governance, and
+  source-checkpoint cycles whose `pass_condition` is structural presence may
+  remain a single commit (see the Rule 1 exception). Do not commit
+  half-finished write, simulation, or board-programming states unless the user
+  explicitly asks for a checkpoint commit.
 - Before committing, run `git status --short`, stage only files that belong to
   the completed cycle, and preserve unrelated user changes.
 - Commit message format: `cycle: <short result>` for implementation cycles,

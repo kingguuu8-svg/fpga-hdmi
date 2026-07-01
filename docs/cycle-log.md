@@ -1748,3 +1748,92 @@ Residual risks:
 - The Linux receiver's `--present-fps` pacing is sufficient for the current
   framebuffer MVP; a later lower-latency architecture should revisit display
   scheduling.
+
+## 2026-07-01 - verification-standard-governance-fix
+
+Commit: this commit (`docs: fix governance freeze auditability and add reviews`)
+
+Objective:
+
+Close the Rule 1 auditability gap exposed by a post-governance audit of the
+three cycles added after `ff92f23`. All three opened and closed in a single
+commit, so their frozen `pass_condition` had no git trail proving it was set
+before the result. Add an open-commit sub-rule, reconcile Git management, then
+append independently evidenced Third-party review sections to the two reports
+that lacked them.
+
+Changed scope:
+
+- `AGENTS.md` Rule 1: added an open-commit sub-rule requiring the `## Active
+  Cycle` block (frozen `pass_condition:`/`validator:` + risk fields) to be
+  committed before verification runs, with a structural-presence exception for
+  docs/governance cycles; forward-only like Rule 3.
+- `AGENTS.md` Git management: replaced "one commit per completed work cycle"
+  with a two-commit (open + close) requirement for implementation cycles
+  carrying a tunable `pass_condition`, single-commit for structural-presence
+  cycles.
+- `docs/current-cycle.md`: Cycle Template note cross-references the open-commit
+  sub-rule; new Recently Closed entry; Current Evidence and Next Cycle
+  Direction updated.
+- `docs/reports/unified-validator-boundary-order-fix.md`: corrected the
+  inaccurate "opened before implementation" residual risk to match git
+  history (no separate open commit); appended `## Third-party review`.
+- `docs/reports/unified-15fps-image-evidence-pass-through.md`: added a
+  single-source-decoder residual risk; appended `## Third-party review`.
+
+Verification:
+
+- Documentation/governance cycle; no simulation or board programming required.
+- The preregistered validator is a grep audit across six checks:
+  1. `AGENTS.md` contains the open-commit sub-rule text.
+  2. `AGENTS.md` Git management contains the two-commit requirement.
+  3. `docs/current-cycle.md` template cross-references the sub-rule.
+  4. `boundary-fix` report no longer carries the false assertion form
+     "was opened before implementation, but" (grep == 0) and has a
+     "Correction (2026-07-01 audit)" line (grep == 1).
+  5. `boundary-fix` report has a `## Third-party review` section.
+  6. `15fps` report has a `## Third-party review` section.
+- Review evidence was independently re-run, not asserted:
+  - Re-ran `--calibration` into `build/review-evidence/calibration-rerun`:
+    all six booleans = 1.
+  - Re-ran `--boundary-order-regression` into
+    `build/review-evidence/boundary-order-rerun`: all eight conditions match.
+  - Re-ran the validator on the saved 15fps trace: PASS, 30/30 matched,
+    drop_rate=0.0, max_latency=257.561 ms.
+  - Independently marker-decoded `mjpeg-frame-32.jpg` (standalone decoder, no
+    trace-builder import): sha256 matched, sync OK, bits matched,
+    frame_id=100 == trace claim.
+
+Board action:
+
+- Not run; docs/governance cycle only. Validator re-runs were PC-side and
+  touched no board hardware.
+
+Evidence:
+
+- `AGENTS.md` (Rule 1 open-commit sub-rule, Git management two-commit).
+- `docs/current-cycle.md` (template note, Recently Closed entry).
+- `docs/reports/unified-validator-boundary-order-fix.md` (corrected risk +
+  Third-party review).
+- `docs/reports/unified-15fps-image-evidence-pass-through.md` (added risk +
+  Third-party review).
+- `build/review-evidence/calibration-rerun/calibration-summary.json`
+- `build/review-evidence/boundary-order-rerun/boundary-order-regression-summary.json`
+- `build/review-evidence/15fps-trace-revalidation.json`
+- `build/review-evidence/indep_marker_check.py`
+
+Result: pass_condition=(check1_open_commit_subrule_in_agents == present and check2_two_commit_in_git_mgmt == present and check3_template_crossref == present and check4_false_assertion_gone == 0 and check4_correction_present == 1 and check5_boundaryfix_review == present and check6_15fps_review == present), measured=(check1_open_commit_subrule_in_agents=present(grep=2), check2_two_commit_in_git_mgmt=present(grep=1), check3_template_crossref=present(grep=4), check4_false_assertion_gone=0, check4_correction_present=1, check5_boundaryfix_review=present(grep=1), check6_15fps_review=present(grep=1)) -> PASSED.
+
+Residual risks:
+
+- The open-commit sub-rule is mechanically checkable for presence but a cycle
+  could still commit an Active Cycle block and then amend the pass_condition
+  before the close commit. The git history trail is the backstop: an amend
+  rewrites the open commit and is visible on review.
+- The 15fps independent JPEG decode was a one-frame spot check, not a full
+  re-decode of all 30 frames; the single-source trace-builder concern is
+  reduced but not fully closed until an offline re-decode tool is committed
+  in a prior cycle and run over all saved JPEGs.
+- This cycle is itself single-commit. It qualifies for the structural-presence
+  exception: its pass_condition is a grep presence check, not a tunable
+  threshold, and no verification result could retroactively set the bar.

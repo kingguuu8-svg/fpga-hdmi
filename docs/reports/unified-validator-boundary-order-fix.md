@@ -144,5 +144,68 @@ measured=(calibration_status=pass, boundary_19_of_20_status=pass, boundary_19_of
   corroborate captured image evidence instead of self-reporting metadata.
 - The next hardware cycle should mandate `require_image_paths=true` or an
   equivalent offline re-decode path from captured HDMI images.
-- The active-cycle state for this fix was opened before implementation, but it
-  is closed in the same commit as the fix, matching current project practice.
+- Correction (2026-07-01 audit): an earlier version of this report said the
+  active-cycle state "was opened before implementation." Git history shows no
+  separate open commit — the cycle opened and closed in `e21482c` with no prior
+  `## Active Cycle` block committed. The claim was inaccurate. The
+  `verification-standard-governance-fix` cycle added a Rule 1 open-commit
+  sub-rule so future cycles with a tunable `pass_condition` must commit the
+  Active Cycle block before verification runs; this cycle is historical and
+  keeps its single-commit form under that rule's forward-only clause.
+
+## Third-party review
+
+Reviewer: independent audit in a separate session (2026-07-01). This section is
+non-blocking: it does not reopen the cycle or gate the next one.
+
+Verdict: the cycle's PASSED holds up. Both code fixes were confirmed against
+the committed source, and both the calibration and the boundary-order
+regression were reproduced independently into clean output directories.
+
+Independent checks performed:
+
+- Re-ran `python .\tools\validate_passthrough_trace.py --calibration` into
+  `build/review-evidence/calibration-rerun`. Marker reproduced:
+  `UNIFIED_PASSTHROUGH_VALIDATOR_CALIBRATION_OK` with all six booleans = 1.
+  The pre-fix calibration still passes after the fix, confirming no regression
+  in the existing known-good/known-bad behavior.
+- Re-ran `python .\tools\validate_passthrough_trace.py --boundary-order-regression`
+  into `build/review-evidence/boundary-order-rerun`. Marker reproduced
+  verbatim:
+  `UNIFIED_VALIDATOR_BOUNDARY_ORDER_FIX_OK calibration_status=pass
+  boundary_19_of_20_status=pass boundary_19_of_20_drop_rate=0.05
+  unmatched_high_then_lower_status=fail
+  unmatched_high_then_lower_has_unmatched_capture=1
+  unmatched_high_then_lower_has_frame_order_violation=0
+  wrong_order_status=fail wrong_order_has_frame_order_violation=1`.
+  Every measured value matches the report's frozen pass_condition.
+- Confirmed the two source fixes against `git show e21482c -- tools/validate_passthrough_trace.py`:
+  `drop_rate` now computes `(sent_count - matched_count) / sent_count` from
+  integers (was `1.0 - match_rate`), eliminating the floating-point boundary
+  contradiction; and the order check moved after the unmatched-capture and
+  duplicate checks, so an unmatched high `decoded_frame_id` no longer mutates
+  `previous_frame_id`.
+- Confirmed the `boundary_19_of_20` case sits at exactly 19/20 matched with
+  `drop_rate=0.05` and no failures — the decisive [0.95, 1.0) boundary region
+  flagged by the calibration review (concern 1) is now exercised and passes.
+
+Residual concerns not covered by the cycle's own closure criteria:
+
+1. Rule 2 gray area: this cycle modified the validator and added the
+   `--boundary-order-regression` mode, then used that new mode as its pass
+   gate. The validator script itself predates the cycle (committed in
+   `5e8e21b`), satisfying the letter of Rule 2, but the specific pass-condition
+   assertions are newly written. This is acceptable because the defects were
+   raised by an external review (not invented to fit a result) and the
+   pass_condition demands that known-bad cases FAIL (`wrong_order_status==fail`),
+   so the cheating direction opposes the bar. Still, the regression cases and
+   their "expected" columns are author-defined; independence is weaker than the
+   calibration cycle's external review.
+2. Single-commit process: the cycle opened and closed in `e21482c` with no
+   prior Active Cycle commit (the report's former "opened before
+   implementation" claim was inaccurate and has been corrected above). The
+   `verification-standard-governance-fix` cycle added a Rule 1 open-commit
+   sub-rule making this non-conformant for future cycles with a tunable
+   threshold; this cycle is historical under the forward-only clause.
+
+None of the above reopens this cycle or blocks the next one.
