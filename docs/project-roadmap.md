@@ -154,6 +154,12 @@ Phase C:
   frames, wrong content, and excessive latency in synthetic calibration. The
   next hardware loop must use this already-committed validator for 15 fps
   frame_id correspondence, latency, and drop-rate evidence.
+  Unified validator boundary/order fix gate: PASSED. The validator now passes
+  exact 19/20 matching at drop_rate=0.05, rejects unmatched captures without
+  spurious order violations, and still rejects real wrong-order traces. The
+  next hardware loop must add independent captured-image evidence
+  (`require_image_paths=true` or equivalent offline re-decode), not only
+  runner-decoded metadata.
   Later: carry the same command semantics over TCP/UDP.
 
 Phase D:

@@ -64,6 +64,28 @@ placeholder.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: unified-validator-boundary-order-fix
+Result: PASSED. Fixed the two third-party-reviewed validator edge defects:
+  exact 19/20 boundary handling now reports drop_rate=0.05 and passes the
+  95% threshold, and an unmatched high frame_id capture no longer creates a
+  spurious frame_order_violation before a later legitimate frame. Real
+  wrong-order traces still fail with frame_order_violation.
+  pass_condition=(calibration_status == pass and boundary_19_of_20_status ==
+  pass and boundary_19_of_20_drop_rate == 0.05 and
+  unmatched_high_then_lower_status == fail and
+  unmatched_high_then_lower_has_unmatched_capture == 1 and
+  unmatched_high_then_lower_has_frame_order_violation == 0 and
+  wrong_order_status == fail and wrong_order_has_frame_order_violation == 1),
+  measured=(calibration_status=pass, boundary_19_of_20_status=pass,
+  boundary_19_of_20_drop_rate=0.05,
+  unmatched_high_then_lower_status=fail,
+  unmatched_high_then_lower_has_unmatched_capture=1,
+  unmatched_high_then_lower_has_frame_order_violation=0,
+  wrong_order_status=fail, wrong_order_has_frame_order_violation=1).
+Evidence: docs/reports/unified-validator-boundary-order-fix.md
+Board action: none. PC-side validator defect-fix cycle only; no Vivado,
+  PetaLinux, JTAG, TF-card, UART, Ethernet, HDMI, or board flash action.
+
 Cycle ID: unified-passthrough-validator-calibration
 Result: PASSED. Added and calibrated the reusable temporal pass-through
   validator. pass_condition=(known_good_pass == 1 and known_bad_black_fail ==
@@ -293,7 +315,9 @@ Board action: booted generated image from TF card only; no JTAG programming,
 
 ## Active Cycle
 
+```text
 No active implementation cycle is open.
+```
 
 ## Resolved Route Gate
 
@@ -367,6 +391,9 @@ from the running board receiver through `/tmp/video_ctl`.
 Unified pass-through trace validator is calibrated against synthetic good/bad
 cases and is the required pass gate for future faithful live pass-through
 claims.
+Unified pass-through validator boundary/order edge cases are fixed: exact
+19/20 matching passes at drop_rate=0.05, unmatched captures fail without
+spurious frame_order_violation, and real wrong-order traces still fail.
 ```
 
 Retired dead end:
@@ -380,7 +407,8 @@ layer. Do not resume this work.
 
 ## Next Cycle Direction
 
-After the active validator-calibration cycle closes, the natural next hardware
-cycle is a 15 fps unified pass-through run that uses the already-committed
-validator as its frozen pass gate and reports frame_id correspondence, latency,
-and sustained drop rate.
+No active implementation cycle is open. The natural next hardware cycle is a
+15 fps unified pass-through run that mandates independent captured image
+evidence (`require_image_paths=true` or equivalent offline re-decode) and uses
+the already-committed validator as its frozen pass gate for frame_id
+correspondence, latency, and sustained drop rate.

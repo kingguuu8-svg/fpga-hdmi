@@ -1616,3 +1616,60 @@ Residual risks:
 - Synthetic fixtures prove validator behavior, not board throughput.
 - The next hardware cycle must use this committed validator as the frozen pass
   gate rather than introducing another ad-hoc check.
+
+## 2026-07-01 - unified-validator-boundary-order-fix
+
+Commit: this commit (`fix: repair unified validator edge cases`)
+
+Objective:
+
+Fix the two validator defects raised by third-party review: exact 95% boundary
+drop-rate handling and spurious order violations caused by unmatched captures.
+
+Changed scope:
+
+- Changed `tools/validate_passthrough_trace.py` to compute `drop_rate` from
+  integer counts instead of `1.0 - match_rate`.
+- Changed order checking so it only updates the order baseline after a capture
+  has matched a sent frame and is not a duplicate.
+- Added `--boundary-order-regression` to the existing validator script.
+- Updated `docs/protocols/unified-passthrough-trace.md`.
+- Added this cycle report and updated current-cycle, roadmap, README, and
+  pipeline skill docs.
+
+Verification:
+
+- Ran:
+  `rtk powershell.exe -NoProfile -Command "python -m py_compile tools\validate_passthrough_trace.py"`
+- Ran existing calibration:
+  `UNIFIED_PASSTHROUGH_VALIDATOR_CALIBRATION_OK known_bad_black_fail=1 known_bad_latency_fail=1 known_bad_missing_frame_fail=1 known_bad_wrong_content_fail=1 known_bad_wrong_order_fail=1 known_good_pass=1`.
+- Ran boundary/order regression:
+  `UNIFIED_VALIDATOR_BOUNDARY_ORDER_FIX_OK calibration_status=pass boundary_19_of_20_status=pass boundary_19_of_20_drop_rate=0.05 unmatched_high_then_lower_status=fail unmatched_high_then_lower_has_unmatched_capture=1 unmatched_high_then_lower_has_frame_order_violation=0 wrong_order_status=fail wrong_order_has_frame_order_violation=1`.
+
+Board action:
+
+- None. PC-side validator defect-fix cycle only. No Vivado build, PetaLinux
+  build, JTAG programming, TF-card write, UART action, Ethernet transmission,
+  HDMI capture, or board flash write.
+
+Evidence:
+
+- `docs/reports/unified-validator-boundary-order-fix.md`
+- `docs/protocols/unified-passthrough-trace.md`
+- `docs/current-cycle.md`
+- `docs/project-roadmap.md`
+- `README.md`
+- `skills/zynq7020-pipeline/SKILL.md`
+- `tools/validate_passthrough_trace.py`
+- `build/unified-validator-boundary-order-fix/boundary-order-regression-summary.json`
+- `build/unified-validator-boundary-order-fix/calibration-only/calibration-summary.json`
+- `build/unified-validator-boundary-order-fix/cases/*/result.json`
+
+Result: pass_condition=(calibration_status == pass and boundary_19_of_20_status == pass and boundary_19_of_20_drop_rate == 0.05 and unmatched_high_then_lower_status == fail and unmatched_high_then_lower_has_unmatched_capture == 1 and unmatched_high_then_lower_has_frame_order_violation == 0 and wrong_order_status == fail and wrong_order_has_frame_order_violation == 1), measured=(calibration_status=pass, boundary_19_of_20_status=pass, boundary_19_of_20_drop_rate=0.05, unmatched_high_then_lower_status=fail, unmatched_high_then_lower_has_unmatched_capture=1, unmatched_high_then_lower_has_frame_order_violation=0, wrong_order_status=fail, wrong_order_has_frame_order_violation=1) -> PASSED.
+
+Residual risks:
+
+- This fixes edge defects in the validator, not the hardware runner. The next
+  hardware cycle must still independently corroborate captured image evidence.
+- The review concern about a separate Active Cycle commit remains a process
+  issue for future cycles.

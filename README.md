@@ -216,6 +216,18 @@ validator for future hardware cycles that claim faithful live pass-through.
 The calibration cycle is PC-side only; it does not itself prove board HDMI
 pass-through at 15 fps.
 
+Before using the validator as the hardware pass gate, run the edge regression:
+
+```powershell
+rtk powershell.exe -NoProfile -Command "python .\tools\validate_passthrough_trace.py --boundary-order-regression --out-dir build\unified-validator-boundary-order-fix"
+```
+
+Expected marker:
+
+```text
+UNIFIED_VALIDATOR_BOUNDARY_ORDER_FIX_OK
+```
+
 ## Ethernet Video Pass-Through
 
 Current active artifacts:

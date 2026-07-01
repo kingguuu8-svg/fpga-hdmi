@@ -130,10 +130,6 @@ def validate_trace(trace_path: Path) -> dict[str, Any]:
             failures.append(Failure("bad_captured_frame_id", f"{capture_label} decoded_frame_id={frame_id!r}"))
             continue
 
-        if previous_frame_id is not None and frame_id < previous_frame_id:
-            order_violations += 1
-        previous_frame_id = frame_id
-
         sent_item = sent_by_id.get(frame_id)
         if sent_item is None:
             unmatched_captures += 1
@@ -144,6 +140,10 @@ def validate_trace(trace_path: Path) -> dict[str, Any]:
             continue
         seen_capture_ids.add(frame_id)
         matched_ids.add(frame_id)
+
+        if previous_frame_id is not None and frame_id < previous_frame_id:
+            order_violations += 1
+        previous_frame_id = frame_id
 
         if item.get("content_id") != sent_item.get("content_id"):
             content_mismatches += 1
@@ -176,7 +176,7 @@ def validate_trace(trace_path: Path) -> dict[str, Any]:
     sent_count = len(sent_by_id)
     matched_count = len(matched_ids)
     match_rate = (matched_count / sent_count) if sent_count else 0.0
-    drop_rate = 1.0 - match_rate if sent_count else 1.0
+    drop_rate = ((sent_count - matched_count) / sent_count) if sent_count else 1.0
     max_latency = max(latencies) if latencies else math.inf
     mean_latency = (sum(latencies) / len(latencies)) if latencies else math.inf
 
@@ -295,6 +295,22 @@ def mutate_missing_frame(case_dir: Path, images_dir: Path, captured: list[dict[s
     return [item for item in captured if item["decoded_frame_id"] not in {5, 15, 25}]
 
 
+def mutate_boundary_missing_one(case_dir: Path, images_dir: Path, captured: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [item for item in captured if item["decoded_frame_id"] != 19]
+
+
+def mutate_unmatched_high_then_lower(case_dir: Path, images_dir: Path, captured: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    unmatched = dict(captured[0])
+    unmatched["capture_index"] = 4
+    unmatched["captured_ms"] = round(float(captured[3]["captured_ms"]) + 1.0, 3)
+    unmatched["decoded_frame_id"] = 99
+    unmatched["content_id"] = content_id_for_frame(99)
+    mutated = captured[:4] + [unmatched] + captured[4:]
+    for index, item in enumerate(mutated):
+        item["capture_index"] = index
+    return mutated
+
+
 def mutate_wrong_content(case_dir: Path, images_dir: Path, captured: list[dict[str, Any]]) -> list[dict[str, Any]]:
     item = captured[7]
     wrong_rgb = frame_rgb(99)
@@ -320,6 +336,10 @@ CALIBRATION_CASES = {
     "known_bad_wrong_content": (mutate_wrong_content, False, "content_mismatch"),
     "known_bad_latency": (mutate_latency, False, "latency_above_max"),
 }
+
+
+def failure_codes(result: dict[str, Any]) -> set[str]:
+    return {str(item["code"]) for item in result.get("failures", [])}
 
 
 def run_calibration(out_dir: Path) -> int:
@@ -367,11 +387,104 @@ def run_calibration(out_dir: Path) -> int:
     return 1
 
 
+def run_boundary_order_regression(out_dir: Path) -> int:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cases_dir = out_dir / "cases"
+
+    calibration_dir = out_dir / "calibration"
+    run_calibration(calibration_dir)
+    calibration_summary = read_json(calibration_dir / "calibration-summary.json")
+
+    boundary_trace = write_trace(
+        cases_dir / "boundary_19_of_20",
+        captured_mutator=mutate_boundary_missing_one,
+        frame_count=20,
+    )
+    boundary_result = validate_trace(boundary_trace)
+    boundary_result_path = boundary_trace.with_name("result.json")
+    boundary_result_path.write_text(json.dumps(boundary_result, indent=2), encoding="utf-8")
+
+    unmatched_trace = write_trace(
+        cases_dir / "unmatched_high_then_lower",
+        captured_mutator=mutate_unmatched_high_then_lower,
+        frame_count=6,
+    )
+    unmatched_result = validate_trace(unmatched_trace)
+    unmatched_result_path = unmatched_trace.with_name("result.json")
+    unmatched_result_path.write_text(json.dumps(unmatched_result, indent=2), encoding="utf-8")
+    unmatched_codes = failure_codes(unmatched_result)
+
+    wrong_order_trace = write_trace(
+        cases_dir / "wrong_order",
+        captured_mutator=mutate_wrong_order,
+        frame_count=8,
+    )
+    wrong_order_result = validate_trace(wrong_order_trace)
+    wrong_order_result_path = wrong_order_trace.with_name("result.json")
+    wrong_order_result_path.write_text(json.dumps(wrong_order_result, indent=2), encoding="utf-8")
+    wrong_order_codes = failure_codes(wrong_order_result)
+
+    measured = {
+        "calibration_status": calibration_summary["status"],
+        "boundary_19_of_20_status": boundary_result["status"],
+        "boundary_19_of_20_drop_rate": boundary_result["metrics"]["drop_rate"],
+        "unmatched_high_then_lower_status": unmatched_result["status"],
+        "unmatched_high_then_lower_has_unmatched_capture": 1 if "unmatched_capture" in unmatched_codes else 0,
+        "unmatched_high_then_lower_has_frame_order_violation": 1 if "frame_order_violation" in unmatched_codes else 0,
+        "wrong_order_status": wrong_order_result["status"],
+        "wrong_order_has_frame_order_violation": 1 if "frame_order_violation" in wrong_order_codes else 0,
+    }
+    pass_condition = (
+        measured["calibration_status"] == "pass"
+        and measured["boundary_19_of_20_status"] == "pass"
+        and measured["boundary_19_of_20_drop_rate"] == 0.05
+        and measured["unmatched_high_then_lower_status"] == "fail"
+        and measured["unmatched_high_then_lower_has_unmatched_capture"] == 1
+        and measured["unmatched_high_then_lower_has_frame_order_violation"] == 0
+        and measured["wrong_order_status"] == "fail"
+        and measured["wrong_order_has_frame_order_violation"] == 1
+    )
+    summary = {
+        "status": "pass" if pass_condition else "fail",
+        "measured": measured,
+        "cases": {
+            "boundary_19_of_20": {
+                "trace": str(boundary_trace),
+                "result": str(boundary_result_path),
+                "metrics": boundary_result["metrics"],
+                "failure_codes": sorted(failure_codes(boundary_result)),
+            },
+            "unmatched_high_then_lower": {
+                "trace": str(unmatched_trace),
+                "result": str(unmatched_result_path),
+                "metrics": unmatched_result["metrics"],
+                "failure_codes": sorted(unmatched_codes),
+            },
+            "wrong_order": {
+                "trace": str(wrong_order_trace),
+                "result": str(wrong_order_result_path),
+                "metrics": wrong_order_result["metrics"],
+                "failure_codes": sorted(wrong_order_codes),
+            },
+        },
+    }
+    summary_path = out_dir / "boundary-order-regression-summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+    marker_bits = " ".join(f"{name}={value}" for name, value in measured.items())
+    if summary["status"] == "pass":
+        print(f"UNIFIED_VALIDATOR_BOUNDARY_ORDER_FIX_OK {marker_bits} report={summary_path}")
+        return 0
+    print(f"UNIFIED_VALIDATOR_BOUNDARY_ORDER_FIX_FAIL {marker_bits} report={summary_path}")
+    return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("trace", nargs="?", help="decoded pass-through trace JSON")
     parser.add_argument("--result-json", help="write validation result JSON")
     parser.add_argument("--calibration", action="store_true", help="generate and run synthetic calibration cases")
+    parser.add_argument("--boundary-order-regression", action="store_true", help="run boundary and order defect regressions")
     parser.add_argument("--out-dir", default="build/unified-passthrough-validator-calibration")
     return parser
 
@@ -381,8 +494,10 @@ def main() -> int:
     args = parser.parse_args()
     if args.calibration:
         return run_calibration(Path(args.out_dir))
+    if args.boundary_order_regression:
+        return run_boundary_order_regression(Path(args.out_dir))
     if not args.trace:
-        parser.error("trace is required unless --calibration is used")
+        parser.error("trace is required unless --calibration or --boundary-order-regression is used")
     trace_path = Path(args.trace)
     result = validate_trace(trace_path)
     result_json = Path(args.result_json) if args.result_json else trace_path.with_name("validation-result.json")

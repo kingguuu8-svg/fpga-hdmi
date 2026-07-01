@@ -517,5 +517,34 @@ This calibration is PC-side only; it does not claim board pass-through at
 15 fps. It exists so the next hardware cycle cannot introduce a new ad-hoc
 pass condition.
 
+Verified unified pass-through validator boundary/order regression path
+(preferred after calibration and before using the validator as a hardware pass
+gate, 2026-07-01):
+
+```text
+1. Run the edge regression:
+   rtk powershell.exe -NoProfile -Command "python .\tools\validate_passthrough_trace.py --boundary-order-regression --out-dir build\unified-validator-boundary-order-fix"
+2. Require:
+   UNIFIED_VALIDATOR_BOUNDARY_ORDER_FIX_OK
+3. Require the measured fields:
+   calibration_status=pass
+   boundary_19_of_20_status=pass
+   boundary_19_of_20_drop_rate=0.05
+   unmatched_high_then_lower_status=fail
+   unmatched_high_then_lower_has_unmatched_capture=1
+   unmatched_high_then_lower_has_frame_order_violation=0
+   wrong_order_status=fail
+   wrong_order_has_frame_order_violation=1
+4. In the next hardware cycle, do not rely only on runner-decoded metadata.
+   Require independent captured-image evidence with `require_image_paths=true`
+   or equivalent offline re-decode before claiming faithful pass-through.
+```
+
+Verified outcome:
+The validator now handles the exact 19/20 boundary with integer-count
+`drop_rate=0.05`, rejects unmatched captures without inventing a later order
+violation, and still rejects real wrong-order traces. This path is PC-side
+only; it repairs the validator gate before the next hardware run.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

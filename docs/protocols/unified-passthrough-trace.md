@@ -75,6 +75,20 @@ content_mismatches <= max_content_mismatches
 black_frames <= max_black_frames
 ```
 
+`drop_rate` is computed from integer frame counts:
+
+```text
+(sent_frames - matched_frames) / sent_frames
+```
+
+It is not computed as `1.0 - match_rate`, so exact boundary cases such as
+19/20 matched frames remain stable at `0.05`.
+
+Frame order is checked only after a captured frame has been matched to a sent
+frame and is not a duplicate. Unmatched captures still fail validation, but they
+must not create spurious `frame_order_violation` failures for later legitimate
+frames.
+
 This deliberately replaces weaker ad-hoc checks such as non-black luma, unique
 JPEG hashes, or color-set equality. Future hardware cycles should use this trace
 format when claiming a faithful live pass-through loop.
