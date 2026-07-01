@@ -80,9 +80,11 @@ def main() -> int:
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    live_status_path = out_dir / "probe-live-status.json"
 
     request = urllib.request.Request(args.url, headers={"User-Agent": "fpga-hdmi-mjpeg-probe"})
     deadline = time.monotonic() + args.timeout_sec
+    started_at = time.monotonic()
     buffer = bytearray()
     saved: list[dict[str, str | int]] = []
     with urllib.request.urlopen(request, timeout=args.timeout_sec) as response:
@@ -100,9 +102,22 @@ def main() -> int:
                     "file": str(frame_path),
                     "sha256": hashlib.sha256(payload).hexdigest(),
                     "bytes": len(payload),
+                    "captured_ms": round((time.monotonic() - started_at) * 1000.0, 3),
                 })
                 if args.expect_color_blocks:
                     saved[-1]["color_block"] = classify_color_block(payload, args.color_distance_threshold)
+                live_status_path.write_text(
+                    json.dumps(
+                        {
+                            "status": "capturing",
+                            "saved_frames": len(saved),
+                            "latest_captured_ms": saved[-1]["captured_ms"],
+                            "latest_file": saved[-1]["file"],
+                        },
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
                 if len(saved) >= args.frames:
                     break
 

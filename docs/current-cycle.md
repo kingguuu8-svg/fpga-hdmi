@@ -64,6 +64,39 @@ placeholder.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: unified-15fps-image-evidence-pass-through
+Result: PASSED. The board-live loop now passes the unified validator with
+  saved HDMI image evidence. PC sent 30 unique 15 fps validation frames with
+  image-decodable markers; the Linux receiver wrote all 30 validation frame
+  IDs with dropped=0; the HDMI MJPEG probe saved 220 frames with 47 unique
+  hashes and 8 decoded colors; the trace builder decoded all 30 validation
+  frame IDs from saved JPEGs with require_image_paths=true; the committed
+  validator reported matched_frames=30, drop_rate=0.0, order_violations=0,
+  content_mismatches=0, black_frames=0, image_path_failures=0, and max
+  return-path latency=257.561 ms under the recorded 1000 ms HDMI-UVC/MJPEG
+  trace requirement.
+  pass_condition=(sender_fps == 15 and sent_frames == 30 and
+  receiver_written_frames == 30 and receiver_dropped_packets == 0 and
+  mjpeg_saved_frames >= 60 and mjpeg_unique_hashes >= 8 and
+  mjpeg_unique_colors >= 8 and trace_require_image_paths == 1 and
+  trace_image_path_failures == 0 and validator_status == pass and
+  trace_sent_frames == 30 and trace_matched_frames >= 29 and
+  trace_drop_rate <= 0.05 and trace_order_violations == 0 and
+  trace_content_mismatches == 0 and trace_black_frames == 0),
+  measured=(sender_fps=15, sent_frames=30, receiver_written_frames=30,
+  receiver_dropped_packets=0, mjpeg_saved_frames=220,
+  mjpeg_unique_hashes=47, mjpeg_unique_colors=8,
+  trace_require_image_paths=1, trace_image_path_failures=0,
+  validator_status=pass, trace_sent_frames=30, trace_matched_frames=30,
+  trace_drop_rate=0.0, trace_order_violations=0,
+  trace_content_mismatches=0, trace_black_frames=0).
+Evidence: docs/reports/unified-15fps-image-evidence-pass-through.md
+Board action: ran a Linux userspace receiver from /tmp, sent generated UDP
+  RGB888 frames from the PC over Ethernet, captured HDMI through the PC UVC
+  adapter, and used UART only for Linux shell control. No Vivado build,
+  PetaLinux build, JTAG programming, TF-card write, QSPI, NAND, eMMC, or other
+  board flash write.
+
 Cycle ID: unified-validator-boundary-order-fix
 Result: PASSED. Fixed the two third-party-reviewed validator edge defects:
   exact 19/20 boundary handling now reports drop_rate=0.05 and passes the
@@ -394,6 +427,10 @@ claims.
 Unified pass-through validator boundary/order edge cases are fixed: exact
 19/20 matching passes at drop_rate=0.05, unmatched captures fail without
 spurious frame_order_violation, and real wrong-order traces still fail.
+Unified 15 fps image-evidence pass-through is closed: 30 generated validation
+frames with image-decodable markers were received, presented to HDMI, captured
+as saved JPEGs, decoded into a trace with `require_image_paths=true`, and
+accepted by the committed validator with matched_frames=30 and drop_rate=0.0.
 ```
 
 Retired dead end:
@@ -407,8 +444,7 @@ layer. Do not resume this work.
 
 ## Next Cycle Direction
 
-No active implementation cycle is open. The natural next hardware cycle is a
-15 fps unified pass-through run that mandates independent captured image
-evidence (`require_image_paths=true` or equivalent offline re-decode) and uses
-the already-committed validator as its frozen pass gate for frame_id
-correspondence, latency, and sustained drop rate.
+No active cycle is open. The next implementation cycle can build on the
+verified 15 fps image-evidence pass-through path and should either add a first
+displayable effect/control behavior to the marker-backed stream or improve the
+dashboard presentation around the verified closed-loop evidence.

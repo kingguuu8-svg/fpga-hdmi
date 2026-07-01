@@ -28,6 +28,8 @@ typedef struct {
     unsigned int timeout_seconds;
     const char *control_fifo_path;
     video_effect_t effect;
+    int framebuffer_msync;
+    unsigned int present_interval_ms;
 } app_config_t;
 
 typedef struct {
@@ -44,7 +46,7 @@ typedef struct {
 static void usage(const char *argv0)
 {
     fprintf(stderr,
-            "usage: %s [--fb /dev/fb0] [--port 5005] [--frames 1] [--timeout-sec 20] [--control-fifo /tmp/video_ctl] [--effect none|invert]\n",
+            "usage: %s [--fb /dev/fb0] [--port 5005] [--frames 1] [--timeout-sec 20] [--control-fifo /tmp/video_ctl] [--effect none|invert] [--sync-mode msync|none] [--present-fps 15]\n",
             argv0);
 }
 
@@ -72,6 +74,8 @@ static int parse_args(int argc, char **argv, app_config_t *config)
     config->timeout_seconds = 20u;
     config->control_fifo_path = 0;
     config->effect = VIDEO_EFFECT_NONE;
+    config->framebuffer_msync = 1;
+    config->present_interval_ms = 0u;
 
     for (i = 1; i < argc; i++) {
         unsigned int value;
@@ -96,6 +100,20 @@ static int parse_args(int argc, char **argv, app_config_t *config)
             if (video_effect_parse(argv[++i], &config->effect) != 0) {
                 return -1;
             }
+        } else if (strcmp(argv[i], "--sync-mode") == 0 && i + 1 < argc) {
+            const char *mode = argv[++i];
+            if (strcmp(mode, "msync") == 0) {
+                config->framebuffer_msync = 1;
+            } else if (strcmp(mode, "none") == 0) {
+                config->framebuffer_msync = 0;
+            } else {
+                return -1;
+            }
+        } else if (strcmp(argv[i], "--present-fps") == 0 && i + 1 < argc) {
+            if (parse_u32(argv[++i], 1u, 120u, &value) != 0) {
+                return -1;
+            }
+            config->present_interval_ms = (1000u + value - 1u) / value;
         } else if (strcmp(argv[i], "--help") == 0) {
             usage(argv[0]);
             exit(0);
@@ -289,7 +307,7 @@ static void process_control_bytes(video_control_state_t *control, const char *by
     }
 }
 
-static int write_framebuffer(fb_target_t *target, const uint8_t *frame)
+static int write_framebuffer(fb_target_t *target, const uint8_t *frame, int framebuffer_msync)
 {
     int rc;
 
@@ -308,9 +326,11 @@ static int write_framebuffer(fb_target_t *target, const uint8_t *frame)
         fprintf(stderr, "framebuffer copy failed rc=%d\n", rc);
         return -1;
     }
-    if (msync(target->map, target->map_len, MS_SYNC) != 0) {
-        perror("msync framebuffer");
-        return -1;
+    if (framebuffer_msync) {
+        if (msync(target->map, target->map_len, MS_SYNC) != 0) {
+            perror("msync framebuffer");
+            return -1;
+        }
     }
     return 0;
 }
@@ -334,7 +354,8 @@ static int open_udp_socket(uint16_t port, unsigned int timeout_seconds)
 {
     int fd;
     int yes = 1;
-    int rcvbuf = 4 * 1024 * 1024;
+    int rcvbuf = 32 * 1024 * 1024;
+    socklen_t rcvbuf_len = sizeof(rcvbuf);
     struct timeval timeout;
     struct sockaddr_in addr;
 
@@ -346,6 +367,9 @@ static int open_udp_socket(uint16_t port, unsigned int timeout_seconds)
 
     (void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
     (void)setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+    if (getsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, &rcvbuf_len) == 0) {
+        printf("UDP_RCVBUF bytes=%d\n", rcvbuf);
+    }
 
     timeout.tv_sec = (time_t)timeout_seconds;
     timeout.tv_usec = 0;
@@ -392,6 +416,7 @@ int main(int argc, char **argv)
     unsigned int frames_written = 0u;
     unsigned int frames_skipped = 0u;
     unsigned long long start_ms;
+    unsigned long long last_present_ms = 0u;
     int sock = -1;
     int control_fd = -1;
     int exit_code = 1;
@@ -425,12 +450,14 @@ int main(int argc, char **argv)
     }
 
     video_udp_receiver_init(&receiver, buffer_a, buffer_b);
-    printf("VIDEO_UDP_LINUX_RECEIVER_READY port=%u frames=%u timeout_sec=%u control=%s effect=%s\n",
+    printf("VIDEO_UDP_LINUX_RECEIVER_READY port=%u frames=%u timeout_sec=%u control=%s effect=%s sync_mode=%s present_interval_ms=%u\n",
            config.port,
            config.frames,
            config.timeout_seconds,
            config.control_fifo_path == 0 ? "none" : config.control_fifo_path,
-           video_effect_name(config.effect));
+           video_effect_name(config.effect),
+           config.framebuffer_msync ? "msync" : "none",
+           config.present_interval_ms);
     fflush(stdout);
     start_ms = monotonic_ms();
 
@@ -509,9 +536,17 @@ int main(int argc, char **argv)
                     continue;
                 }
                 frame = prepare_output_frame(config.effect, effect_buffer, frame);
-                if (frame == 0 || write_framebuffer(&fb, frame) != 0) {
+                if (config.present_interval_ms > 0u && last_present_ms > 0u) {
+                    unsigned long long now_ms = monotonic_ms();
+                    unsigned long long elapsed_since_present = now_ms - last_present_ms;
+                    if (elapsed_since_present < (unsigned long long)config.present_interval_ms) {
+                        usleep((useconds_t)(((unsigned long long)config.present_interval_ms - elapsed_since_present) * 1000ull));
+                    }
+                }
+                if (frame == 0 || write_framebuffer(&fb, frame, config.framebuffer_msync) != 0) {
                     goto cleanup;
                 }
+                last_present_ms = monotonic_ms();
                 frames_written++;
                 printf("VIDEO_UDP_FRAME_WRITTEN frame_id=%lu frames=%u packets=%u dropped=%lu skipped=%u effect=%s elapsed_ms=%llu\n",
                        (unsigned long)receiver.frame_id,

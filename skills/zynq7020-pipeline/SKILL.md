@@ -546,5 +546,52 @@ The validator now handles the exact 19/20 boundary with integer-count
 violation, and still rejects real wrong-order traces. This path is PC-side
 only; it repairs the validator gate before the next hardware run.
 
+Verified unified 15 fps image-evidence pass-through path (preferred for
+faithful board-live closed-loop checks, 2026-07-01):
+
+```text
+1. Run the integrated hardware probe:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_unified_15fps_trace_probe.ps1 -OutDir build\unified-15fps-image-evidence-pass-through -CaptureDevice 1 -CaptureBackend dshow -StreamFps 30 -MjpegFrames 220 -MjpegMinUnique 8 -MjpegMinColors 8 -Frames 30 -WarmupFrames 12 -ValidationStartFrameId 100 -Fps 15 -TraceMaxLatencyMs 1000 -UdpPayload 1200 -HoldRepeats 1 -InterPacketUs 0 -PacketWindowFraction 0.85 -ReceiverSyncMode none -ReceiverPresentFps 15
+2. Require receiver/build markers:
+   VIDEO_UDP_RECEIVER_TEST_OK
+   VIDEO_FB_COPY_TEST_OK
+   VIDEO_CONTROL_TEST_OK
+   VIDEO_EFFECT_TEST_OK
+   LINUX_RECEIVER_BUILD_OK
+   VIDEO_UDP_LINUX_RECEIVER_READY ... present_interval_ms=67
+   thirty validation VIDEO_UDP_FRAME_WRITTEN ids 100..129
+3. Require trace/image markers:
+   UNIFIED_TRACE_FROM_MJPEG_OK
+   UNIFIED_PASSTHROUGH_TRACE_OK
+   UNIFIED_15FPS_IMAGE_EVIDENCE_OK
+4. Require final measured fields:
+   sender_fps=15
+   sent_frames=30
+   receiver_written_frames=30
+   receiver_dropped_packets=0
+   mjpeg_saved_frames>=60
+   mjpeg_unique_hashes>=8
+   mjpeg_unique_colors>=8
+   trace_require_image_paths=1
+   trace_image_path_failures=0
+   validator_status=pass
+   trace_sent_frames=30
+   trace_matched_frames>=29
+   trace_drop_rate<=0.05
+   trace_order_violations=0
+   trace_content_mismatches=0
+   trace_black_frames=0
+```
+
+Verified outcome:
+The board-live loop passed with 30 generated validation frames, 30 receiver
+writes, dropped=0, 220 saved HDMI MJPEG frames, 47 unique returned image hashes,
+8 decoded colors, and a validator trace that decoded all 30 validation frame
+IDs from saved JPEGs with `require_image_paths=true`. The receiver must use
+`--present-fps 15` for this check so framebuffer writes do not catch up in
+bursts that the HDMI/UVC return path can miss. The trace latency threshold is
+for the HDMI-UVC/MJPEG evidence path; the passing run measured max
+return-path latency of 257.561 ms.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

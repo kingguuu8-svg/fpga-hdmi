@@ -160,6 +160,11 @@ Phase C:
   next hardware loop must add independent captured-image evidence
   (`require_image_paths=true` or equivalent offline re-decode), not only
   runner-decoded metadata.
+  Unified 15 fps image-evidence pass-through gate: PASSED. The board-live loop
+  now sends 30 generated 15 fps validation frames with image-decodable markers,
+  paces Linux framebuffer presentation at 15 fps, saves HDMI-returned JPEGs,
+  decodes all 30 validation frame IDs from the images, and passes the committed
+  unified validator with dropped=0 and trace_drop_rate=0.0.
   Later: carry the same command semantics over TCP/UDP.
 
 Phase D:

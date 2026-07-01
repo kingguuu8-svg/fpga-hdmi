@@ -1673,3 +1673,78 @@ Residual risks:
   hardware cycle must still independently corroborate captured image evidence.
 - The review concern about a separate Active Cycle commit remains a process
   issue for future cycles.
+
+## 2026-07-01 - unified-15fps-image-evidence-pass-through
+
+Commit: this commit (`cycle: prove unified 15fps image pass-through`)
+
+Objective:
+
+Prove the board-live pass-through loop at 15 fps with the reusable unified
+validator and independent saved HDMI image evidence, rather than only dashboard
+color classification or runner self-reported metadata.
+
+Changed scope:
+
+- Added an image-decodable synchronized frame marker to
+  `tools/send_unified_test_video_udp.py`.
+- Added HDMI JPEG marker decoding and image-backed trace generation to
+  `tools/build_unified_trace_from_mjpeg.py`.
+- Added an integrated hardware runner in
+  `tools/run_unified_15fps_trace_probe.ps1`.
+- Added `captured_ms` live evidence reporting to `tools/probe_mjpeg_stream.py`.
+- Added `--present-fps` to the Linux receiver so the board does not catch up
+  display writes in short bursts that the HDMI/UVC path can miss.
+- Updated the trace protocol, README, roadmap, current-cycle state, report, and
+  pipeline skill.
+
+Verification:
+
+- Ran:
+  `rtk powershell.exe -NoProfile -Command "python -m py_compile .\tools\probe_mjpeg_stream.py .\tools\send_unified_test_video_udp.py .\tools\build_unified_trace_from_mjpeg.py .\tools\validate_passthrough_trace.py"`
+- Ran sender self-test:
+  `UNIFIED_TEST_VIDEO_SENDER_SELF_TEST_OK`.
+- Ran receiver build and host tests:
+  `VIDEO_UDP_RECEIVER_TEST_OK`, `VIDEO_FB_COPY_TEST_OK`,
+  `VIDEO_CONTROL_TEST_OK`, `VIDEO_EFFECT_TEST_OK`,
+  `LINUX_RECEIVER_BUILD_OK`.
+- Ran hardware loop:
+  `rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_unified_15fps_trace_probe.ps1 -OutDir build\unified-15fps-image-evidence-pass-through -CaptureDevice 1 -CaptureBackend dshow -StreamFps 30 -MjpegFrames 220 -MjpegMinUnique 8 -MjpegMinColors 8 -Frames 30 -WarmupFrames 12 -ValidationStartFrameId 100 -Fps 15 -TraceMaxLatencyMs 1000 -UdpPayload 1200 -HoldRepeats 1 -InterPacketUs 0 -PacketWindowFraction 0.85 -ReceiverSyncMode none -ReceiverPresentFps 15`
+- Marker:
+  `UNIFIED_15FPS_IMAGE_EVIDENCE_OK sender_fps=15 sent_frames=30 sender_hold_repeats=1 receiver_written_frames=30 receiver_dropped_packets=0 mjpeg_saved_frames=220 mjpeg_unique_hashes=47 mjpeg_unique_colors=8 trace_require_image_paths=1 trace_image_path_failures=0 validator_status=pass trace_sent_frames=30 trace_matched_frames=30 trace_drop_rate=0.0 trace_order_violations=0 trace_content_mismatches=0 trace_black_frames=0 trace_required_max_latency_ms=1000.0 trace_max_latency_ms=257.561 sent_time_offset_ms=3063`.
+
+Board action:
+
+- Ran a Linux userspace receiver from `/tmp`, sent generated UDP RGB888 frames
+  from the PC over Ethernet, captured HDMI through the PC UVC adapter, and used
+  UART only for Linux shell control.
+- No Vivado build, PetaLinux build, JTAG programming, TF-card write, QSPI,
+  NAND, eMMC, or other board flash write.
+
+Evidence:
+
+- `docs/reports/unified-15fps-image-evidence-pass-through.md`
+- `docs/protocols/unified-passthrough-trace.md`
+- `tools/send_unified_test_video_udp.py`
+- `tools/build_unified_trace_from_mjpeg.py`
+- `tools/run_unified_15fps_trace_probe.ps1`
+- `tools/probe_mjpeg_stream.py`
+- `software/eth_pass_through/linux_app/src/fb_video_udp_receiver.c`
+- `build/unified-15fps-image-evidence-pass-through/unified-15fps-summary.json`
+- `build/unified-15fps-image-evidence-pass-through/trace/validation-result.json`
+- `build/unified-15fps-image-evidence-pass-through/trace/trace.json`
+- `build/unified-15fps-image-evidence-pass-through/mjpeg-return/mjpeg-stream-probe.json`
+- `build/unified-15fps-image-evidence-pass-through/uart_after_unified_15fps.log`
+
+Result: pass_condition=(sender_fps == 15 and sent_frames == 30 and receiver_written_frames == 30 and receiver_dropped_packets == 0 and mjpeg_saved_frames >= 60 and mjpeg_unique_hashes >= 8 and mjpeg_unique_colors >= 8 and trace_require_image_paths == 1 and trace_image_path_failures == 0 and validator_status == pass and trace_sent_frames == 30 and trace_matched_frames >= 29 and trace_drop_rate <= 0.05 and trace_order_violations == 0 and trace_content_mismatches == 0 and trace_black_frames == 0), measured=(sender_fps=15, sent_frames=30, receiver_written_frames=30, receiver_dropped_packets=0, mjpeg_saved_frames=220, mjpeg_unique_hashes=47, mjpeg_unique_colors=8, trace_require_image_paths=1, trace_image_path_failures=0, validator_status=pass, trace_sent_frames=30, trace_matched_frames=30, trace_drop_rate=0.0, trace_order_violations=0, trace_content_mismatches=0, trace_black_frames=0) -> PASSED.
+
+Residual risks:
+
+- `trace_required_max_latency_ms=1000.0` is the requirement for the HDMI
+  capture adapter plus Dashboard MJPEG evidence path. It is not a board-internal
+  processing latency claim. The passing run measured max return-path latency
+  `257.561 ms`.
+- The source is generated RGB888 with an embedded marker, not a real video file.
+- The Linux receiver's `--present-fps` pacing is sufficient for the current
+  framebuffer MVP; a later lower-latency architecture should revisit display
+  scheduling.

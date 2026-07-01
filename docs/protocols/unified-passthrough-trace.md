@@ -62,6 +62,32 @@ PC sender metadata + decoded HDMI capture metadata -> trace JSON -> validator
   `require_image_paths` is true, the validator requires the image file to exist
   and match the hash when provided.
 
+## Hardware Image Evidence
+
+For hardware pass-through cycles, `decoded_frame_id` must come from the saved
+HDMI image or an equivalent offline re-decode of the captured image evidence.
+It must not be inferred only from sender order or from a repeating color
+sequence.
+
+The 2026-07-01 hardware runner uses a deterministic generated RGB888 source
+with a small synchronized black/white frame marker:
+
+```text
+sync cells: black, white
+data cells: 12 bits, least significant bit first
+cell geometry: recorded in trace.alignment.marker
+```
+
+The trace builder accepts a captured frame only when the sync cells decode
+correctly. The captured `content_id` is derived from the decoded frame ID and
+decoded color, so a wrong color becomes a validator `content_mismatch` instead
+of being hidden by the runner.
+
+`max_latency_ms` is a per-trace requirement. For HDMI-UVC/MJPEG evidence paths
+it measures the return-capture chain, not board-internal processing latency.
+The requirement value used for a hardware cycle must be recorded in that
+cycle's report along with the measured max latency.
+
 ## Pass Semantics
 
 The validator checks temporal correspondence, not visual plausibility:

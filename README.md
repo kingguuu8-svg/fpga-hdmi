@@ -75,7 +75,8 @@ Dashboard: PC visual scaffold and fixed generated demo sender passed; custom
   input files deferred after MVP; minimal live sender control and HDMI capture
   binding passed; dashboard-driven board live loop passed with truthful input
   preview, live HDMI MJPEG return preview, color-block source classification,
-  and UART pause/resume/status audit
+  UART pause/resume/status audit, and unified 15 fps image-evidence
+  pass-through validation
 ```
 
 ## PC Dashboard
@@ -228,6 +229,23 @@ Expected marker:
 UNIFIED_VALIDATOR_BOUNDARY_ORDER_FIX_OK
 ```
 
+Run the verified 15 fps image-evidence hardware loop:
+
+```powershell
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_unified_15fps_trace_probe.ps1 -OutDir build\unified-15fps-image-evidence-pass-through -CaptureDevice 1 -CaptureBackend dshow -StreamFps 30 -MjpegFrames 220 -MjpegMinUnique 8 -MjpegMinColors 8 -Frames 30 -WarmupFrames 12 -ValidationStartFrameId 100 -Fps 15 -TraceMaxLatencyMs 1000 -UdpPayload 1200 -HoldRepeats 1 -InterPacketUs 0 -PacketWindowFraction 0.85 -ReceiverSyncMode none -ReceiverPresentFps 15
+```
+
+Expected marker:
+
+```text
+UNIFIED_15FPS_IMAGE_EVIDENCE_OK
+```
+
+This hardware loop uses generated RGB888 frames with a small image-decodable
+marker, not camera/webcam input. The trace requirement for max latency applies
+to the HDMI-UVC/MJPEG return evidence path; the passing run measured
+`trace_max_latency_ms=257.561`.
+
 ## Ethernet Video Pass-Through
 
 Current active artifacts:
@@ -243,6 +261,9 @@ software/eth_pass_through/
 tools/send_demo_video_udp.py
 tools/send_video_udp.py
 tools/validate_passthrough_trace.py
+tools/send_unified_test_video_udp.py
+tools/build_unified_trace_from_mjpeg.py
+tools/run_unified_15fps_trace_probe.ps1
 ```
 
 Known good subchains:
