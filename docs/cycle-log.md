@@ -1038,3 +1038,59 @@ Residual risks:
 - The dashboard does not yet start/stop a real sender subprocess.
 - The dashboard does not yet transmit UART/FIFO commands.
 - Runtime effect switching is not yet proven.
+
+## 2026-07-01 - dashboard-live-minimal-controls
+
+Commit: this commit (`cycle: make dashboard controls functional`)
+
+Objective:
+
+Make the dashboard functional and visually minimal.
+
+Changed scope:
+
+- Reworked `tools/dashboard/pc_dashboard.py` into a plain functional web view
+  without decorative backgrounds, gradient buttons, shadows, or card styling.
+- Changed default dashboard action mode to live.
+- Made `start-stream` launch a real dashboard-owned
+  `tools/send_demo_video_udp.py` subprocess.
+- Made `stop-stream` terminate that subprocess.
+- Wired UART/FIFO receiver actions through `tools/uart_run_commands.ps1` when a
+  UART port is configured.
+- Extended `tools/send_demo_video_udp.py` with `--frames 0` continuous send.
+- Updated README, dashboard README, roadmap, current-cycle, and pipeline skill.
+
+Verification:
+
+- Ran:
+  `rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-live-minimal-controls"`
+- Results:
+  `DASHBOARD_SCAFFOLD_SELF_TEST_OK`,
+  `DASHBOARD_CONTROL_INTEGRATION_SELF_TEST_OK`,
+  `DASHBOARD_MINIMAL_UI_SELF_TEST_OK`, and
+  `DASHBOARD_LIVE_SENDER_CONTROL_SELF_TEST_OK`.
+- Self-test proved minimal HTML, real sender subprocess start, real localhost
+  `ZVID` UDP packet reception, sender stop, explicit UART-not-configured
+  failure, and no camera/custom-file input.
+- Ran sender self-test and Python compile check.
+
+Board action:
+
+- None. UART live binding was implemented but not exercised against the board.
+
+Evidence:
+
+- `docs/reports/dashboard-live-minimal-controls.md`
+- `build/dashboard-live-minimal-controls/action-results.json`
+- `build/dashboard-live-minimal-controls/final-state.json`
+- `build/dashboard-live-minimal-controls/sender.out.log`
+
+Result:
+
+- PASSED. The dashboard is now a minimal functional control panel.
+
+Residual risks:
+
+- The dashboard does not deploy or start the board receiver process.
+- UART/FIFO buttons require board shell and `/tmp/video_ctl` readiness.
+- Runtime effect switching remains future work.

@@ -46,6 +46,17 @@ placeholder.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: dashboard-live-minimal-controls
+Result: PASSED. The dashboard UI is now a plain functional view with no
+  decorative background, gradients, shadows, or card styling. Start stream
+  launches a real dashboard-owned demo sender subprocess; Stop stream
+  terminates it. Self-test received a real localhost ZVID UDP packet from the
+  sender and verified UART actions return UART_NOT_CONFIGURED when no UART port
+  is provided.
+Evidence: docs/reports/dashboard-live-minimal-controls.md
+Board action: none. UART live binding was implemented but not exercised against
+  the connected board in this automated cycle.
+
 Cycle ID: dashboard-control-integration
 Result: PASSED. The PC dashboard now exposes `/api/actions` and `/api/action`
   plus active control buttons. Self-test posted six dry-run actions covering
@@ -229,6 +240,9 @@ packetizes them through the existing UDP protocol without camera or custom-file
 input.
 PC dashboard control API exposes tested dry-run sender, UART/FIFO, and effect
 actions without camera or custom-file input.
+PC dashboard is now minimal and `start-stream`/`stop-stream` control a real
+local demo sender subprocess. UART/FIFO controls are wired to the UART helper
+but require a ready board receiver FIFO.
 ```
 
 Retired dead end:
@@ -242,6 +256,6 @@ layer. Do not resume this work.
 
 ## Next Cycle Direction
 
-No active implementation cycle is open. A natural next cycle is live dashboard
-binding: start/stop the real demo sender process and drive the existing
-UART/FIFO receiver commands from the dashboard.
+No active implementation cycle is open. A natural next cycle is board-live
+receiver orchestration: deploy/start the board receiver, ensure `/tmp/video_ctl`
+exists, then verify dashboard UART/FIFO buttons against the connected board.

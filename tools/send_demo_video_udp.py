@@ -72,8 +72,8 @@ def run_sender(args: argparse.Namespace) -> int:
         raise SystemExit("width and height must be positive")
     if args.payload <= 0 or args.payload > 1400:
         raise SystemExit("payload must be in range 1..1400")
-    if args.frames <= 0:
-        raise SystemExit("frames must be positive")
+    if args.frames < 0:
+        raise SystemExit("frames must be non-negative; use 0 for continuous")
     if args.fps <= 0:
         raise SystemExit("fps must be positive")
 
@@ -83,7 +83,8 @@ def run_sender(args: argparse.Namespace) -> int:
     total_packets = 0
 
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        for index in range(args.frames):
+        index = 0
+        while args.frames == 0 or index < args.frames:
             frame_id = args.start_frame_id + index
             started = time.perf_counter()
             frame = make_demo_frame(args.width, args.height, frame_id)
@@ -105,10 +106,12 @@ def run_sender(args: argparse.Namespace) -> int:
                 flush=True,
             )
             remaining = frame_period - elapsed
-            if index != args.frames - 1 and remaining > 0:
+            index += 1
+            if (args.frames == 0 or index != args.frames) and remaining > 0:
                 time.sleep(remaining)
 
-    print(f"DEMO_VIDEO_SEND_OK frames={args.frames} packets={total_packets} target={args.host}:{args.port}")
+    frame_count = "continuous" if args.frames == 0 else str(args.frames)
+    print(f"DEMO_VIDEO_SEND_OK frames={frame_count} packets={total_packets} target={args.host}:{args.port}")
     return 0
 
 
@@ -180,7 +183,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--width", type=int, default=800)
     parser.add_argument("--height", type=int, default=600)
     parser.add_argument("--fps", type=float, default=1.0)
-    parser.add_argument("--frames", type=int, default=5)
+    parser.add_argument("--frames", type=int, default=5, help="frame count; 0 sends continuously until stopped")
     parser.add_argument("--start-frame-id", type=int, default=0)
     parser.add_argument("--payload", type=int, default=DEFAULT_PAYLOAD)
     parser.add_argument("--inter-packet-us", type=float, default=200.0)

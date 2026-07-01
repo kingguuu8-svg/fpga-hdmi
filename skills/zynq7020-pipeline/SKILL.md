@@ -345,5 +345,38 @@ The dashboard has a tested dry-run control surface. This is not live board
 control yet; it is the stable PC-side API surface that later binds to the real
 sender subprocess and UART/FIFO transport.
 
+Verified dashboard minimal live-control path (preferred for local dashboard
+checks, 2026-07-01):
+
+```text
+1. Run the self-test:
+   rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-live-minimal-controls"
+2. Require:
+   DASHBOARD_MINIMAL_UI_SELF_TEST_OK
+   DASHBOARD_LIVE_SENDER_CONTROL_SELF_TEST_OK
+3. The self-test proves:
+   - dashboard HTML is plain functional UI, with no gradient or box-shadow
+   - start-stream launches the real demo sender process
+   - localhost receives a real ZVID UDP packet from the sender
+   - stop-stream terminates the dashboard-owned sender process
+   - UART actions fail explicitly with UART_NOT_CONFIGURED when no UART is set
+   - camera/webcam input is disabled
+   - custom-file input is disabled/deferred
+4. Run locally:
+   rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --host 127.0.0.1 --port 8765"
+5. If the UART receiver FIFO is ready and the serial port should be used, keep
+   the default COM16 or pass:
+   --uart-port COM16 --control-fifo /tmp/video_ctl
+6. If the serial port must not be touched, pass:
+   --uart-disabled
+```
+
+Verified outcome:
+The dashboard is no longer a decorative dry-run panel. It is a minimal PC-side
+control panel whose stream buttons operate a real local sender process. UART
+buttons are wired to the existing helper but still require a running board
+receiver and `/tmp/video_ctl`; deploying/starting that receiver remains the
+next board-live cycle.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

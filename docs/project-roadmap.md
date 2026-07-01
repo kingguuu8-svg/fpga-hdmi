@@ -123,6 +123,10 @@ Phase C:
   Dashboard control-integration gate: PASSED. The PC dashboard exposes a
   tested dry-run action API for sender start/stop, UART/FIFO control semantics,
   and effect launch semantics. Live board binding remains a later cycle.
+  Dashboard minimal live-control gate: PASSED. The dashboard UI is reduced to a
+  plain functional view, and start/stop controls a real local demo sender
+  subprocess. UART/FIFO controls are bound to the existing UART helper but need
+  a ready board receiver FIFO to succeed.
   Later: carry the same command semantics over TCP/UDP.
 
 Phase D:

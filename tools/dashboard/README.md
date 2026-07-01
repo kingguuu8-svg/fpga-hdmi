@@ -15,10 +15,9 @@ FPGA Output:
   output verification only, not an input source
 
 Function Control Panel:
-  visual control skeleton
-  fixed demo-video sender is available as a standalone CLI
-  dry-run action API covers sender start/stop, UART/FIFO pause/resume/status,
-  and effect selection semantics
+  start/stop controls a dashboard-owned demo sender subprocess
+  UART/FIFO pause/resume/status uses the existing UART helper when configured
+  effect selection records receiver launch semantics
 ```
 
 Run the scaffold self-test:
@@ -27,10 +26,10 @@ Run the scaffold self-test:
 rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\visual-dashboard-scaffold"
 ```
 
-Run the control-integration self-test:
+Run the minimal live-control self-test:
 
 ```powershell
-rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-control-integration"
+rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-live-minimal-controls"
 ```
 
 Run the fixed demo-video sender self-test:
@@ -45,7 +44,7 @@ Run the local dashboard:
 rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --host 127.0.0.1 --port 8765"
 ```
 
-The dashboard action API is currently dry-run:
+Dashboard action API:
 
 ```text
 GET  /api/actions
@@ -56,4 +55,30 @@ POST /api/action {"action":"resume-receiver"}
 POST /api/action {"action":"receiver-status"}
 POST /api/action {"action":"effect-none"}
 POST /api/action {"action":"effect-invert"}
+```
+
+Current behavior:
+
+```text
+start-stream / stop-stream:
+  live local sender subprocess control
+
+pause-receiver / resume-receiver / receiver-status:
+  UART command helper, requiring --uart-port and a ready board receiver FIFO
+
+effect-none / effect-invert:
+  dashboard state only; applies to later receiver launch flow
+```
+
+Disable UART explicitly if the serial port should not be touched:
+
+```powershell
+rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --uart-disabled"
+```
+
+Use dry-run mode only when testing command semantics without launching the
+sender process:
+
+```powershell
+rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --action-mode dry-run"
 ```
