@@ -329,3 +329,127 @@ real, Ethernet pass-through functional at low rate). The concern is that the
 PASSED label carries more guarantee than the validation scripts check, and
 that a single unified standard should replace the four ad-hoc ones before the
 project claims a verified closed loop.
+
+### Second-pass review — "standards adapted to code" across all 15 cycles
+
+Prompted by the user's question whether the per-cycle "lower the bar until it
+passes" pattern appears elsewhere. This pass reads all 15 implementation
+cycles, not just the dashboard four.
+
+#### Cycles that did NOT lower the bar (trustworthy)
+
+These used a strong spatial validator (`rgb-stripes` / `inverted-rgb-stripes`
+3-ROI checks: dominant channel > 180, other channels < 60) or hardware
+register / state evidence, and the objective matched the evidence:
+
+- `ethernet-video-userspace-receiver` — rgb-stripes 3-ROI, single frame.
+- `sustained-low-fps-stream` — same validator, 5 frames; residual risk
+  honestly states the pattern was static across frames.
+- `first-board-side-effect` — inverted-rgb-stripes 3-ROI; the captured means
+  match `255 - source` to high precision (verified independently above).
+- `uart-control-endpoint` — pause/resume/status markers plus rgb-stripes; real
+  receiver log lines.
+- `hdmi-linux-fixed-mode-connector` — the strongest cycle in the project: a
+  before/after display change (Linux console -> three-stripe frame) plus
+  rgb-stripes plus VDMA status register (`0x00010000`, no `DMA_DEC_ERR`) plus
+  CMA address inside the official VDMA DDR window. This is the real evidence
+  that Linux owns the HDMI output.
+- `vdma-boot-probe-verify` — boot + ping 4/4 + VDMA probe; honestly declares
+  no `/dev/dri`.
+- `tf-card-linux-ping-route-gate` — ping 4/4, 0% loss.
+- `petalinux-vdma-hdmi-minimal-project` — build + SHA256 three-way match;
+  honestly declares the image was not yet booted.
+
+The PC-only scaffold / sender / control cycles are also honest: their
+objectives were PC-side, they did not touch the board, and their residual
+risks say so.
+
+Common trait of these cycles: narrow objective, strong evidence. No bar
+lowering.
+
+#### Cycles that DID lower the bar (the dashboard line)
+
+| Cycle | Pass condition | Problem |
+| --- | --- | --- |
+| `dashboard-hdmi-capture-binding` | `validation-profile none` (frame.size > 0), luma = 0.05 | Black-screen PASSED. Weakest gate in the project. |
+| `dashboard-hdmi-capture-timeout-fix` | luma = 0.14 | A second black-screen PASSED. |
+| `dashboard-board-live-loop` | `non-black` luma > 8 + visual inspection | Objective says "video loop", evidence is "a non-black image exists". |
+| `dashboard-truthful-loop-validation` | unique_hashes >= 5 | Proves "output changed a few times", not "frame N corresponds to sent frame N". |
+| `dashboard-live-pass-through-preview` | mjpeg_unique >= 2 | For non-pure-color content, capture/MJPEG noise also counts as unique. |
+| `dashboard-color-block-loop-and-uart-audit` | color-set equality | Set equality != temporal equality. Detailed above. |
+
+#### Systemic patterns (more important than any single cycle)
+
+**Pattern A — claim boldness is inversely proportional to evidence strength.**
+Early cycles proved concrete hardware facts (a frame reached the display,
+invert works, Linux owns HDMI) with strong spatial validators. Later
+dashboard cycles claim "complete loop", "truthful loop", "live pass-through"
+— bolder claims — but back them with weaker evidence (luma, hash count, set
+equality). The boldest claim ("complete loop validated") is backed by the
+weakest check (color-set equality). It should be the reverse: the bolder the
+claim, the stronger the evidence required.
+
+**Pattern B — the strong validator was only ever used on static content, and
+abandoned as soon as content became dynamic.**
+`ethernet-video-userspace-receiver`, `sustained-low-fps-stream`, and
+`uart-control-endpoint` all use rgb-stripes — but all on the same static
+stripe image. `sustained-low-fps-stream` itself admits "pattern was static
+across frames". So the strong spatial validator was never exercised on
+dynamic content. When content finally became dynamic, instead of upgrading
+to frame-correspondence (harder but correct), the project downgraded to
+luma / hash / set checks (easier but weaker). This is the root of the user's
+"manufacturing trouble with multiple standards" objection: one strong
+standard was used only where it was easy, and four weak standards were
+invented where it was hard, rather than designing one standard that holds
+for both static and dynamic content.
+
+**Pattern C — two consecutive PASSED cycles landed on a black screen.**
+`capture-binding` (luma 0.05) and `timeout-fix` (luma 0.14) are two
+back-to-back PASSED cycles where the HDMI output was essentially black. Each
+is honest in isolation (their objectives were "wire capture" and "fix
+timeout", not "produce an image"). But reading `docs/cycle-log.md` one sees
+a string of PASSED with no signal that those two landed on black — that fact
+is buried in each report's residual risks. The third cycle
+(`board-live-loop`, luma 136) is the first non-black one. The cumulative
+effect is: PASSED appeared twice while the pipeline was not yet producing
+visible video.
+
+**Pattern D — no cycle changed its pass condition mid-cycle.**
+Specifically checked for "realize it won't pass, then lower the bar":
+`fixed-mode-connector` hit `DMA_DEC_ERR` on first run, fixed CMA, reran, same
+condition. `sustained-low-fps-stream` hit a host helper hang, fixed the
+helper, reran, same condition. `timeout-fix` fixed the timeout, same
+condition. The bar lowering happens *between* cycles (each new cycle picks a
+weaker standard than the previous), not *within* a cycle. This is gradual
+erosion, not mid-cycle cheating; there is no tampering, but the dashboard
+line's credibility is diluted by it.
+
+#### What is trustworthy vs what is discounted
+
+Trustworthy (hard): Linux owns HDMI output; a single frame reaches the
+display; the invert effect; BGR byte order; UART control; Ethernet dropped=0;
+VDMA probe; boot/ping. These have spatial validators or register/state
+evidence.
+
+Discounted (soft): "complete loop", "truthful loop", "live pass-through",
+"color-block loop validated". These passed only luma / hash / set checks,
+with no frame correspondence, no latency, no throughput. They prove "the
+pipeline is live and produces visible output", not "a faithful realtime
+loop".
+
+#### Recommendation
+
+The single unified passthrough standard from the first review (frame_id
+correspondence + latency + sustained drop rate at 15 fps) should replace
+*both* the one strong standard (rgb-stripes, used only on static content)
+*and* the four weak standards (luma / hash / set / best-of-N), becoming the
+only standard, valid for both static and dynamic content. This single change
+dissolves Pattern A (bold claims get strong evidence), Pattern B (one
+standard for static and dynamic alike), and the dashboard line's diluted
+credibility in one step.
+
+This second-pass review is also non-blocking. No cycle is reopened. The
+intent is to leave a durable record that the project's strongest evidence is
+concentrated in the early hardware cycles, the dashboard line's PASSED
+labels are softer than they read, and the fix is one unified standard, not
+more ad-hoc validators.
