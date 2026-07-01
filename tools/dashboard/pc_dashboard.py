@@ -24,6 +24,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+try:
+    from dashboard.demo_source import frame_sha256, make_demo_frame
+except ModuleNotFoundError:
+    from demo_source import frame_sha256, make_demo_frame
+
 
 DEFAULT_WIDTH = 800
 DEFAULT_HEIGHT = 600
@@ -42,6 +47,7 @@ DEFAULT_CAPTURE_WIDTH = 800
 DEFAULT_CAPTURE_HEIGHT = 600
 DEFAULT_CAPTURE_FRAMES = 8
 DEFAULT_CAPTURE_PROFILE = "none"
+DEFAULT_CAPTURE_SAVE_SAMPLES = 0
 NO_CAMERA_POLICY = "Generated PC input only. Camera/webcam and custom file input are disabled for MVP."
 
 
@@ -97,25 +103,35 @@ ACTION_DEFINITIONS = [
 ]
 
 
-def make_input_svg(frame: int, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT) -> bytes:
-    """Return a plain generated input preview."""
-    phase = frame % 160
-    pip_w = max(80, width // 5)
-    pip_h = max(60, height // 5)
-    pip_x = 20 + (phase * 5) % max(1, width - pip_w - 40)
-    pip_y = 50 + (phase * 3) % max(1, height - pip_h - 80)
-    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
-  <rect width="100%" height="100%" fill="#fff"/>
-  <rect x="1" y="1" width="{width - 2}" height="{height - 2}" fill="none" stroke="#000" stroke-width="2"/>
-  <text x="16" y="32" fill="#000" font-family="Consolas, monospace" font-size="20">INPUT GENERATED frame={frame}</text>
-  <line x1="0" y1="{height // 2}" x2="{width}" y2="{height // 2}" stroke="#aaa" stroke-width="1"/>
-  <line x1="{width // 2}" y1="0" x2="{width // 2}" y2="{height}" stroke="#aaa" stroke-width="1"/>
-  <rect x="{pip_x}" y="{pip_y}" width="{pip_w}" height="{pip_h}" fill="#ddd" stroke="#000" stroke-width="3"/>
-  <line x1="{pip_x}" y1="{pip_y}" x2="{pip_x + pip_w}" y2="{pip_y + pip_h}" stroke="#000" stroke-width="2"/>
-  <line x1="{pip_x + pip_w}" y1="{pip_y}" x2="{pip_x}" y2="{pip_y + pip_h}" stroke="#000" stroke-width="2"/>
-</svg>
-"""
-    return svg.encode("utf-8")
+def rgb888_to_bmp(frame: bytes, width: int, height: int) -> bytes:
+    """Encode RGB888 frame bytes as a browser-readable 24-bit BMP."""
+    expected = width * height * 3
+    if len(frame) != expected:
+        raise ValueError(f"RGB888 frame has {len(frame)} bytes, expected {expected}")
+
+    row_size = ((width * 3 + 3) // 4) * 4
+    pixel_bytes = bytearray(row_size * height)
+    for out_y in range(height):
+        src_y = height - 1 - out_y
+        for x in range(width):
+            src = (src_y * width + x) * 3
+            dst = out_y * row_size + x * 3
+            r, g, b = frame[src], frame[src + 1], frame[src + 2]
+            pixel_bytes[dst : dst + 3] = bytes((b, g, r))
+
+    file_size = 14 + 40 + len(pixel_bytes)
+    return (
+        b"BM"
+        + struct.pack("<IHHI", file_size, 0, 0, 54)
+        + struct.pack("<IiiHHIIiiII", 40, width, height, 1, 24, 0, len(pixel_bytes), 2835, 2835, 0, 0)
+        + bytes(pixel_bytes)
+    )
+
+
+def make_input_bmp(frame: int, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT) -> tuple[bytes, str]:
+    """Return the exact deterministic source frame used by the UDP sender."""
+    rgb = make_demo_frame(width, height, frame)
+    return rgb888_to_bmp(rgb, width, height), frame_sha256(rgb)
 
 
 def make_output_placeholder_svg(width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT) -> bytes:
@@ -201,16 +217,17 @@ def dashboard_html(actions_enabled: bool = True) -> bytes:
   <main>
     <section data-panel="input">
       <h2>Input to FPGA</h2>
-      <img class="preview" id="input-preview" src="/api/input-preview.svg?frame=0" alt="generated PC input preview">
-      <div class="meta">source: generated PC RGB888 UDP
+      <img class="preview" id="input-preview" src="/api/input-preview.bmp?frame=0" alt="actual generated PC UDP frame preview">
+      <div class="meta">source: exact generated PC RGB888 UDP frame
 camera: disabled
 custom file: deferred</div>
     </section>
     <section data-panel="output">
       <h2>FPGA output</h2>
       <img class="preview" id="output-preview" src="/api/output-preview" alt="FPGA HDMI output preview">
-      <div class="meta">source: HDMI capture image if configured
-role: output verification only</div>
+      <div class="meta">source: HDMI output snapshot via capture adapter
+role: output verification only
+note: Windows may label the HDMI/UVC adapter as a camera device</div>
     </section>
     <section data-panel="control">
       <h2>Control</h2>
@@ -242,7 +259,7 @@ role: output verification only</div>
     }}
     async function refreshState() {{
       frame = (frame + 1) % 100000;
-      document.getElementById("input-preview").src = "/api/input-preview.svg?frame=" + frame;
+      document.getElementById("input-preview").src = "/api/input-preview.bmp?frame=" + frame;
       document.getElementById("output-preview").src = "/api/output-preview?t=" + Date.now();
       const state = await fetch("/api/state").then(r => r.json());
       applyState(state);
@@ -294,6 +311,7 @@ class DashboardState:
         capture_height: int = DEFAULT_CAPTURE_HEIGHT,
         capture_frames: int = DEFAULT_CAPTURE_FRAMES,
         capture_profile: str = DEFAULT_CAPTURE_PROFILE,
+        capture_save_samples: int = DEFAULT_CAPTURE_SAVE_SAMPLES,
         actions_enabled: bool = True,
         action_mode: str = "live",
         log_dir: Path | None = None,
@@ -318,6 +336,7 @@ class DashboardState:
         self.capture_height = capture_height
         self.capture_frames = capture_frames
         self.capture_profile = capture_profile
+        self.capture_save_samples = capture_save_samples
         self.actions_enabled = actions_enabled
         self.action_mode = action_mode
         self.log_dir = log_dir or self.repo_root / "build" / "dashboard-live"
@@ -328,6 +347,11 @@ class DashboardState:
         self.capture_status = "idle" if capture_enabled else "disabled"
         self.capture_last_report: Path | None = None
         self.capture_last_log: Path | None = None
+        self.capture_thread: threading.Thread | None = None
+        self.capture_count = 0
+        self.capture_started_at_s: float | None = None
+        self.capture_finished_at_s: float | None = None
+        self.capture_last_error: str | None = None
         self.receiver_paused = False
         self.selected_effect = "none"
         self.last_action: dict[str, Any] | None = None
@@ -337,6 +361,7 @@ class DashboardState:
             f"sender target: {board_host}:{udp_port}",
             f"sender frames: {'continuous' if sender_frames == 0 else sender_frames}",
             f"hdmi capture: {'enabled' if capture_enabled else 'disabled'}",
+            "hdmi capture role: output snapshot; Windows may report the HDMI capture adapter as camera access",
             f"uart: {uart_port or 'not configured'}",
             "camera/webcam input: disabled",
             "custom file input: deferred",
@@ -412,6 +437,8 @@ class DashboardState:
             "--out-dir",
             str(capture_dir),
         ]
+        if self.capture_save_samples > 0:
+            cmd.extend(["--save-samples", str(self.capture_save_samples)])
         return cmd, report_path, stdout_path, stderr_path
 
     def _capture_output_locked(self) -> tuple[bool, str]:
@@ -448,10 +475,65 @@ class DashboardState:
         detail = (result.stderr or result.stdout).strip().replace("\r", " ").replace("\n", " ")
         return False, f"HDMI_CAPTURE_FAILED report={report_path} detail={detail[:300]}"
 
+    def _capture_worker(self, cmd: list[str], report_path: Path, stdout_path: Path, stderr_path: Path) -> None:
+        timeout_s = max(90.0, 10.0 + self.capture_frames * 3.0)
+        ok = False
+        detail = ""
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=str(self.repo_root),
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+                check=False,
+            )
+            stdout_path.write_text(result.stdout, encoding="utf-8")
+            stderr_path.write_text(result.stderr, encoding="utf-8")
+            if result.returncode == 0 and self.output_image.exists():
+                ok = True
+                detail = f"HDMI_CAPTURE_OK image={self.output_image} report={report_path}"
+            else:
+                raw = (result.stderr or result.stdout).strip().replace("\r", " ").replace("\n", " ")
+                detail = f"HDMI_CAPTURE_FAILED report={report_path} detail={raw[:300]}"
+        except subprocess.TimeoutExpired:
+            detail = f"HDMI_CAPTURE_TIMEOUT report={report_path}"
+        except OSError as exc:
+            detail = f"HDMI_CAPTURE_OS_ERROR report={report_path} detail={exc}"
+
+        with self.lock:
+            self.capture_last_report = report_path
+            self.capture_last_log = stdout_path
+            self.capture_finished_at_s = round(time.time() - self.started_at, 3)
+            self.capture_status = "ok" if ok else "failed"
+            self.capture_last_error = None if ok else detail
+            self._append_log_locked(detail)
+
+    def _start_capture_thread_locked(self) -> tuple[bool, str]:
+        if not self.capture_enabled:
+            self.capture_status = "disabled"
+            return False, "HDMI_CAPTURE_DISABLED"
+        if self.capture_thread is not None and self.capture_thread.is_alive():
+            return True, "HDMI_CAPTURE_ALREADY_RUNNING"
+
+        cmd, report_path, stdout_path, stderr_path = self._capture_command_locked()
+        self.capture_count += 1
+        self.capture_started_at_s = round(time.time() - self.started_at, 3)
+        self.capture_finished_at_s = None
+        self.capture_last_error = None
+        self.capture_status = "running"
+        self.capture_thread = threading.Thread(
+            target=self._capture_worker,
+            args=(cmd, report_path, stdout_path, stderr_path),
+            daemon=True,
+        )
+        self.capture_thread.start()
+        return True, f"HDMI_CAPTURE_SCHEDULED count={self.capture_count} report={report_path}"
+
     def _start_sender_locked(self) -> tuple[bool, str]:
         if self._sender_alive_locked():
             pid = self.sender_process.pid if self.sender_process else "unknown"
-            capture_ok, capture_detail = self._capture_output_locked()
+            capture_ok, capture_detail = self._start_capture_thread_locked()
             suffix = capture_detail if capture_ok else f"capture warning: {capture_detail}"
             return True, f"sender already running pid={pid}; {suffix}"
 
@@ -466,7 +548,7 @@ class DashboardState:
             )
         self.sender_last_exit_code = None
         time.sleep(0.5)
-        capture_ok, capture_detail = self._capture_output_locked()
+        capture_ok, capture_detail = self._start_capture_thread_locked()
         suffix = capture_detail if capture_ok else f"capture warning: {capture_detail}"
         return True, f"sender started pid={self.sender_process.pid} log={stdout_path}; {suffix}"
 
@@ -563,7 +645,7 @@ class DashboardState:
             elif action == "stop-stream":
                 ok, detail = self._stop_sender_locked()
             elif action == "capture-output":
-                ok, detail = self._capture_output_locked()
+                ok, detail = self._start_capture_thread_locked()
             elif action in {"pause-receiver", "resume-receiver", "receiver-status"}:
                 ok, detail = self._run_uart_action_locked(action)
                 if ok and action == "pause-receiver":
@@ -633,6 +715,8 @@ class DashboardState:
                 "camera_enabled": False,
                 "custom_file_enabled": False,
                 "policy": NO_CAMERA_POLICY,
+                "preview_endpoint": "/api/input-preview.bmp",
+                "preview_matches_sender_source": True,
             },
             "output_preview": {
                 "kind": "hdmi-capture-slot",
@@ -641,8 +725,14 @@ class DashboardState:
                 "capture_enabled": self.capture_enabled,
                 "capture_status": self.capture_status,
                 "capture_profile": self.capture_profile,
+                "capture_save_samples": self.capture_save_samples,
                 "capture_report": str(self.capture_last_report) if self.capture_last_report else None,
                 "capture_log": str(self.capture_last_log) if self.capture_last_log else None,
+                "capture_count": self.capture_count,
+                "capture_started_at_s": self.capture_started_at_s,
+                "capture_finished_at_s": self.capture_finished_at_s,
+                "capture_last_error": self.capture_last_error,
+                "semantic": "snapshot, not a continuous video widget",
             },
             "control_panel": {
                 "actions_enabled": self.actions_enabled,
@@ -692,13 +782,20 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
                 payload = json.dumps({"actions": state.action_catalog()}, indent=2).encode("utf-8")
                 self.send_payload(200, "application/json; charset=utf-8", payload)
                 return
-            if parsed.path == "/api/input-preview.svg":
+            if parsed.path == "/api/input-preview.bmp":
                 frame_text = parse_qs(parsed.query).get("frame", ["0"])[0]
                 try:
                     frame = int(frame_text)
                 except ValueError:
                     frame = 0
-                self.send_payload(200, "image/svg+xml", make_input_svg(frame))
+                payload, sha = make_input_bmp(frame, state.sender_width, state.sender_height)
+                self.send_response(200)
+                self.send_header("Content-Type", "image/bmp")
+                self.send_header("Content-Length", str(len(payload)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Frame-SHA256", sha)
+                self.end_headers()
+                self.wfile.write(payload)
                 return
             if parsed.path == "/api/output-preview":
                 if state.output_image and state.output_image.exists():
@@ -761,6 +858,7 @@ def run_server(
     capture_height: int,
     capture_frames: int,
     capture_profile: str,
+    capture_save_samples: int,
     actions_enabled: bool,
     action_mode: str,
     log_dir: Path,
@@ -785,6 +883,7 @@ def run_server(
         capture_height=capture_height,
         capture_frames=capture_frames,
         capture_profile=capture_profile,
+        capture_save_samples=capture_save_samples,
         actions_enabled=actions_enabled,
         action_mode=action_mode,
         log_dir=log_dir,
@@ -843,7 +942,9 @@ def run_self_test(out_dir: Path) -> int:
         html_bytes = urllib.request.urlopen(url + "/", timeout=5).read()
         state_bytes = urllib.request.urlopen(url + "/api/state", timeout=5).read()
         actions_bytes = urllib.request.urlopen(url + "/api/actions", timeout=5).read()
-        input_bytes = urllib.request.urlopen(url + "/api/input-preview.svg?frame=7", timeout=5).read()
+        input_response = urllib.request.urlopen(url + "/api/input-preview.bmp?frame=7", timeout=5)
+        input_bytes = input_response.read()
+        input_sha = input_response.headers.get("X-Frame-SHA256")
         output_bytes = urllib.request.urlopen(url + "/api/output-preview", timeout=5).read()
 
         start_status, start_result = post_json(url + "/api/action", {"action": "start-stream"})
@@ -871,7 +972,7 @@ def run_self_test(out_dir: Path) -> int:
         out_dir.joinpath("actions.json").write_bytes(actions_bytes)
         out_dir.joinpath("action-results.json").write_text(json.dumps(action_results, indent=2), encoding="utf-8")
         out_dir.joinpath("final-state.json").write_bytes(final_state_bytes)
-        out_dir.joinpath("input-preview.svg").write_bytes(input_bytes)
+        out_dir.joinpath("input-preview.bmp").write_bytes(input_bytes)
         out_dir.joinpath("output-placeholder.svg").write_bytes(output_bytes)
 
         page = html_bytes.decode("utf-8")
@@ -914,7 +1015,9 @@ def run_self_test(out_dir: Path) -> int:
         assert any("ACTION_OK action=start-stream" in line for line in final_state["logs"])
         assert any("ACTION_OK action=stop-stream" in line for line in final_state["logs"])
         assert any("ACTION_ERROR action=pause-receiver UART_NOT_CONFIGURED" in line for line in final_state["logs"])
-        assert b"INPUT GENERATED" in input_bytes
+        expected_input = make_demo_frame(80, 60, 7)
+        assert input_bytes[:2] == b"BM"
+        assert input_sha == frame_sha256(expected_input)
         assert b"FPGA OUTPUT" in output_bytes
     finally:
         try:
@@ -956,6 +1059,7 @@ def main() -> int:
     parser.add_argument("--capture-height", type=int, default=DEFAULT_CAPTURE_HEIGHT)
     parser.add_argument("--capture-frames", type=int, default=DEFAULT_CAPTURE_FRAMES)
     parser.add_argument("--capture-profile", default=DEFAULT_CAPTURE_PROFILE, choices=["none", "non-black", "pip", "rgb-stripes", "inverted-rgb-stripes"])
+    parser.add_argument("--capture-save-samples", type=int, default=DEFAULT_CAPTURE_SAVE_SAMPLES)
     parser.add_argument("--action-mode", choices=["live", "dry-run"], default="live")
     parser.add_argument("--actions-disabled", action="store_true")
     parser.add_argument("--output-image", default="")
@@ -989,6 +1093,7 @@ def main() -> int:
         capture_height=args.capture_height,
         capture_frames=args.capture_frames,
         capture_profile=args.capture_profile,
+        capture_save_samples=args.capture_save_samples,
         actions_enabled=not args.actions_disabled,
         action_mode=args.action_mode,
         log_dir=Path(args.log_dir),

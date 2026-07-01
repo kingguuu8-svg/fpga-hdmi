@@ -7,11 +7,12 @@ param(
     [int]$HttpPort = 8000,
     [string]$DashboardHost = "127.0.0.1",
     [int]$DashboardPort = 8765,
-    [string]$CaptureDevice = "auto",
+    [string]$CaptureDevice = "1",
     [string]$CaptureBackend = "dshow",
-    [int]$CaptureFrames = 8,
-    [int]$Frames = 5,
-    [double]$Fps = 1.0,
+    [int]$CaptureFrames = 90,
+    [int]$CaptureSaveSamples = 6,
+    [int]$Frames = 12,
+    [double]$Fps = 2.0,
     [int]$InterPacketUs = 200,
     [string]$ControlFifo = "/tmp/video_ctl",
     [string]$OutDir = "build\dashboard-board-live-loop"
@@ -43,6 +44,35 @@ function Stop-StaleDemoSenders {
     }
 }
 
+function Send-UartInterrupt {
+    param(
+        [string]$Port,
+        [int]$BaudRate = 115200
+    )
+
+    $serial = [System.IO.Ports.SerialPort]::new(
+        $Port,
+        $BaudRate,
+        [System.IO.Ports.Parity]::None,
+        8,
+        [System.IO.Ports.StopBits]::One
+    )
+    try {
+        $serial.Open()
+        $serial.Write([char]3)
+        Start-Sleep -Milliseconds 300
+        $serial.Write("`r`n")
+        Start-Sleep -Milliseconds 300
+        [void]$serial.ReadExisting()
+    }
+    finally {
+        if ($serial.IsOpen) {
+            $serial.Close()
+        }
+        $serial.Dispose()
+    }
+}
+
 function Invoke-DashboardAction {
     param(
         [string]$Url,
@@ -54,12 +84,76 @@ function Invoke-DashboardAction {
     Invoke-RestMethod -Uri "$Url/api/action" -Method Post -ContentType "application/json" -Body $body -TimeoutSec $TimeoutSec
 }
 
+function Wait-DashboardCapture {
+    param(
+        [string]$Url,
+        [int]$TimeoutSec
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
+    $lastState = $null
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $lastState = Invoke-RestMethod -Uri "$Url/api/state" -TimeoutSec 5
+        if ($lastState.output_preview.capture_status -eq "ok" -and $lastState.output_preview.image_exists) {
+            return $lastState
+        }
+        if ($lastState.output_preview.capture_status -in @("failed", "timeout")) {
+            throw "dashboard HDMI capture failed: $($lastState.output_preview.capture_last_error)"
+        }
+        Start-Sleep -Milliseconds 500
+    }
+
+    if ($lastState) {
+        $lastState | ConvertTo-Json -Depth 12 | Write-Host
+    }
+    throw "dashboard HDMI capture did not complete within $TimeoutSec seconds"
+}
+
+function Test-DynamicSamples {
+    param(
+        [string]$CaptureDir,
+        [string]$OutPath
+    )
+
+    $samples = Get-ChildItem -LiteralPath $CaptureDir -Filter "latest-sample-*.png" -ErrorAction SilentlyContinue |
+        Sort-Object Name
+    if ($samples.Count -lt 2) {
+        throw "dynamic HDMI proof needs at least two saved samples"
+    }
+
+    $hashes = @()
+    foreach ($sample in $samples) {
+        $bytes = [System.IO.File]::ReadAllBytes($sample.FullName)
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $hashBytes = $sha.ComputeHash($bytes)
+        }
+        finally {
+            $sha.Dispose()
+        }
+        $hashText = [System.BitConverter]::ToString($hashBytes).Replace("-", "").ToLowerInvariant()
+        $hashes += [pscustomobject]@{
+            file = $sample.FullName
+            sha256 = $hashText
+        }
+    }
+
+    $hashes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $OutPath "hdmi_dynamic_sample_hashes.json") -Encoding UTF8
+    $unique = @($hashes.sha256 | Sort-Object -Unique)
+    if ($unique.Count -lt 2) {
+        throw "HDMI samples are static: only one unique sample hash"
+    }
+
+    return $unique.Count
+}
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $outPath = Join-Path $repoRoot $OutDir
 New-Item -ItemType Directory -Force -Path $outPath | Out-Null
 
 Stop-DashboardListener -Port $DashboardPort
 Stop-StaleDemoSenders
+Send-UartInterrupt -Port $Port
 
 & (Join-Path $repoRoot "software\eth_pass_through\scripts\build-linux-receiver-wsl.ps1") -OutDir $OutDir
 if ($LASTEXITCODE -ne 0) {
@@ -75,11 +169,11 @@ if ($listener) {
 }
 
 $receiverPath = Join-Path $outPath "fb_video_udp_receiver"
-$serverJob = Start-Job -ArgumentList $PcIp,$HttpPort,$receiverPath -ScriptBlock {
-    param($BindIp, $BindPort, $FilePath)
+$serverJob = Start-Job -ArgumentList $HttpPort,$receiverPath -ScriptBlock {
+    param($BindPort, $FilePath)
 
     $listener = [System.Net.Sockets.TcpListener]::new(
-        [System.Net.IPAddress]::Parse($BindIp),
+        [System.Net.IPAddress]::Any,
         [int]$BindPort
     )
     $listener.Start()
@@ -167,6 +261,7 @@ try {
         "--capture-height", "600",
         "--capture-frames", "$CaptureFrames",
         "--capture-profile", "non-black",
+        "--capture-save-samples", "$CaptureSaveSamples",
         "--log-dir", $OutDir
     )
     $dashboardProcess = Start-Process -WindowStyle Hidden -FilePath python `
@@ -192,13 +287,15 @@ try {
         throw "dashboard did not become ready"
     }
 
-    $startResult = Invoke-DashboardAction -Url $dashboardUrl -Action "start-stream" -TimeoutSec 180
+    $startResult = Invoke-DashboardAction -Url $dashboardUrl -Action "start-stream" -TimeoutSec 20
     $startResult | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $outPath "dashboard_start_stream.json") -Encoding UTF8
-    if ($startResult.detail -notmatch "HDMI_CAPTURE_OK" -or
-        $startResult.state.output_preview.capture_status -ne "ok" -or
-        -not $startResult.state.output_preview.image_exists) {
-        throw "dashboard start-stream did not produce HDMI_CAPTURE_OK"
+    if ($startResult.detail -notmatch "HDMI_CAPTURE_SCHEDULED" -or
+        $startResult.state.output_preview.capture_status -ne "running") {
+        throw "dashboard start-stream did not schedule HDMI capture"
     }
+
+    $captureState = Wait-DashboardCapture -Url $dashboardUrl -TimeoutSec 180
+    $captureState | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $outPath "dashboard_capture_done_state.json") -Encoding UTF8
 
     $afterCommands = Join-Path $outPath "uart_after_dashboard_stream.commands"
     @(
@@ -236,8 +333,9 @@ try {
     if ($captureJson.status -ne "pass" -or $captureJson.validation_profile -ne "non-black") {
         throw "dashboard HDMI capture was not non-black"
     }
+    $uniqueSampleCount = Test-DynamicSamples -CaptureDir (Join-Path $outPath "hdmi-capture") -OutPath $outPath
 
-    $marker = "DASHBOARD_BOARD_LIVE_LOOP_OK frames=$Frames written=$writtenCount out=$outPath"
+    $marker = "DASHBOARD_BOARD_LIVE_LOOP_OK frames=$Frames written=$writtenCount dynamic_samples_unique=$uniqueSampleCount out=$outPath"
     Set-Content -LiteralPath (Join-Path $outPath "dashboard_board_live_loop.marker.txt") -Value $marker -Encoding ASCII
     Write-Host $marker
 }

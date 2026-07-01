@@ -46,6 +46,19 @@ placeholder.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: dashboard-truthful-loop-validation
+Result: PASSED. Corrected the dashboard closed-loop demo so the input preview
+  is generated from the exact sender source, start-stream schedules HDMI
+  capture asynchronously instead of blocking the button response, and the
+  board-live helper requires dynamic HDMI sample hashes. The connected board
+  wrote 12 generated frames, 14400 UDP packets, dropped=0; HDMI capture on
+  DirectShow index 1 passed non-black validation and saved six samples with
+  five unique hashes.
+Evidence: docs/reports/dashboard-truthful-loop-validation.md
+Board action: ran a Linux userspace receiver from /tmp, sent generated UDP
+  frames from the PC through Dashboard, and captured HDMI. No Vivado/PetaLinux/
+  JTAG/TF-card/flash action.
+
 Cycle ID: dashboard-board-live-loop
 Result: PASSED. Added a displayable board-live loop helper. It builds/deploys
   the Linux receiver to /tmp, starts it with /tmp/video_ctl, starts the

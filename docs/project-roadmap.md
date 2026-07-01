@@ -136,6 +136,10 @@ Phase C:
   receiver, drove Dashboard `start-stream`, sent five generated RGB888 frames,
   wrote five frames to /dev/fb0 with dropped=0, and HDMI capture validated a
   non-black generated demo image.
+  Dashboard truthful-loop validation gate: PASSED. The dashboard input preview
+  now comes from the exact generated UDP source, stream/capture actions return
+  asynchronously, and HDMI samples captured during the stream show dynamic
+  output changes.
   Later: carry the same command semantics over TCP/UDP.
 
 Phase D:

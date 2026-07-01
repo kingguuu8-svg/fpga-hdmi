@@ -1257,3 +1257,76 @@ Residual risks:
 - Output preview is action-triggered HDMI capture, not continuous live video.
 - Pause/resume controls were not exercised in this cycle.
 - Runtime effect switching remains future work.
+
+## 2026-07-01 - dashboard-truthful-loop-validation
+
+Commit: this commit (`cycle: validate truthful dashboard loop`)
+
+Objective:
+
+Correct the dashboard closed-loop demo so the visible input, dashboard control
+state, and HDMI evidence describe the real data path instead of a decorative
+input preview plus one stale HDMI snapshot.
+
+Changed scope:
+
+- Replaced the dashboard SVG input preview with a BMP endpoint generated from
+  the exact `demo_source.py` frame function used by the UDP sender.
+- Changed HDMI capture actions to schedule a background capture thread so
+  `start-stream` returns after sender launch and capture scheduling.
+- Added sample saving and dynamic sample-hash validation to the board-live
+  helper.
+- Added UART Ctrl-C recovery before deployment so a stale foreground `wget`
+  does not make later UART commands appear to run while the shell is blocked.
+- Updated report, roadmap, README, dashboard README, current-cycle, and
+  pipeline skill.
+
+Verification:
+
+- Ran Python compile check for dashboard, demo source, sender, and HDMI capture.
+- Ran:
+  `rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-truthful-loop-validation-selftest"`
+- Results:
+  `DASHBOARD_SCAFFOLD_SELF_TEST_OK`,
+  `DASHBOARD_CONTROL_INTEGRATION_SELF_TEST_OK`,
+  `DASHBOARD_MINIMAL_UI_SELF_TEST_OK`, and
+  `DASHBOARD_LIVE_SENDER_CONTROL_SELF_TEST_OK`.
+- Ran:
+  `rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_dashboard_board_live_loop.ps1 -OutDir build\dashboard-truthful-loop-validation -CaptureDevice 1 -CaptureBackend dshow -CaptureFrames 90 -CaptureSaveSamples 6 -Frames 12 -Fps 2 -InterPacketUs 200`
+- Marker:
+  `DASHBOARD_BOARD_LIVE_LOOP_OK frames=12 written=12 dynamic_samples_unique=5`.
+- Receiver wrote 12 frames, 14400 UDP packets, dropped=0.
+- HDMI capture selected DirectShow index 1, read 90 frames, passed non-black
+  validation with mean_luma=137.36, and saved six samples with five unique
+  hashes.
+
+Board action:
+
+- Ran a Linux userspace receiver from `/tmp`, sent generated UDP frames from
+  the PC through Dashboard, and captured HDMI. No Vivado rebuild, PetaLinux
+  rebuild, JTAG programming, TF-card write, or board flash write.
+
+Evidence:
+
+- `docs/reports/dashboard-truthful-loop-validation.md`
+- `build/dashboard-truthful-loop-validation/dashboard_board_live_loop.marker.txt`
+- `build/dashboard-truthful-loop-validation/dashboard_start_stream.json`
+- `build/dashboard-truthful-loop-validation/dashboard_capture_done_state.json`
+- `build/dashboard-truthful-loop-validation/uart_after_dashboard_stream.log`
+- `build/dashboard-truthful-loop-validation/hdmi_dynamic_sample_hashes.json`
+- `build/dashboard-truthful-loop-validation/hdmi-capture/latest-validation.json`
+- `build/dashboard-truthful-loop-validation/hdmi-capture/latest-sample-00.png`
+- `build/dashboard-truthful-loop-validation/hdmi-capture/latest-sample-05.png`
+
+Result:
+
+- PASSED. The dashboard closed-loop demo now has an honest input preview, a
+  non-blocking action path, and dynamic HDMI evidence from the connected board.
+
+Residual risks:
+
+- The browser output panel is still a periodically refreshed HDMI snapshot, not
+  a continuous video widget.
+- Windows reports the HDMI/UVC adapter as camera access; this is output capture
+  only and does not enable webcam/video input.
+- Pause/resume/effect live choreography remains a later demo cycle.

@@ -410,35 +410,39 @@ frames by default. Retest returned `HDMI_CAPTURE_OK`, `capture_status=ok`, and
 `image_exists=true`; the captured frame was still near black, so the remaining
 problem was board output readiness.
 
-Verified dashboard board-live loop path (preferred for displayable demo
-closure, 2026-07-01):
+Verified truthful dashboard board-live loop path (preferred for displayable
+demo closure, 2026-07-01):
 
 ```text
 1. Run the helper:
-   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_dashboard_board_live_loop.ps1 -OutDir build\dashboard-board-live-loop -CaptureDevice auto -CaptureFrames 8 -Frames 5 -Fps 1 -InterPacketUs 200
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_dashboard_board_live_loop.ps1 -OutDir build\dashboard-truthful-loop-validation -CaptureDevice 1 -CaptureFrames 90 -CaptureSaveSamples 6 -Frames 12 -Fps 2 -InterPacketUs 200
 2. Require:
-   build/dashboard-board-live-loop/dashboard_board_live_loop.marker.txt
-   contains DASHBOARD_BOARD_LIVE_LOOP_OK
+   build/dashboard-truthful-loop-validation/dashboard_board_live_loop.marker.txt
+   contains DASHBOARD_BOARD_LIVE_LOOP_OK frames=12 written=12
+   dynamic_samples_unique=5
 3. Require receiver evidence:
    CONTROL_FIFO_READY path=/tmp/video_ctl
    VIDEO_UDP_LINUX_RECEIVER_READY
-   five VIDEO_UDP_FRAME_WRITTEN markers
-   VIDEO_UDP_RECEIVER_DONE frames=5 skipped=0 packets=6000 dropped=0
+   twelve VIDEO_UDP_FRAME_WRITTEN markers
+   VIDEO_UDP_RECEIVER_DONE frames=12 skipped=0 packets=14400 dropped=0
 4. Require Dashboard evidence:
-   ACTION_OK action=start-stream ... HDMI_CAPTURE_OK
+   ACTION_OK action=start-stream ... HDMI_CAPTURE_SCHEDULED
+   input_source.preview_matches_sender_source=true
    capture_status=ok
    image_exists=true
 5. Require HDMI evidence:
    validation_profile=non-black
    status=pass
    mean_luma greater than 8
+   saved HDMI sample hashes contain at least two unique values
 ```
 
 Verified outcome:
-The connected board displayed the generated PC demo stream through HDMI, and
-Dashboard captured a non-black generated image. This is the current preferred
-displayable closed-loop demo path. It runs the receiver from `/tmp` and does
-not write board flash.
+The connected board displayed the generated PC demo stream through HDMI,
+Dashboard served the exact generated UDP source as its input preview, and HDMI
+samples captured during the stream showed visible PIP/checker motion. This is
+the current preferred displayable closed-loop demo path. It runs the receiver
+from `/tmp` and does not write board flash.
 
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.
