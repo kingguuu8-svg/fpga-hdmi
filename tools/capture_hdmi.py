@@ -182,6 +182,19 @@ def validate_inverted_rgb_stripes(frame: np.ndarray) -> tuple[bool, list[dict]]:
     return all(item["pass"] for item in results), results
 
 
+def validate_any_frame(frame: np.ndarray) -> tuple[bool, list[dict]]:
+    mean_luma = float(frame.mean()) if frame.size else 0.0
+    return frame.size > 0, [
+        {
+            "name": "frame_available",
+            "expected": "captured_frame_has_pixels",
+            "shape": list(frame.shape),
+            "mean_luma": round(mean_luma, 2),
+            "pass": bool(frame.size > 0),
+        }
+    ]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", default="auto", help="'auto' or a numeric OpenCV device index")
@@ -191,7 +204,7 @@ def main() -> int:
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--frames", type=int, default=45)
     parser.add_argument("--save-samples", type=int, default=0, help="save N evenly spaced captured frames")
-    parser.add_argument("--validation-profile", default="pip", choices=["pip", "rgb-stripes", "inverted-rgb-stripes"])
+    parser.add_argument("--validation-profile", default="pip", choices=["none", "pip", "rgb-stripes", "inverted-rgb-stripes"])
     parser.add_argument("--out-dir", default="build/reports/hdmi-capture")
     args = parser.parse_args()
 
@@ -202,7 +215,9 @@ def main() -> int:
     backends = BACKENDS if args.backend == "all" else [(args.backend, BACKEND_BY_NAME[args.backend])]
     attempts = []
     best = None
-    if args.validation_profile == "pip":
+    if args.validation_profile == "none":
+        validator = validate_any_frame
+    elif args.validation_profile == "pip":
         validator = validate_pip_frame
     elif args.validation_profile == "rgb-stripes":
         validator = validate_rgb_stripes

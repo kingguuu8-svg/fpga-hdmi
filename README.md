@@ -72,7 +72,8 @@ Status: stage-1 UDP framebuffer HDMI pass-through passed
 Control: UART fallback FIFO pause/resume/status passed
 Effect: first board-side RGB invert effect passed with generated PC input
 Dashboard: PC visual scaffold and fixed generated demo sender passed; custom
-  input files deferred after MVP; minimal live sender control passed
+  input files deferred after MVP; minimal live sender control and HDMI capture
+  binding passed
 ```
 
 ## PC Dashboard
@@ -87,6 +88,12 @@ Run the dashboard control-integration self-test:
 
 ```powershell
 rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-live-minimal-controls"
+```
+
+Run the dashboard HDMI-capture binding self-test:
+
+```powershell
+rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-hdmi-capture-binding"
 ```
 
 Run the fixed demo-video sender self-test:
@@ -118,6 +125,7 @@ Dashboard action endpoints:
 ```text
 GET  /api/actions
 POST /api/action {"action":"start-stream"}
+POST /api/action {"action":"capture-output"}
 POST /api/action {"action":"pause-receiver"}
 POST /api/action {"action":"resume-receiver"}
 POST /api/action {"action":"receiver-status"}
@@ -127,7 +135,9 @@ POST /api/action {"action":"stop-stream"}
 ```
 
 `start-stream` and `stop-stream` now control a real local
-`tools/send_demo_video_udp.py` process. UART/FIFO controls use
+`tools/send_demo_video_udp.py` process. `start-stream` also triggers one HDMI
+preview capture through `tools/capture_hdmi.py`, and `capture-output` can
+refresh the output panel manually. UART/FIFO controls use
 `tools/uart_run_commands.ps1` when `--uart-port` is configured and the board
 receiver has created `/tmp/video_ctl`; otherwise they return an explicit error.
 

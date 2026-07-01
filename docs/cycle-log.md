@@ -1094,3 +1094,57 @@ Residual risks:
 - The dashboard does not deploy or start the board receiver process.
 - UART/FIFO buttons require board shell and `/tmp/video_ctl` readiness.
 - Runtime effect switching remains future work.
+
+## 2026-07-01 - dashboard-hdmi-capture-binding
+
+Commit: this commit (`cycle: bind dashboard HDMI capture`)
+
+Objective:
+
+Make the dashboard output panel capture HDMI after `start-stream`.
+
+Changed scope:
+
+- Added `none` validation profile to `tools/capture_hdmi.py`.
+- Added dashboard capture configuration and the `capture-output` action.
+- Changed `start-stream` to launch the sender and then attempt one HDMI capture.
+- Changed the output preview to refresh during dashboard polling.
+- Updated README, dashboard README, roadmap, current-cycle, and pipeline skill.
+
+Verification:
+
+- Ran Python compile check for the dashboard, capture tool, and sender.
+- Ran:
+  `rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-hdmi-capture-binding"`
+- Results:
+  `DASHBOARD_SCAFFOLD_SELF_TEST_OK`,
+  `DASHBOARD_CONTROL_INTEGRATION_SELF_TEST_OK`,
+  `DASHBOARD_MINIMAL_UI_SELF_TEST_OK`, and
+  `DASHBOARD_LIVE_SENDER_CONTROL_SELF_TEST_OK`.
+- Ran live HDMI preview capture with `--validation-profile none`; result:
+  `HDMI_CAPTURE_OK device_index=0 backend=dshow`.
+
+Board action:
+
+- PC-side HDMI capture only. No Vivado rebuild, PetaLinux rebuild, JTAG
+  programming, or board flash write.
+
+Evidence:
+
+- `docs/reports/dashboard-hdmi-capture-binding.md`
+- `build/dashboard-hdmi-capture-binding/final-state.json`
+- `build/dashboard-hdmi-capture-binding/hdmi-capture/latest-validation.json`
+- `build/dashboard-hdmi-capture-binding/hdmi-capture/latest.png`
+
+Result:
+
+- PASSED for dashboard/capture binding. The dashboard now calls HDMI capture
+  from `start-stream` and `capture-output`.
+
+Residual risks:
+
+- The live capture image was near black (`mean_luma=0.05`). Capture invocation
+  is wired, but meaningful board output still depends on the receiver/display
+  path being active.
+- `start-stream` does not deploy or start the board receiver.
+- The output preview is action-triggered capture, not continuous live video.

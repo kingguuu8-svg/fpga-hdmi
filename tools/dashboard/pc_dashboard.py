@@ -36,6 +36,12 @@ DEFAULT_SENDER_INTER_PACKET_US = 200.0
 DEFAULT_UART_PORT = "COM16"
 DEFAULT_UART_BAUD = 115200
 DEFAULT_CONTROL_FIFO = "/tmp/video_ctl"
+DEFAULT_CAPTURE_DEVICE = "auto"
+DEFAULT_CAPTURE_BACKEND = "dshow"
+DEFAULT_CAPTURE_WIDTH = 800
+DEFAULT_CAPTURE_HEIGHT = 600
+DEFAULT_CAPTURE_FRAMES = 20
+DEFAULT_CAPTURE_PROFILE = "none"
 NO_CAMERA_POLICY = "Generated PC input only. Camera/webcam and custom file input are disabled for MVP."
 
 
@@ -51,6 +57,12 @@ ACTION_DEFINITIONS = [
         "label": "Stop stream",
         "kind": "sender-process",
         "semantics": "stop dashboard-owned fixed demo UDP sender",
+    },
+    {
+        "id": "capture-output",
+        "label": "Capture output",
+        "kind": "hdmi-capture",
+        "semantics": "capture latest FPGA HDMI output image",
     },
     {
         "id": "pause-receiver",
@@ -205,6 +217,7 @@ role: output verification only</div>
       <div class="controls">
         <button{disabled_attr} data-action="start-stream" onclick="postAction('start-stream')">start stream</button>
         <button{disabled_attr} data-action="stop-stream" onclick="postAction('stop-stream')">stop stream</button>
+        <button{disabled_attr} data-action="capture-output" onclick="postAction('capture-output')">capture output</button>
         <button{disabled_attr} data-action="pause-receiver" onclick="postAction('pause-receiver')">pause receiver</button>
         <button{disabled_attr} data-action="resume-receiver" onclick="postAction('resume-receiver')">resume receiver</button>
         <button{disabled_attr} data-action="receiver-status" onclick="postAction('receiver-status')">receiver status</button>
@@ -223,12 +236,14 @@ role: output verification only</div>
         "mode=" + state.control_panel.action_mode +
         " stream=" + state.control_panel.stream_state +
         " sender_pid=" + (state.control_panel.sender_pid || "none") +
+        " hdmi=" + state.output_preview.capture_status +
         " uart=" + state.control_panel.uart_status +
         " effect=" + state.control_panel.selected_effect;
     }}
     async function refreshState() {{
       frame = (frame + 1) % 100000;
       document.getElementById("input-preview").src = "/api/input-preview.svg?frame=" + frame;
+      document.getElementById("output-preview").src = "/api/output-preview?t=" + Date.now();
       const state = await fetch("/api/state").then(r => r.json());
       applyState(state);
     }}
@@ -272,13 +287,19 @@ class DashboardState:
         uart_port: str = DEFAULT_UART_PORT,
         uart_baud: int = DEFAULT_UART_BAUD,
         control_fifo: str = DEFAULT_CONTROL_FIFO,
+        capture_enabled: bool = True,
+        capture_device: str = DEFAULT_CAPTURE_DEVICE,
+        capture_backend: str = DEFAULT_CAPTURE_BACKEND,
+        capture_width: int = DEFAULT_CAPTURE_WIDTH,
+        capture_height: int = DEFAULT_CAPTURE_HEIGHT,
+        capture_frames: int = DEFAULT_CAPTURE_FRAMES,
+        capture_profile: str = DEFAULT_CAPTURE_PROFILE,
         actions_enabled: bool = True,
         action_mode: str = "live",
         log_dir: Path | None = None,
     ) -> None:
         self.started_at = time.time()
         self.repo_root = repo_root or Path(__file__).resolve().parents[2]
-        self.output_image = output_image
         self.board_host = board_host
         self.udp_port = udp_port
         self.sender_frames = sender_frames
@@ -290,12 +311,23 @@ class DashboardState:
         self.uart_port = uart_port
         self.uart_baud = uart_baud
         self.control_fifo = control_fifo
+        self.capture_enabled = capture_enabled
+        self.capture_device = capture_device
+        self.capture_backend = capture_backend
+        self.capture_width = capture_width
+        self.capture_height = capture_height
+        self.capture_frames = capture_frames
+        self.capture_profile = capture_profile
         self.actions_enabled = actions_enabled
         self.action_mode = action_mode
         self.log_dir = log_dir or self.repo_root / "build" / "dashboard-live"
+        self.output_image = output_image or (self.log_dir / "hdmi-capture" / "latest.png")
         self.lock = threading.Lock()
         self.sender_process: subprocess.Popen[bytes] | None = None
         self.sender_last_exit_code: int | None = None
+        self.capture_status = "idle" if capture_enabled else "disabled"
+        self.capture_last_report: Path | None = None
+        self.capture_last_log: Path | None = None
         self.receiver_paused = False
         self.selected_effect = "none"
         self.last_action: dict[str, Any] | None = None
@@ -304,6 +336,7 @@ class DashboardState:
             "ui: minimal",
             f"sender target: {board_host}:{udp_port}",
             f"sender frames: {'continuous' if sender_frames == 0 else sender_frames}",
+            f"hdmi capture: {'enabled' if capture_enabled else 'disabled'}",
             f"uart: {uart_port or 'not configured'}",
             "camera/webcam input: disabled",
             "custom file input: deferred",
@@ -355,10 +388,72 @@ class DashboardState:
             f"{self.sender_inter_packet_us:g}",
         ]
 
+    def _capture_command_locked(self) -> tuple[list[str], Path, Path, Path]:
+        capture_dir = self.log_dir / "hdmi-capture"
+        capture_dir.mkdir(parents=True, exist_ok=True)
+        report_path = capture_dir / "latest-validation.json"
+        stdout_path = capture_dir / "capture.out.log"
+        stderr_path = capture_dir / "capture.err.log"
+        cmd = [
+            sys.executable,
+            str(self.repo_root / "tools" / "capture_hdmi.py"),
+            "--device",
+            self.capture_device,
+            "--backend",
+            self.capture_backend,
+            "--width",
+            str(self.capture_width),
+            "--height",
+            str(self.capture_height),
+            "--frames",
+            str(self.capture_frames),
+            "--validation-profile",
+            self.capture_profile,
+            "--out-dir",
+            str(capture_dir),
+        ]
+        return cmd, report_path, stdout_path, stderr_path
+
+    def _capture_output_locked(self) -> tuple[bool, str]:
+        if not self.capture_enabled:
+            self.capture_status = "disabled"
+            return False, "HDMI_CAPTURE_DISABLED"
+
+        cmd, report_path, stdout_path, stderr_path = self._capture_command_locked()
+        timeout_s = max(12.0, 6.0 + self.capture_frames / 5.0)
+        self.capture_status = "running"
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=str(self.repo_root),
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            self.capture_status = "timeout"
+            self.capture_last_report = report_path
+            return False, f"HDMI_CAPTURE_TIMEOUT report={report_path}"
+
+        stdout_path.write_text(result.stdout, encoding="utf-8")
+        stderr_path.write_text(result.stderr, encoding="utf-8")
+        self.capture_last_report = report_path
+        self.capture_last_log = stdout_path
+        if result.returncode == 0 and self.output_image.exists():
+            self.capture_status = "ok"
+            return True, f"HDMI_CAPTURE_OK image={self.output_image} report={report_path}"
+
+        self.capture_status = "failed"
+        detail = (result.stderr or result.stdout).strip().replace("\r", " ").replace("\n", " ")
+        return False, f"HDMI_CAPTURE_FAILED report={report_path} detail={detail[:300]}"
+
     def _start_sender_locked(self) -> tuple[bool, str]:
         if self._sender_alive_locked():
             pid = self.sender_process.pid if self.sender_process else "unknown"
-            return True, f"sender already running pid={pid}"
+            capture_ok, capture_detail = self._capture_output_locked()
+            suffix = capture_detail if capture_ok else f"capture warning: {capture_detail}"
+            return True, f"sender already running pid={pid}; {suffix}"
 
         stdout_path, stderr_path = self._sender_log_paths()
         cmd = self._sender_command_locked()
@@ -370,7 +465,10 @@ class DashboardState:
                 stderr=stderr_file,
             )
         self.sender_last_exit_code = None
-        return True, f"sender started pid={self.sender_process.pid} log={stdout_path}"
+        time.sleep(0.5)
+        capture_ok, capture_detail = self._capture_output_locked()
+        suffix = capture_detail if capture_ok else f"capture warning: {capture_detail}"
+        return True, f"sender started pid={self.sender_process.pid} log={stdout_path}; {suffix}"
 
     def _stop_sender_locked(self) -> tuple[bool, str]:
         if not self._sender_alive_locked():
@@ -464,6 +562,8 @@ class DashboardState:
                 ok, detail = self._start_sender_locked()
             elif action == "stop-stream":
                 ok, detail = self._stop_sender_locked()
+            elif action == "capture-output":
+                ok, detail = self._capture_output_locked()
             elif action in {"pause-receiver", "resume-receiver", "receiver-status"}:
                 ok, detail = self._run_uart_action_locked(action)
                 if ok and action == "pause-receiver":
@@ -537,6 +637,12 @@ class DashboardState:
             "output_preview": {
                 "kind": "hdmi-capture-slot",
                 "configured_image": str(self.output_image) if self.output_image else None,
+                "image_exists": bool(self.output_image and self.output_image.exists()),
+                "capture_enabled": self.capture_enabled,
+                "capture_status": self.capture_status,
+                "capture_profile": self.capture_profile,
+                "capture_report": str(self.capture_last_report) if self.capture_last_report else None,
+                "capture_log": str(self.capture_last_log) if self.capture_last_log else None,
             },
             "control_panel": {
                 "actions_enabled": self.actions_enabled,
@@ -648,6 +754,13 @@ def run_server(
     uart_port: str,
     uart_baud: int,
     control_fifo: str,
+    capture_enabled: bool,
+    capture_device: str,
+    capture_backend: str,
+    capture_width: int,
+    capture_height: int,
+    capture_frames: int,
+    capture_profile: str,
     actions_enabled: bool,
     action_mode: str,
     log_dir: Path,
@@ -665,6 +778,13 @@ def run_server(
         uart_port=uart_port,
         uart_baud=uart_baud,
         control_fifo=control_fifo,
+        capture_enabled=capture_enabled,
+        capture_device=capture_device,
+        capture_backend=capture_backend,
+        capture_width=capture_width,
+        capture_height=capture_height,
+        capture_frames=capture_frames,
+        capture_profile=capture_profile,
         actions_enabled=actions_enabled,
         action_mode=action_mode,
         log_dir=log_dir,
@@ -710,8 +830,9 @@ def run_self_test(out_dir: Path) -> int:
         sender_payload=480,
         sender_inter_packet_us=0.0,
         uart_port="",
+        capture_enabled=False,
         action_mode="live",
-        log_dir=out_dir,
+        log_dir=out_dir / "runtime",
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(state))
     url = f"http://127.0.0.1:{server.server_port}"
@@ -737,6 +858,8 @@ def run_self_test(out_dir: Path) -> int:
 
         stop_status, stop_result = post_json(url + "/api/action", {"action": "stop-stream"})
         action_results.append(stop_result)
+        capture_status, capture_result = post_json(url + "/api/action", {"action": "capture-output"})
+        action_results.append(capture_result)
         uart_status, uart_result = post_json(url + "/api/action", {"action": "pause-receiver"})
         action_results.append(uart_result)
         effect_status, effect_result = post_json(url + "/api/action", {"action": "effect-invert"})
@@ -759,6 +882,7 @@ def run_self_test(out_dir: Path) -> int:
 
         assert start_status == 200
         assert stop_status == 200
+        assert capture_status == 400
         assert uart_status == 400
         assert effect_status == 200
         assert "gradient" not in page
@@ -774,11 +898,14 @@ def run_self_test(out_dir: Path) -> int:
         assert data["control_panel"]["actions_enabled"] is True
         assert data["control_panel"]["action_mode"] == "live"
         assert "start-stream" in action_ids
+        assert "capture-output" in action_ids
         assert "pause-receiver" in action_ids
         assert "resume-receiver" in action_ids
         assert "effect-invert" in action_ids
         assert start_result["ok"] is True
         assert stop_result["ok"] is True
+        assert capture_result["ok"] is False
+        assert capture_result["error"] == "HDMI_CAPTURE_DISABLED"
         assert uart_result["ok"] is False
         assert uart_result["error"] == "UART_NOT_CONFIGURED"
         assert effect_result["ok"] is True
@@ -822,6 +949,13 @@ def main() -> int:
     parser.add_argument("--uart-disabled", action="store_true")
     parser.add_argument("--uart-baud", type=int, default=DEFAULT_UART_BAUD)
     parser.add_argument("--control-fifo", default=DEFAULT_CONTROL_FIFO)
+    parser.add_argument("--capture-disabled", action="store_true")
+    parser.add_argument("--capture-device", default=DEFAULT_CAPTURE_DEVICE)
+    parser.add_argument("--capture-backend", default=DEFAULT_CAPTURE_BACKEND)
+    parser.add_argument("--capture-width", type=int, default=DEFAULT_CAPTURE_WIDTH)
+    parser.add_argument("--capture-height", type=int, default=DEFAULT_CAPTURE_HEIGHT)
+    parser.add_argument("--capture-frames", type=int, default=DEFAULT_CAPTURE_FRAMES)
+    parser.add_argument("--capture-profile", default=DEFAULT_CAPTURE_PROFILE, choices=["none", "pip", "rgb-stripes", "inverted-rgb-stripes"])
     parser.add_argument("--action-mode", choices=["live", "dry-run"], default="live")
     parser.add_argument("--actions-disabled", action="store_true")
     parser.add_argument("--output-image", default="")
@@ -848,6 +982,13 @@ def main() -> int:
         uart_port="" if args.uart_disabled else args.uart_port,
         uart_baud=args.uart_baud,
         control_fifo=args.control_fifo,
+        capture_enabled=not args.capture_disabled,
+        capture_device=args.capture_device,
+        capture_backend=args.capture_backend,
+        capture_width=args.capture_width,
+        capture_height=args.capture_height,
+        capture_frames=args.capture_frames,
+        capture_profile=args.capture_profile,
         actions_enabled=not args.actions_disabled,
         action_mode=args.action_mode,
         log_dir=Path(args.log_dir),

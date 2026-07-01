@@ -378,5 +378,29 @@ buttons are wired to the existing helper but still require a running board
 receiver and `/tmp/video_ctl`; deploying/starting that receiver remains the
 next board-live cycle.
 
+Verified dashboard HDMI-capture binding path (preferred for checking output
+preview wiring, 2026-07-01):
+
+```text
+1. Run the deterministic dashboard self-test:
+   rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-hdmi-capture-binding"
+2. Require:
+   DASHBOARD_SCAFFOLD_SELF_TEST_OK
+   DASHBOARD_CONTROL_INTEGRATION_SELF_TEST_OK
+   DASHBOARD_MINIMAL_UI_SELF_TEST_OK
+   DASHBOARD_LIVE_SENDER_CONTROL_SELF_TEST_OK
+3. Run a preview capture:
+   rtk powershell.exe -NoProfile -Command "python .\tools\capture_hdmi.py --device auto --backend dshow --width 800 --height 600 --frames 20 --validation-profile none --out-dir build\dashboard-hdmi-capture-binding\hdmi-capture"
+4. Require:
+   HDMI_CAPTURE_OK
+```
+
+Verified outcome:
+The dashboard can call HDMI capture from `start-stream` and `capture-output`,
+and the output panel refreshes the latest capture image. The 2026-07-01 live
+preview capture opened DirectShow device index 0 and wrote `latest.png`, but
+the captured frame was near black. Treat that as a board receiver/output
+readiness issue, not a dashboard capture wiring issue.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

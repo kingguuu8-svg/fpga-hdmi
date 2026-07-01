@@ -127,6 +127,11 @@ Phase C:
   plain functional view, and start/stop controls a real local demo sender
   subprocess. UART/FIFO controls are bound to the existing UART helper but need
   a ready board receiver FIFO to succeed.
+  Dashboard HDMI-capture binding gate: PASSED. The dashboard can call the
+  existing HDMI capture tool from start-stream or capture-output and refresh
+  the output panel. The latest preview capture opened the adapter but saw a
+  near-black frame, so board receiver/display readiness remains the next live
+  issue.
   Later: carry the same command semantics over TCP/UDP.
 
 Phase D:

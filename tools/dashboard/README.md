@@ -11,11 +11,13 @@ Input To FPGA:
   custom file input deferred after MVP
 
 FPGA Output:
-  latest HDMI capture image slot or placeholder
+  latest HDMI capture image or placeholder
   output verification only, not an input source
 
 Function Control Panel:
   start/stop controls a dashboard-owned demo sender subprocess
+  start-stream triggers one HDMI capture attempt
+  capture-output refreshes the HDMI preview manually
   UART/FIFO pause/resume/status uses the existing UART helper when configured
   effect selection records receiver launch semantics
 ```
@@ -30,6 +32,12 @@ Run the minimal live-control self-test:
 
 ```powershell
 rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-live-minimal-controls"
+```
+
+Run the HDMI-capture binding self-test:
+
+```powershell
+rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-hdmi-capture-binding"
 ```
 
 Run the fixed demo-video sender self-test:
@@ -50,6 +58,7 @@ Dashboard action API:
 GET  /api/actions
 POST /api/action {"action":"start-stream"}
 POST /api/action {"action":"stop-stream"}
+POST /api/action {"action":"capture-output"}
 POST /api/action {"action":"pause-receiver"}
 POST /api/action {"action":"resume-receiver"}
 POST /api/action {"action":"receiver-status"}
@@ -62,6 +71,9 @@ Current behavior:
 ```text
 start-stream / stop-stream:
   live local sender subprocess control
+
+capture-output:
+  HDMI preview capture through tools/capture_hdmi.py
 
 pause-receiver / resume-receiver / receiver-status:
   UART command helper, requiring --uart-port and a ready board receiver FIFO

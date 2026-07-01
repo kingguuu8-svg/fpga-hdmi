@@ -46,6 +46,17 @@ placeholder.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: dashboard-hdmi-capture-binding
+Result: PASSED. Added HDMI preview capture binding to the dashboard. The
+  capture tool now supports validation-profile none for preview captures.
+  `start-stream` launches the sender and then attempts HDMI capture;
+  `capture-output` refreshes HDMI manually. Live capture opened DirectShow
+  device index 0 and wrote latest.png, but the frame was near black
+  (mean_luma=0.05), so meaningful board output still depends on receiver
+  readiness.
+Evidence: docs/reports/dashboard-hdmi-capture-binding.md
+Board action: PC-side HDMI capture only. No Vivado/PetaLinux/JTAG/flash action.
+
 Cycle ID: dashboard-live-minimal-controls
 Result: PASSED. The dashboard UI is now a plain functional view with no
   decorative background, gradients, shadows, or card styling. Start stream
@@ -243,6 +254,9 @@ actions without camera or custom-file input.
 PC dashboard is now minimal and `start-stream`/`stop-stream` control a real
 local demo sender subprocess. UART/FIFO controls are wired to the UART helper
 but require a ready board receiver FIFO.
+PC dashboard `start-stream` and `capture-output` call HDMI preview capture and
+refresh the output panel. Current live preview capture opened the adapter but
+returned a near-black frame, so board receiver readiness remains separate.
 ```
 
 Retired dead end:
@@ -256,6 +270,6 @@ layer. Do not resume this work.
 
 ## Next Cycle Direction
 
-No active implementation cycle is open. A natural next cycle is board-live
-receiver orchestration: deploy/start the board receiver, ensure `/tmp/video_ctl`
-exists, then verify dashboard UART/FIFO buttons against the connected board.
+No active implementation cycle is open. The next live-board cycle should
+deploy/start the board receiver, ensure `/tmp/video_ctl` exists, send the demo
+stream from the dashboard, and verify the HDMI preview shows non-black output.
