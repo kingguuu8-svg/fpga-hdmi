@@ -1,6 +1,6 @@
 # Current Cycle
 
-Status: no active implementation cycle is open.
+Status: implementation cycle active.
 
 ## Rule
 
@@ -66,6 +66,54 @@ agent or the human can read the reviewer's view alongside the cycle's own PASSED
 claim, and decide whether the residual concerns deserve a follow-up cycle.
 If no review was performed, omit the section entirely; do not write a
 placeholder.
+
+## Active Cycle
+
+```text
+Cycle ID: dashboard-truthful-sent-received-timelines
+Objective: Show two truthful independent timelines: the left panel is always
+  the latest frame actually completed by the sender, and the right panel is the
+  actual HDMI-returned frame. Preserve and expose natural latency; never choose
+  the left frame from the right frame ID.
+Scope: Remove paired-preview selection, expose sent/HDMI frame IDs and lag,
+  operate sender, receiver presentation, and MJPEG delivery at a sustainable
+  measured 10 fps, keep content changes at 5-second dwell, and validate the
+  connected-board path. No Vivado, PetaLinux, device-tree, or bitstream change.
+Verification plan: Run compile/self-tests, deploy the receiver to /tmp with
+  present_fps=10, start the sender only through Dashboard, sample twenty left
+  preview responses while the right stream runs, verify source semantics and
+  non-negative natural lag without requiring equality, then run the committed
+  unified trace validator on saved HDMI images.
+Board action: Linux receiver from /tmp, PC UDP RGB888, HDMI/UVC capture, and UART
+  Linux shell control. No persistent board write.
+Evidence target: docs/reports/dashboard-truthful-sent-received-timelines.md and
+  build/dashboard-truthful-sent-received-timelines/.
+pass_condition: preview_source == latest-actual-sent-frame and
+  configured_sender_fps == 10 and 9.5 <= sender_measured_fps <= 10.5 and
+  receiver_present_fps == 10 and hdmi_delivery_fps == 10 and
+  content_dwell_seconds == 5 and timeline_samples >= 20 and
+  negative_lag_samples == 0 and positive_lag_samples >= 1 and
+  distinct_sent_ids >= 3 and distinct_hdmi_ids >= 3 and max_lag_frames <= 30
+  and sent_frames == 90 and receiver_written_frames == 90 and
+  receiver_dropped_packets == 0 and validator_status == pass and
+  trace_matched_frames >= 86 and trace_drop_rate <= 0.05 and
+  trace_order_violations == 0 and trace_content_mismatches == 0 and
+  trace_black_frames == 0 and trace_image_path_failures == 0 and
+  trace_max_latency_ms <= 1000.
+validator: already-committed tools/validate_passthrough_trace.py on the decoded
+  Dashboard-started hardware trace, plus the direct PowerShell checks committed
+  in this Active Cycle: twenty `Invoke-WebRequest /api/input-preview.bmp`
+  responses must report X-Preview-Source=latest-actual-sent-frame; record
+  X-Frame-ID as sent_id and X-HDMI-Frame-ID as received_id, require sent_id >=
+  received_id, require at least one positive difference, and never require ID
+  equality.
+Highest-risk assumption this cycle falsifies: A truthful latest-sent left panel
+  and independently returned right panel remain understandable and stable when
+  their real delay is exposed rather than cosmetically aligned.
+Cheapest alternative way to falsify the same assumption: A PC-only fake return
+  can test labels and headers but cannot establish real Ethernet/framebuffer/
+  HDMI delay or loss, so the connected-board run is required.
+```
 
 ## Recently Closed Cycle
 
