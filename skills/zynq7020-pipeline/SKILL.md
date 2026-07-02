@@ -593,5 +593,58 @@ bursts that the HDMI/UVC return path can miss. The trace latency threshold is
 for the HDMI-UVC/MJPEG evidence path; the passing run measured max
 return-path latency of 257.561 ms.
 
+Verified Linux direct-copy network-to-HDMI path (preferred when checking the
+Linux userspace transfer chain after the 2026-07-02 review):
+
+```text
+1. Run the integrated hardware probe:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_linux_net_to_hdmi_direct_copy_probe.ps1
+2. Require receiver/build markers:
+   VIDEO_UDP_RECEIVER_TEST_OK
+   VIDEO_FB_COPY_TEST_OK
+   VIDEO_CONTROL_TEST_OK
+   VIDEO_EFFECT_TEST_OK
+   LINUX_RECEIVER_BUILD_OK
+   FB_COPY_MODE mode=direct-memcpy
+   VIDEO_UDP_LINUX_RECEIVER_READY ... fb_copy_mode=direct-memcpy
+3. Require sender evidence:
+   sender_wire_format=fb24-native
+   sent_frames=30
+4. Require receiver evidence:
+   thirty validation VIDEO_UDP_FRAME_WRITTEN ids 100..129
+   receiver_written_frames=30
+   receiver_dropped_packets=0
+5. Require trace/image markers:
+   UNIFIED_TRACE_FROM_MJPEG_OK
+   UNIFIED_PASSTHROUGH_TRACE_OK
+   LINUX_NET_TO_HDMI_DIRECT_COPY_OK
+6. Require final measured fields:
+   receiver_fb_copy_mode=direct-memcpy
+   sender_wire_format=fb24-native
+   sender_fps=15
+   sent_frames=30
+   receiver_written_frames=30
+   receiver_dropped_packets=0
+   receiver_effect=none
+   trace_require_image_paths=1
+   trace_image_path_failures=0
+   validator_status=pass
+   trace_sent_frames=30
+   trace_matched_frames>=29
+   trace_drop_rate<=0.05
+   trace_order_violations=0
+   trace_content_mismatches=0
+   trace_black_frames=0
+```
+
+Verified outcome:
+The Linux userspace receiver no longer needs a long per-pixel RGB-to-
+framebuffer reorder loop for this path. The PC sends framebuffer-native 24bpp
+payloads, the receiver writes complete frames to `/dev/fb0` with direct row
+memcpy, and HDMI saved-image validation matched 30/30 marker-backed frames
+with dropped=0 and max return-path latency 62.382 ms. This is the preferred
+Tier 1 response to the 2026-07-02 review's tearing concern. It does not yet
+replace fbdev with DRM/KMS page-flip or GStreamer.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

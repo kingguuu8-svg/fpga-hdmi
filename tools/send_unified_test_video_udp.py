@@ -112,6 +112,25 @@ def make_color_frame(width: int, height: int, rgb: tuple[int, int, int], frame_i
     return bytes(frame)
 
 
+def rgb888_to_fb24_native(frame: bytes) -> bytes:
+    """Convert RGB888 pixels to this board's 24bpp framebuffer byte order."""
+    if len(frame) % 3 != 0:
+        raise ValueError("RGB888 frame length is not divisible by 3")
+    converted = bytearray(len(frame))
+    for offset in range(0, len(frame), 3):
+        red, green, blue = frame[offset : offset + 3]
+        converted[offset : offset + 3] = bytes((blue, green, red))
+    return bytes(converted)
+
+
+def wire_frame_for_format(frame: bytes, wire_format: str) -> bytes:
+    if wire_format == "rgb888":
+        return frame
+    if wire_format == "fb24-native":
+        return rgb888_to_fb24_native(frame)
+    raise ValueError(f"unsupported wire format: {wire_format}")
+
+
 def frame_sha256(frame: bytes) -> str:
     return hashlib.sha256(frame).hexdigest()
 
@@ -195,12 +214,13 @@ def run_sender(args: argparse.Namespace) -> int:
                 args.start_frame_id,
             )
             frame = make_color_frame(args.width, args.height, rgb, frame_id)
+            wire_frame = wire_frame_for_format(frame, args.wire_format)
             started = time.perf_counter()
             if args.burst or args.inter_packet_us > 0:
                 packets = send_frame(
                     sock,
                     target,
-                    frame,
+                    wire_frame,
                     args.width,
                     args.height,
                     frame_id,
@@ -211,7 +231,7 @@ def run_sender(args: argparse.Namespace) -> int:
                 packets = send_frame_spread(
                     sock,
                     target,
-                    frame,
+                    wire_frame,
                     args.width,
                     args.height,
                     frame_id,
@@ -222,7 +242,7 @@ def run_sender(args: argparse.Namespace) -> int:
             elapsed = time.perf_counter() - started
             print(
                 f"unified_warmup_frame={frame_id} color={color_name} "
-                f"bytes={len(frame)} packets={packets} elapsed_s={elapsed:.3f}",
+                f"wire_format={args.wire_format} bytes={len(wire_frame)} packets={packets} elapsed_s={elapsed:.3f}",
                 flush=True,
             )
             remaining = frame_period - elapsed
@@ -238,6 +258,7 @@ def run_sender(args: argparse.Namespace) -> int:
                 args.start_frame_id,
             )
             frame = make_color_frame(args.width, args.height, rgb, frame_id)
+            wire_frame = wire_frame_for_format(frame, args.wire_format)
             sent_ms = round((time.perf_counter() - origin) * 1000.0, 3)
             packets_for_frame = 0
             elapsed = 0.0
@@ -245,23 +266,23 @@ def run_sender(args: argparse.Namespace) -> int:
                 started = time.perf_counter()
                 if args.burst or args.inter_packet_us > 0:
                     packets = send_frame(
-                        sock,
-                        target,
-                        frame,
-                        args.width,
-                        args.height,
-                        frame_id,
+                    sock,
+                    target,
+                    wire_frame,
+                    args.width,
+                    args.height,
+                    frame_id,
                         args.payload,
                         inter_packet_delay,
                     )
                 else:
                     packets = send_frame_spread(
-                        sock,
-                        target,
-                        frame,
-                        args.width,
-                        args.height,
-                        frame_id,
+                    sock,
+                    target,
+                    wire_frame,
+                    args.width,
+                    args.height,
+                    frame_id,
                         args.payload,
                         packet_window_s,
                     )
@@ -270,7 +291,7 @@ def run_sender(args: argparse.Namespace) -> int:
                 elapsed = time.perf_counter() - started
                 print(
                     f"unified_demo_frame={frame_id} repeat={repeat_index + 1}/{args.hold_repeats} "
-                    f"color={color_name} sent_ms={sent_ms:.3f} bytes={len(frame)} "
+                    f"color={color_name} sent_ms={sent_ms:.3f} wire_format={args.wire_format} bytes={len(wire_frame)} "
                     f"packets={packets} elapsed_s={elapsed:.3f}",
                     flush=True,
                 )
@@ -285,6 +306,8 @@ def run_sender(args: argparse.Namespace) -> int:
                 "color": color_name,
                 "rgb": list(rgb),
                 "sha256": frame_sha256(frame),
+                "wire_format": args.wire_format,
+                "wire_sha256": frame_sha256(wire_frame),
                 "packets": packets_for_frame,
                 "hold_repeats": args.hold_repeats,
                 "elapsed_s": round(elapsed, 6),
@@ -321,6 +344,7 @@ def run_sender(args: argparse.Namespace) -> int:
         "burst": args.burst,
         "packet_window_fraction": args.packet_window_fraction,
         "hold_repeats": args.hold_repeats,
+        "wire_format": args.wire_format,
         "content_hold_frames": args.content_hold_frames,
         "content_dwell_seconds": args.content_hold_frames / args.fps,
         "warmup_frames": args.warmup_frames,
@@ -348,6 +372,9 @@ def run_self_test(out_dir: Path) -> int:
         raise AssertionError("unexpected frame size")
     if decode_marker_from_frame(frame, 800, 600) != frame_id:
         raise AssertionError("frame marker did not round-trip")
+    wire_frame = rgb888_to_fb24_native(bytes((1, 2, 3, 4, 5, 6)))
+    if wire_frame != bytes((3, 2, 1, 6, 5, 4)):
+        raise AssertionError("fb24-native conversion is incorrect")
     if any(rgb == (0, 0, 0) for _, rgb in UNIFIED_COLORS):
         raise AssertionError("unified validation palette must not include black")
     if color_for_frame(74, 75)[0] != "red" or color_for_frame(75, 75)[0] != "green":
@@ -379,6 +406,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--packet-window-fraction", type=float, default=0.85)
     parser.add_argument("--hold-repeats", type=int, default=1)
     parser.add_argument("--content-hold-frames", type=int, default=1)
+    parser.add_argument("--wire-format", choices=("rgb888", "fb24-native"), default="rgb888")
     parser.add_argument("--live-state-json", default="")
     parser.add_argument("--burst", action="store_true", help="send each frame as a burst instead of spreading packets")
     parser.add_argument("--out-dir", default="build/unified-15fps-image-evidence-pass-through/sender")

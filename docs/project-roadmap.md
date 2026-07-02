@@ -165,6 +165,10 @@ Phase C:
   paces Linux framebuffer presentation at 15 fps, saves HDMI-returned JPEGs,
   decodes all 30 validation frame IDs from the images, and passes the committed
   unified validator with dropped=0 and trace_drop_rate=0.0.
+  Linux direct-copy network-to-HDMI gate: PASSED. The PC now sends
+  framebuffer-native 24bpp payloads, the Linux receiver uses direct row memcpy
+  into /dev/fb0, HDMI saved-image validation matches 30/30 marker-backed
+  frames, and receiver dropped=0.
   Later: carry the same command semantics over TCP/UDP.
 
 Phase D:

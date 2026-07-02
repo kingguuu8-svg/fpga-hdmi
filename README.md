@@ -229,7 +229,27 @@ Expected marker:
 UNIFIED_VALIDATOR_BOUNDARY_ORDER_FIX_OK
 ```
 
-Run the verified 15 fps image-evidence hardware loop:
+For the current preferred Linux network-to-HDMI transfer check, use the
+workflow owner:
+
+```text
+skills/zynq7020-pipeline/SKILL.md
+```
+
+Current preferred runner:
+
+```powershell
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_linux_net_to_hdmi_direct_copy_probe.ps1
+```
+
+Expected marker:
+
+```text
+LINUX_NET_TO_HDMI_DIRECT_COPY_OK
+```
+
+The older unified 15 fps image-evidence hardware loop remains useful recovery
+context:
 
 ```powershell
 rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_unified_15fps_trace_probe.ps1 -OutDir build\unified-15fps-image-evidence-pass-through -CaptureDevice 1 -CaptureBackend dshow -StreamFps 30 -MjpegFrames 220 -MjpegMinUnique 8 -MjpegMinColors 8 -Frames 30 -WarmupFrames 12 -ValidationStartFrameId 100 -Fps 15 -TraceMaxLatencyMs 1000 -UdpPayload 1200 -HoldRepeats 1 -InterPacketUs 0 -PacketWindowFraction 0.85 -ReceiverSyncMode none -ReceiverPresentFps 15
@@ -263,6 +283,7 @@ tools/send_video_udp.py
 tools/validate_passthrough_trace.py
 tools/send_unified_test_video_udp.py
 tools/build_unified_trace_from_mjpeg.py
+tools/run_linux_net_to_hdmi_direct_copy_probe.ps1
 tools/run_unified_15fps_trace_probe.ps1
 ```
 
@@ -274,6 +295,8 @@ Official pure-PL UDP loopback over the same RJ45 path: passed.
 Official Linux TF-card Ethernet route: passed, ping 0% loss.
 PetaLinux 2018.3 in WSL: installed at /opt/petalinux-v2018.3.
 Project baremetal hand-written RGMII bridge -> PS lwIP RX: retired dead end.
+Linux userspace direct-copy network-to-HDMI path: passed; see
+skills/zynq7020-pipeline/SKILL.md for the current entry point.
 ```
 
 Baremetal fallback build, only if explicitly needed for historical comparison:

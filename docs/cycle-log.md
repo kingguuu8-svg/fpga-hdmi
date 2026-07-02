@@ -1899,3 +1899,55 @@ Residual risks:
   frames.
 - Human-facing dashboard presentation still needs a separate cycle; this one
   only froze the failed engineering attempt.
+
+## Cycle: linux-net-to-hdmi-direct-copy
+
+Objective: complete the Linux-side network-to-HDMI transfer chain using the
+review-recommended Tier 1 direct-copy path.
+
+Changed scope:
+
+- Added `--wire-format fb24-native` to `tools/send_unified_test_video_udp.py`.
+- Added `--fb-copy-mode rgb888-reorder|direct-memcpy` to
+  `fb_video_udp_receiver`.
+- Added the connected-board runner
+  `tools/run_linux_net_to_hdmi_direct_copy_probe.ps1`.
+- Added the cycle report.
+
+Verification:
+
+- `python -m py_compile` passed for the unified sender, trace builder, and
+  validator.
+- Sender self-test printed `UNIFIED_TEST_VIDEO_SENDER_SELF_TEST_OK`.
+- PowerShell parser accepted the new runner.
+- Receiver build and host tests printed `VIDEO_UDP_RECEIVER_TEST_OK`,
+  `VIDEO_FB_COPY_TEST_OK`, `VIDEO_CONTROL_TEST_OK`, `VIDEO_EFFECT_TEST_OK`,
+  and `LINUX_RECEIVER_BUILD_OK`.
+- Connected-board run printed `LINUX_NET_TO_HDMI_DIRECT_COPY_OK`.
+
+Board action:
+
+- Deployed and ran the Linux receiver from `/tmp`.
+- Sent PC UDP `fb24-native` payloads over Ethernet.
+- Wrote complete frames to `/dev/fb0` through direct row memcpy.
+- Captured HDMI through UVC and validated saved images.
+- No Vivado build, PetaLinux build, JTAG programming, TF-card write, or board
+  flash write.
+
+Evidence:
+
+- `docs/reports/linux-net-to-hdmi-direct-copy.md`
+- `build/linux-net-to-hdmi-direct-copy/linux-net-to-hdmi-direct-copy-summary.json`
+- `build/linux-net-to-hdmi-direct-copy/trace/validation-result.json`
+- `build/linux-net-to-hdmi-direct-copy/uart_after_direct_copy.log`
+
+Result: pass_condition=(receiver_fb_copy_mode == direct-memcpy and sender_wire_format == fb24-native and sender_fps == 15 and sent_frames == 30 and receiver_written_frames == 30 and receiver_dropped_packets == 0 and receiver_effect == none and trace_require_image_paths == 1 and trace_image_path_failures == 0 and validator_status == pass and trace_sent_frames == 30 and trace_matched_frames >= 29 and trace_drop_rate <= 0.05 and trace_order_violations == 0 and trace_content_mismatches == 0 and trace_black_frames == 0 and trace_max_latency_ms <= 1000), measured=(receiver_fb_copy_mode=direct-memcpy, sender_wire_format=fb24-native, sender_fps=15, sent_frames=30, receiver_written_frames=30, receiver_dropped_packets=0, receiver_effect=none, mjpeg_saved_frames=520, mjpeg_unique_hashes=42, mjpeg_unique_colors=8, trace_require_image_paths=1, trace_image_path_failures=0, validator_status=pass, trace_sent_frames=30, trace_matched_frames=30, trace_drop_rate=0.0, trace_order_violations=0, trace_content_mismatches=0, trace_black_frames=0, trace_mean_latency_ms=27.038, trace_max_latency_ms=62.382) -> PASSED.
+
+Residual risks:
+
+- This proves ordered network-to-HDMI frame transfer, not a strict wall-clock
+  15 fps playback guarantee.
+- The source is marker-backed generated frames, not a compressed or file-based
+  video stream.
+- fbdev direct writes are still not vsync-locked; DRM/KMS or GStreamer remains
+  the mature next display-pipeline step.

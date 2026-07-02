@@ -805,3 +805,15 @@ the unified validator) remain valid for what they proved. The concern is that
 the current display path proves "a frame can reach the screen", not "video
 plays smoothly", and the fix is to adopt the standard Linux video/display
 pipeline that this board's existing DRM device already supports.
+
+### Follow-up status (2026-07-02)
+
+The Tier 1 recommendation above has been implemented and verified in cycle
+`linux-net-to-hdmi-direct-copy`. The PC sender now supports framebuffer-native
+24bpp payloads, the Linux receiver supports `--fb-copy-mode direct-memcpy`,
+and the connected-board run passed `LINUX_NET_TO_HDMI_DIRECT_COPY_OK` with
+30/30 HDMI-returned marker-backed frames matched by the unified validator.
+
+DRM/KMS page-flip or GStreamer remains the next mature display-stack step for
+human-facing smoothness; the Tier 1 follow-up closes the engineering
+network-to-HDMI transfer chain, not a strict playback-FPS or vsync guarantee.

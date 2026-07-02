@@ -29,6 +29,7 @@ typedef struct {
     const char *control_fifo_path;
     video_effect_t effect;
     int framebuffer_msync;
+    int direct_framebuffer_copy;
     unsigned int present_interval_ms;
 } app_config_t;
 
@@ -46,7 +47,7 @@ typedef struct {
 static void usage(const char *argv0)
 {
     fprintf(stderr,
-            "usage: %s [--fb /dev/fb0] [--port 5005] [--frames 1] [--timeout-sec 20] [--control-fifo /tmp/video_ctl] [--effect none|invert] [--sync-mode msync|none] [--present-fps 15]\n",
+            "usage: %s [--fb /dev/fb0] [--port 5005] [--frames 1] [--timeout-sec 20] [--control-fifo /tmp/video_ctl] [--effect none|invert] [--sync-mode msync|none] [--fb-copy-mode rgb888-reorder|direct-memcpy] [--present-fps 15]\n",
             argv0);
 }
 
@@ -75,6 +76,7 @@ static int parse_args(int argc, char **argv, app_config_t *config)
     config->control_fifo_path = 0;
     config->effect = VIDEO_EFFECT_NONE;
     config->framebuffer_msync = 1;
+    config->direct_framebuffer_copy = 0;
     config->present_interval_ms = 0u;
 
     for (i = 1; i < argc; i++) {
@@ -106,6 +108,15 @@ static int parse_args(int argc, char **argv, app_config_t *config)
                 config->framebuffer_msync = 1;
             } else if (strcmp(mode, "none") == 0) {
                 config->framebuffer_msync = 0;
+            } else {
+                return -1;
+            }
+        } else if (strcmp(argv[i], "--fb-copy-mode") == 0 && i + 1 < argc) {
+            const char *mode = argv[++i];
+            if (strcmp(mode, "rgb888-reorder") == 0) {
+                config->direct_framebuffer_copy = 0;
+            } else if (strcmp(mode, "direct-memcpy") == 0) {
+                config->direct_framebuffer_copy = 1;
             } else {
                 return -1;
             }
@@ -307,21 +318,37 @@ static void process_control_bytes(video_control_state_t *control, const char *by
     }
 }
 
-static int write_framebuffer(fb_target_t *target, const uint8_t *frame, int framebuffer_msync)
+static int write_framebuffer(
+    fb_target_t *target,
+    const uint8_t *frame,
+    int framebuffer_msync,
+    int direct_framebuffer_copy
+)
 {
     int rc;
 
-    rc = video_fb_copy_rgb888_to_24bpp(
-        target->map,
-        target->map_len,
-        target->fix.line_length,
-        frame,
-        VIDEO_UDP_DEFAULT_WIDTH,
-        VIDEO_UDP_DEFAULT_HEIGHT,
-        target->red_byte,
-        target->green_byte,
-        target->blue_byte
-    );
+    if (direct_framebuffer_copy) {
+        rc = video_fb_copy_rgb888_to_stride(
+            target->map,
+            target->map_len,
+            target->fix.line_length,
+            frame,
+            VIDEO_UDP_DEFAULT_WIDTH,
+            VIDEO_UDP_DEFAULT_HEIGHT
+        );
+    } else {
+        rc = video_fb_copy_rgb888_to_24bpp(
+            target->map,
+            target->map_len,
+            target->fix.line_length,
+            frame,
+            VIDEO_UDP_DEFAULT_WIDTH,
+            VIDEO_UDP_DEFAULT_HEIGHT,
+            target->red_byte,
+            target->green_byte,
+            target->blue_byte
+        );
+    }
     if (rc != 0) {
         fprintf(stderr, "framebuffer copy failed rc=%d\n", rc);
         return -1;
@@ -437,6 +464,16 @@ int main(int argc, char **argv)
     if (open_framebuffer(config.fb_path, &fb) != 0) {
         goto cleanup;
     }
+    if (config.direct_framebuffer_copy &&
+        !(fb.red_byte == 2u && fb.green_byte == 1u && fb.blue_byte == 0u)) {
+        fprintf(stderr, "direct-memcpy requires fb24-native BGR byte order\n");
+        goto cleanup;
+    }
+    printf("FB_COPY_MODE mode=%s red_byte=%u green_byte=%u blue_byte=%u\n",
+           config.direct_framebuffer_copy ? "direct-memcpy" : "rgb888-reorder",
+           fb.red_byte,
+           fb.green_byte,
+           fb.blue_byte);
     sock = open_udp_socket(config.port, config.timeout_seconds);
     if (sock < 0) {
         goto cleanup;
@@ -450,13 +487,14 @@ int main(int argc, char **argv)
     }
 
     video_udp_receiver_init(&receiver, buffer_a, buffer_b);
-    printf("VIDEO_UDP_LINUX_RECEIVER_READY port=%u frames=%u timeout_sec=%u control=%s effect=%s sync_mode=%s present_interval_ms=%u\n",
+    printf("VIDEO_UDP_LINUX_RECEIVER_READY port=%u frames=%u timeout_sec=%u control=%s effect=%s sync_mode=%s fb_copy_mode=%s present_interval_ms=%u\n",
            config.port,
            config.frames,
            config.timeout_seconds,
            config.control_fifo_path == 0 ? "none" : config.control_fifo_path,
            video_effect_name(config.effect),
            config.framebuffer_msync ? "msync" : "none",
+           config.direct_framebuffer_copy ? "direct-memcpy" : "rgb888-reorder",
            config.present_interval_ms);
     fflush(stdout);
     start_ms = monotonic_ms();
@@ -543,7 +581,7 @@ int main(int argc, char **argv)
                         usleep((useconds_t)(((unsigned long long)config.present_interval_ms - elapsed_since_present) * 1000ull));
                     }
                 }
-                if (frame == 0 || write_framebuffer(&fb, frame, config.framebuffer_msync) != 0) {
+                if (frame == 0 || write_framebuffer(&fb, frame, config.framebuffer_msync, config.direct_framebuffer_copy) != 0) {
                     goto cleanup;
                 }
                 last_present_ms = monotonic_ms();

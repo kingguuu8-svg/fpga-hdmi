@@ -1,6 +1,6 @@
 # Current Cycle
 
-Status: implementation cycle active.
+Status: no active implementation cycle is open.
 
 ## Rule
 
@@ -70,27 +70,20 @@ placeholder.
 ## Active Cycle
 
 ```text
+No active implementation cycle is open.
+```
+
+## Recently Closed Cycle
+
+```text
 Cycle ID: linux-net-to-hdmi-direct-copy
-Objective: Complete the Linux-side network-to-HDMI video transfer path by
-  removing the long per-pixel framebuffer reorder from the board receiver:
-  PC sends the framebuffer-native byte order, Linux receives complete UDP
-  frames, writes each complete frame to /dev/fb0 with one row memcpy pass, and
-  HDMI returns the same marker-backed frames.
-Scope: Pure Linux/userspace path only: PC sender byte-order option, Linux
-  receiver framebuffer copy mode, host tests, connected-board run, and evidence
-  report. No Vivado, PetaLinux, device-tree, bitstream, TF-card, or persistent
-  board write.
-Verification plan: Build and host-test the receiver, run sender self-test,
-  deploy the Linux receiver to /tmp, start it with direct-copy framebuffer mode
-  and present_fps=15, send 30 marker-backed frames over Ethernet, capture HDMI
-  saved MJPEG frames, build the unified trace from saved HDMI images, and run
-  the already-committed unified pass-through validator.
-Board action: Linux receiver from /tmp, PC UDP framebuffer-order RGB888 payload
-  over Ethernet, /dev/fb0 HDMI output, HDMI/UVC capture, UART shell control.
-  No persistent board write.
-Evidence target: docs/reports/linux-net-to-hdmi-direct-copy.md and
-  build/linux-net-to-hdmi-direct-copy/.
-pass_condition: receiver_fb_copy_mode == direct-memcpy and
+Result: PASSED. Implemented and verified the review-recommended Tier 1 Linux
+  path: PC sender emits framebuffer-native 24bpp payloads, the Linux receiver
+  starts with `FB_COPY_MODE mode=direct-memcpy`, writes complete UDP frames to
+  /dev/fb0 with direct row memcpy, and HDMI/UVC saved-image trace validation
+  matches all 30 validation frames. No Vivado, PetaLinux, device-tree,
+  bitstream, TF-card, or persistent board write was performed.
+  pass_condition=(receiver_fb_copy_mode == direct-memcpy and
   sender_wire_format == fb24-native and sender_fps == 15 and sent_frames == 30
   and receiver_written_frames == 30 and receiver_dropped_packets == 0 and
   receiver_effect == none and trace_require_image_paths == 1 and
@@ -98,27 +91,22 @@ pass_condition: receiver_fb_copy_mode == direct-memcpy and
   trace_sent_frames == 30 and trace_matched_frames >= 29 and
   trace_drop_rate <= 0.05 and trace_order_violations == 0 and
   trace_content_mismatches == 0 and trace_black_frames == 0 and
-  trace_max_latency_ms <= 1000.
-validator: already-committed tools/validate_passthrough_trace.py on saved HDMI
-  image-backed trace, plus existing receiver build/host tests from
-  software/eth_pass_through/scripts/build-linux-receiver-wsl.ps1 and direct
-  grep checks in board logs for FB_COPY_MODE mode=direct-memcpy,
-  VIDEO_UDP_FRAME_WRITTEN count, VIDEO_UDP_RECEIVER_DONE dropped=0, and
-  sender-trace.json wire_format=fb24-native.
-Highest-risk assumption this cycle falsifies: The visible roughness reported
-  by review is caused by the receiver's long in-place RGB-to-framebuffer
-  reorder window, and the Linux network-to-HDMI path can carry marker-backed
-  video frames when the receiver writes framebuffer-native complete frames with
-  direct memcpy.
-Cheapest alternative way to falsify the same assumption: A PC-only benchmark
-  can prove memcpy is faster than per-pixel reorder, but it cannot prove
-  Ethernet, /dev/fb0, VDMA HDMI, and UVC capture preserve the frames, so a
-  connected-board run is required.
-```
+  trace_max_latency_ms <= 1000),
+  measured=(receiver_fb_copy_mode=direct-memcpy,
+  sender_wire_format=fb24-native, sender_fps=15, sent_frames=30,
+  receiver_written_frames=30, receiver_dropped_packets=0,
+  receiver_effect=none, mjpeg_saved_frames=520, mjpeg_unique_hashes=42,
+  mjpeg_unique_colors=8, trace_require_image_paths=1,
+  trace_image_path_failures=0, validator_status=pass, trace_sent_frames=30,
+  trace_matched_frames=30, trace_drop_rate=0.0, trace_order_violations=0,
+  trace_content_mismatches=0, trace_black_frames=0,
+  trace_mean_latency_ms=27.038, trace_max_latency_ms=62.382).
+Evidence: docs/reports/linux-net-to-hdmi-direct-copy.md
+Board action: deployed and ran the Linux receiver from /tmp, sent PC UDP
+  fb24-native payloads over Ethernet, wrote /dev/fb0, captured HDMI through
+  UVC, and used UART shell control. No Vivado/PetaLinux/JTAG/TF-card/flash
+  write.
 
-## Recently Closed Cycle
-
-```text
 Cycle ID: dashboard-truthful-sent-received-timelines
 Result: FAILED, frozen at user request. The Dashboard left preview now reports
   `latest-actual-sent-frame` instead of pairing to the HDMI frame ID, and the
@@ -577,6 +565,10 @@ Unified 15 fps image-evidence pass-through is closed: 30 generated validation
 frames with image-decodable markers were received, presented to HDMI, captured
 as saved JPEGs, decoded into a trace with `require_image_paths=true`, and
 accepted by the committed validator with matched_frames=30 and drop_rate=0.0.
+Linux direct-copy network-to-HDMI path is closed: PC sends framebuffer-native
+24bpp payloads, the Linux receiver writes complete UDP frames to /dev/fb0 with
+direct row memcpy, HDMI saved-image trace validation matches 30/30 frames, and
+receiver dropped=0.
 Rule 1 open-commit sub-rule added: implementation cycles with a tunable
 pass_condition must commit the Active Cycle block before verification, so the
 frozen bar is auditable in git history; docs/governance cycles with a
@@ -598,12 +590,12 @@ layer. Do not resume this work.
 ## Next Cycle Direction
 
 No active cycle is open. The next implementation cycle can build on the
-verified 15 fps image-evidence pass-through path and should either add a first
-displayable effect/control behavior to the marker-backed stream or improve the
-dashboard presentation around the verified closed-loop evidence. Because the
-next cycle will carry a tunable numeric `pass_condition`, it must follow the
-Rule 1 open-commit sub-rule: commit the `## Active Cycle` block with the frozen
-`pass_condition:`/`validator:` before running verification, then close in a
-separate commit. A durable follow-up would commit an offline JPEG re-decode
-tool in a prior cycle and run it over all saved frames so the single-source
-trace-builder concern noted in the 15fps review is closed.
+verified Linux direct-copy network-to-HDMI path. If the goal is smoother
+human-facing video, the next display-pipeline cycle should move from fbdev
+direct writes toward DRM/KMS double buffering or a GStreamer `kmssink` route.
+Because the next cycle will carry a tunable numeric `pass_condition`, it must
+follow the Rule 1 open-commit sub-rule: commit the `## Active Cycle` block with
+the frozen `pass_condition:`/`validator:` before running verification, then
+close in a separate commit. A durable follow-up would commit an offline JPEG
+re-decode tool in a prior cycle and run it over all saved frames so the
+single-source trace-builder concern noted in the 15fps review is closed.
