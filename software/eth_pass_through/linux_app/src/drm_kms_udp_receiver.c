@@ -28,6 +28,10 @@ typedef struct {
     uint16_t port;
     unsigned int frames;
     unsigned int timeout_seconds;
+    unsigned int local_motion;
+    unsigned int start_delay_seconds;
+    unsigned int hold_seconds;
+    double present_fps;
 } app_config_t;
 
 typedef struct {
@@ -51,7 +55,7 @@ typedef struct {
 
 static void usage(const char *argv0)
 {
-    fprintf(stderr, "usage: %s [--drm /dev/dri/card0] [--port 5005] [--frames 60] [--timeout-sec 120]\n", argv0);
+    fprintf(stderr, "usage: %s [--drm /dev/dri/card0] [--port 5005] [--frames 60] [--timeout-sec 120] [--local-motion] [--present-fps 30] [--start-delay-sec 5] [--hold-sec 8]\n", argv0);
 }
 
 static int parse_u32(const char *text, unsigned int min, unsigned int max, unsigned int *out)
@@ -76,6 +80,10 @@ static int parse_args(int argc, char **argv, app_config_t *config)
     config->port = VIDEO_UDP_DEFAULT_PORT;
     config->frames = 60u;
     config->timeout_seconds = 120u;
+    config->local_motion = 0u;
+    config->start_delay_seconds = 0u;
+    config->hold_seconds = 0u;
+    config->present_fps = 60.0;
 
     for (i = 1; i < argc; i++) {
         unsigned int value;
@@ -92,6 +100,23 @@ static int parse_args(int argc, char **argv, app_config_t *config)
             }
         } else if (strcmp(argv[i], "--timeout-sec") == 0 && i + 1 < argc) {
             if (parse_u32(argv[++i], 1u, 3600u, &config->timeout_seconds) != 0) {
+                return -1;
+            }
+        } else if (strcmp(argv[i], "--local-motion") == 0) {
+            config->local_motion = 1u;
+        } else if (strcmp(argv[i], "--start-delay-sec") == 0 && i + 1 < argc) {
+            if (parse_u32(argv[++i], 0u, 60u, &config->start_delay_seconds) != 0) {
+                return -1;
+            }
+        } else if (strcmp(argv[i], "--hold-sec") == 0 && i + 1 < argc) {
+            if (parse_u32(argv[++i], 0u, 120u, &config->hold_seconds) != 0) {
+                return -1;
+            }
+        } else if (strcmp(argv[i], "--present-fps") == 0 && i + 1 < argc) {
+            char *end = 0;
+            errno = 0;
+            config->present_fps = strtod(argv[++i], &end);
+            if (errno != 0 || end == argv[i] || *end != '\0' || config->present_fps <= 0.0 || config->present_fps > 120.0) {
                 return -1;
             }
         } else if (strcmp(argv[i], "--help") == 0) {
@@ -112,6 +137,38 @@ static unsigned long long monotonic_ms(void)
         return 0u;
     }
     return ((unsigned long long)tv.tv_sec * 1000ull) + ((unsigned long long)tv.tv_usec / 1000ull);
+}
+
+static unsigned long long monotonic_ns(void)
+{
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        return 0ull;
+    }
+    return ((unsigned long long)ts.tv_sec * 1000000000ull) + (unsigned long long)ts.tv_nsec;
+}
+
+static void sleep_until_ns(unsigned long long target_ns)
+{
+    while (1) {
+        unsigned long long now_ns = monotonic_ns();
+        unsigned long long remaining;
+        struct timespec ts;
+
+        if (now_ns >= target_ns) {
+            return;
+        }
+        remaining = target_ns - now_ns;
+        ts.tv_sec = (time_t)(remaining / 1000000000ull);
+        ts.tv_nsec = (long)(remaining % 1000000000ull);
+        if (nanosleep(&ts, 0) == 0) {
+            return;
+        }
+        if (errno != EINTR) {
+            return;
+        }
+    }
 }
 
 static int get_resources(
@@ -317,6 +374,32 @@ static int copy_frame_to_buffer(drm_buffer_t *buffer, const uint8_t *frame, uint
     return 0;
 }
 
+static void fill_motion_buffer(drm_buffer_t *buffer, uint32_t width, uint32_t height, uint32_t frame_id, uint32_t start_frame_id)
+{
+    uint32_t x;
+    uint32_t y;
+    uint32_t phase = ((frame_id - start_frame_id) * 7u) % 32u;
+
+    for (y = 0; y < height; y++) {
+        uint8_t *row = buffer->map + ((size_t)y * buffer->pitch);
+        int row_bias = ((y / 24u) & 1u) ? 34 : 0;
+        for (x = 0; x < width; x++) {
+            int stripe = ((((x + phase) / 16u) & 1u) ? 210 : 35);
+            int checker = (((((x + phase) / 48u) ^ (y / 48u)) & 1u) ? 35 : 0);
+            int value = stripe + row_bias - checker;
+            size_t offset = (size_t)x * 3u;
+            if (value < 0) {
+                value = 0;
+            } else if (value > 255) {
+                value = 255;
+            }
+            row[offset + 0u] = (uint8_t)value;
+            row[offset + 1u] = (uint8_t)value;
+            row[offset + 2u] = (uint8_t)value;
+        }
+    }
+}
+
 static int init_drm(const char *path, drm_target_t *target)
 {
     uint32_t connector;
@@ -445,6 +528,59 @@ static int open_udp_socket(uint16_t port, unsigned int timeout_seconds)
     return fd;
 }
 
+static int run_local_motion(const app_config_t *config, drm_target_t *drm)
+{
+    unsigned int frame_index;
+    unsigned int buffer_index = 1u;
+    unsigned long long start_ms;
+    unsigned long long schedule_start_ns;
+    unsigned long long frame_period_ns;
+    uint32_t start_frame_id = 100u;
+
+    printf("VIDEO_DRM_LOCAL_MOTION_READY display_backend=drm-kms drm_device=%s video_source=board-generated-textured-motion frames=%u present_fps=%.3f fbdev_live_write_used=0 motion_content_type=textured-motion\n",
+           config->drm_path,
+           config->frames,
+           config->present_fps);
+    fflush(stdout);
+    if (config->start_delay_seconds > 0u) {
+        sleep(config->start_delay_seconds);
+    }
+
+    start_ms = monotonic_ms();
+    schedule_start_ns = monotonic_ns();
+    frame_period_ns = (unsigned long long)(1000000000.0 / config->present_fps);
+
+    for (frame_index = 0u; frame_index < config->frames; frame_index++) {
+        uint32_t frame_id = start_frame_id + frame_index;
+        sleep_until_ns(schedule_start_ns + ((unsigned long long)frame_index * frame_period_ns));
+        fill_motion_buffer(&drm->buffers[buffer_index], drm->mode.hdisplay, drm->mode.vdisplay, frame_id, start_frame_id);
+        if (submit_page_flip(drm, buffer_index, frame_id) != 0) {
+            return -1;
+        }
+        printf("VIDEO_DRM_LOCAL_MOTION_FRAME frame_id=%u generated_frames=%u elapsed_ms=%llu\n",
+               frame_id,
+               frame_index + 1u,
+               monotonic_ms() - start_ms);
+        fflush(stdout);
+        buffer_index = 1u - buffer_index;
+    }
+
+    if (config->hold_seconds > 0u) {
+        sleep(config->hold_seconds);
+    }
+
+    printf("VIDEO_DRM_LOCAL_MOTION_DONE display_backend=drm-kms drm_device=%s video_source=board-generated-textured-motion fbdev_live_write_used=0 generated_frames=%u motion_content_type=textured-motion drm_dumb_buffers=%u drm_page_flip_calls=%u drm_vblank_flip_events=%u hold_sec=%u elapsed_ms=%llu\n",
+           config->drm_path,
+           config->frames,
+           drm->buffer_count,
+           drm->page_flip_calls,
+           drm->vblank_events,
+           config->hold_seconds,
+           monotonic_ms() - start_ms);
+    fflush(stdout);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     app_config_t config;
@@ -471,6 +607,10 @@ int main(int argc, char **argv)
         goto cleanup;
     }
     if (init_drm(config.drm_path, &drm) != 0) {
+        goto cleanup;
+    }
+    if (config.local_motion) {
+        exit_code = (run_local_motion(&config, &drm) == 0) ? 0 : 1;
         goto cleanup;
     }
     sock = open_udp_socket(config.port, config.timeout_seconds);

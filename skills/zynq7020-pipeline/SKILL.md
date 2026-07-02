@@ -646,5 +646,52 @@ with dropped=0 and max return-path latency 62.382 ms. This is the preferred
 Tier 1 response to the 2026-07-02 review's tearing concern. It does not yet
 replace fbdev with DRM/KMS page-flip or GStreamer.
 
+Verified DRM/KMS local-motion display pacing path (preferred when isolating
+display-side page-flip smoothness after a network-driven DRM run fails):
+
+```text
+1. Run the integrated hardware probe:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_drm_kms_local_motion_pacing_probe.ps1
+2. Require build markers:
+   VIDEO_UDP_RECEIVER_TEST_OK
+   VIDEO_FB_COPY_TEST_OK
+   VIDEO_CONTROL_TEST_OK
+   VIDEO_EFFECT_TEST_OK
+   LINUX_RECEIVER_BUILD_OK
+   DRM_KMS_RECEIVER_BUILD_OK
+3. Require board display markers:
+   VIDEO_DRM_LOCAL_MOTION_READY ... display_backend=drm-kms
+   DRM_DUMB_BUFFERS count=2
+   120 DRM_PAGE_FLIP_SUBMITTED markers
+   120 DRM_PAGE_FLIP_EVENT markers
+   VIDEO_DRM_LOCAL_MOTION_DONE ... generated_frames=120
+4. Require HDMI tearing validation:
+   MOTION_TEARING_VALIDATION_OK
+   DRM_KMS_LOCAL_MOTION_PACING_OK
+5. Require final measured fields:
+   display_backend=drm-kms
+   drm_device=/dev/dri/card0
+   video_source=board-generated-textured-motion
+   fbdev_live_write_used=0
+   drm_dumb_buffers=2
+   drm_page_flip_calls=120
+   drm_vblank_flip_events=120
+   generated_frames=120
+   motion_content_type=textured-motion
+   captured_motion_frames>=120
+   tearing_frames=0
+   frame_duration_stddev_ms<=4.0
+   validator_status=pass
+```
+
+Verified outcome:
+The board display side can page-flip textured motion through `/dev/dri/card0`
+with two DRM dumb buffers and vblank events without using `/dev/fb0` live-screen
+mmap writes. The passing run generated 120 board-local textured frames, received
+120 vblank page-flip events, captured 255 motion-like HDMI frames, measured
+tearing_frames=0, and measured frame_duration_stddev_ms=1.514 from DRM event
+timestamps. This is a display-side diagnostic route only; it does not prove that
+the PC UDP receive path is smooth.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

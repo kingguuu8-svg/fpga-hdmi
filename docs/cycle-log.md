@@ -18,6 +18,55 @@ Result:            (must include pass_condition=... and measured=..., per the
 Residual risks:
 ```
 
+## Cycle: drm-kms-local-motion-pacing
+
+Objective: isolate the board display side by generating textured motion locally
+on the Zynq Linux userspace process, writing only DRM dumb back buffers, and
+presenting with DRM/KMS page-flip vblank events.
+
+Changed scope:
+
+- Added `--local-motion`, `--present-fps`, `--start-delay-sec`, and
+  `--hold-sec` to `drm_kms_udp_receiver`.
+- Added board-local textured-motion generation in the DRM/KMS receiver.
+- Added `tools/run_drm_kms_local_motion_pacing_probe.ps1`.
+- Added the cycle report.
+
+Verification:
+
+- Receiver build and host tests printed `VIDEO_UDP_RECEIVER_TEST_OK`,
+  `VIDEO_FB_COPY_TEST_OK`, `VIDEO_CONTROL_TEST_OK`,
+  `VIDEO_EFFECT_TEST_OK`, `LINUX_RECEIVER_BUILD_OK`, and
+  `DRM_KMS_RECEIVER_BUILD_OK`.
+- PowerShell parser accepted the new runner.
+- `python -m py_compile` passed for HDMI motion capture and tearing validator
+  scripts.
+- Connected-board run printed `DRM_KMS_LOCAL_MOTION_PACING_OK`.
+
+Board action:
+
+- Deployed and ran `/tmp/drm_kms_udp_receiver`.
+- Generated textured motion on the board.
+- Displayed through `/dev/dri/card0` DRM/KMS dumb-buffer page flips.
+- Captured HDMI through the PC UVC adapter.
+- No Vivado build, PetaLinux build, JTAG programming, TF-card write, or board
+  flash write.
+
+Evidence:
+
+- `docs/reports/drm-kms-local-motion-pacing.md`
+- `build/drm-kms-local-motion-pacing/drm-kms-local-motion-pacing-summary.json`
+- `build/drm-kms-local-motion-pacing/uart_after_local_motion.log`
+- `build/drm-kms-local-motion-pacing/motion-tearing-validation/motion-tearing-validation.json`
+
+Result: pass_condition=(display_backend == drm-kms and drm_device == /dev/dri/card0 and video_source == board-generated-textured-motion and fbdev_live_write_used == 0 and drm_dumb_buffers == 2 and drm_page_flip_calls == 120 and drm_vblank_flip_events == 120 and generated_frames == 120 and motion_content_type == textured-motion and captured_motion_frames >= 120 and tearing_frames == 0 and frame_duration_stddev_ms <= 4.0 and validator_status == pass), measured=(display_backend=drm-kms, drm_device=/dev/dri/card0, video_source=board-generated-textured-motion, fbdev_live_write_used=0, drm_dumb_buffers=2, drm_page_flip_calls=120, drm_vblank_flip_events=120, generated_frames=120, motion_content_type=textured-motion, captured_motion_frames=255, tearing_frames=0, frame_duration_stddev_ms=1.514, validator_status=pass) -> PASSED.
+
+Residual risks:
+
+- This proves display-side DRM/KMS pacing, not network-driven smooth playback.
+- The next smooth-video cycle still has to combine Linux UDP receive with a
+  paced DRM/KMS or GStreamer display path.
+
 ## 2026-06-25 - management-bootstrap
 
 Commit: 593c405 (`docs: establish project management workflow`)

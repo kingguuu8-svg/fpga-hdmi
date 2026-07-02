@@ -1,6 +1,6 @@
 # Current Cycle
 
-Status: implementation cycle active.
+Status: no active implementation cycle is open.
 
 ## Rule
 
@@ -70,55 +70,42 @@ placeholder.
 ## Active Cycle
 
 ```text
-Cycle ID: drm-kms-local-motion-pacing
-Objective: Isolate and verify the board display side by generating textured
-  motion locally on the Zynq Linux userspace process, writing only DRM dumb
-  back buffers, and presenting with DRM/KMS page-flip vblank events. This
-  cycle does not claim the PC UDP network input path is smooth; it proves or
-  falsifies whether the current DRM/KMS display path itself can meet the
-  smoothness/tearing gate when full-frame UDP packet receive is removed.
-Scope: Linux/userspace only: add a board-local textured-motion DRM/KMS demo
-  path or mode, add a connected-board runner, reuse the committed motion
-  tearing validator, run HDMI capture validation, and record evidence. No
-  Vivado, PetaLinux, device-tree, bitstream, TF-card, JTAG, or persistent
-  board write.
-Verification plan: Build the board binary, deploy it to /tmp, generate at
-  least 120 textured-motion frames on the board, copy each frame into the
-  non-visible DRM dumb buffer, submit DRM page-flips with vblank events for
-  every frame, capture HDMI motion frames, and run the committed calibrated
-  tearing validator on saved capture images.
-Board action: Linux userspace binary from /tmp, DRM/KMS /dev/dri/card0 output
-  with double-buffered dumb buffers, HDMI/UVC capture, UART shell control. No
-  fbdev live-screen mmap write is allowed as the display path.
-Evidence target: docs/reports/drm-kms-local-motion-pacing.md and
-  build/drm-kms-local-motion-pacing/.
-pass_condition: display_backend == drm-kms and drm_device == /dev/dri/card0
-  and video_source == board-generated-textured-motion and
-  fbdev_live_write_used == 0 and drm_dumb_buffers == 2 and
-  drm_page_flip_calls == 120 and drm_vblank_flip_events == 120 and
-  generated_frames == 120 and motion_content_type == textured-motion and
-  captured_motion_frames >= 120 and tearing_frames == 0 and
-  frame_duration_stddev_ms <= 4.0 and validator_status == pass.
-validator: already-committed tools/validate_motion_tearing.py calibrated in
-  prior cycle, plus direct board log checks for display_backend=drm-kms,
-  video_source=board-generated-textured-motion, fbdev_live_write_used=0,
-  DRM_DUMB_BUFFERS count=2, DRM_PAGE_FLIP_SUBMITTED count=120,
-  DRM_PAGE_FLIP_EVENT count=120, generated_frames=120, and
-  motion_content_type=textured-motion. The validator result must report
-  captured_motion_frames >= 120, tearing_frames == 0, and validator_status ==
-  pass. Frame-duration stddev is computed from DRM vblank event timestamps.
-Highest-risk assumption this cycle falsifies: The current DRM/KMS display
-  path can page-flip textured motion at a stable cadence when it is not gated
-  by full-frame UDP receive and userspace packet assembly.
-Cheapest alternative way to falsify the same assumption: A board-side
-  modetest-style page-flip loop without HDMI capture could show vblank event
-  cadence, but completion requires textured-motion HDMI capture and the
-  tearing validator so visual tearing cannot be hidden.
+No active implementation cycle is open.
 ```
 
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: drm-kms-local-motion-pacing
+Result: PASSED. Isolated the board display side by generating textured motion
+  locally on the Zynq Linux userspace process, writing only DRM dumb back
+  buffers, and presenting with DRM/KMS page-flip vblank events. The connected
+  board run proved the current display path can meet the frozen
+  smoothness/tearing gate when full-frame UDP receive is removed:
+  drm_dumb_buffers=2, drm_page_flip_calls=120,
+  drm_vblank_flip_events=120, generated_frames=120,
+  captured_motion_frames=255, tearing_frames=0,
+  frame_duration_stddev_ms=1.514, and validator_status=pass.
+  pass_condition=(display_backend == drm-kms and drm_device == /dev/dri/card0
+  and video_source == board-generated-textured-motion and
+  fbdev_live_write_used == 0 and drm_dumb_buffers == 2 and
+  drm_page_flip_calls == 120 and drm_vblank_flip_events == 120 and
+  generated_frames == 120 and motion_content_type == textured-motion and
+  captured_motion_frames >= 120 and tearing_frames == 0 and
+  frame_duration_stddev_ms <= 4.0 and validator_status == pass),
+  measured=(display_backend=drm-kms, drm_device=/dev/dri/card0,
+  video_source=board-generated-textured-motion, fbdev_live_write_used=0,
+  drm_dumb_buffers=2, drm_page_flip_calls=120,
+  drm_vblank_flip_events=120, generated_frames=120,
+  motion_content_type=textured-motion, captured_motion_frames=255,
+  tearing_frames=0, frame_duration_stddev_ms=1.514,
+  validator_status=pass).
+Evidence: docs/reports/drm-kms-local-motion-pacing.md
+Board action: deployed and ran the Linux DRM/KMS local-motion binary from
+  /tmp, generated textured motion on the board, page-flipped /dev/dri/card0
+  dumb buffers, captured HDMI through UVC, and used UART shell control. No
+  Vivado/PetaLinux/JTAG/TF-card/flash write.
+
 Cycle ID: drm-kms-vblank-motion-tearing
 Result: FAILED. Implemented a Linux userspace DRM/KMS receiver using
   /dev/dri/card0, two dumb buffers, and legacy page-flip events. The connected
@@ -552,12 +539,6 @@ Board action: booted generated image from TF card only; no JTAG programming,
   QSPI, NAND, eMMC, or other nonvolatile board storage writes.
 ```
 
-## Active Cycle
-
-```text
-No active implementation cycle is open.
-```
-
 ## Resolved Route Gate
 
 The TF-card Linux ping route gate PASSED on 2026-06-29.
@@ -641,6 +622,10 @@ Linux direct-copy network-to-HDMI path is closed: PC sends framebuffer-native
 24bpp payloads, the Linux receiver writes complete UDP frames to /dev/fb0 with
 direct row memcpy, HDMI saved-image trace validation matches 30/30 frames, and
 receiver dropped=0.
+DRM/KMS local textured-motion display pacing is closed: the board generates
+120 textured frames locally, writes only DRM dumb back buffers, receives 120
+vblank page-flip events on /dev/dri/card0, HDMI capture validates 255
+motion-like frames, tearing_frames=0, and frame_duration_stddev_ms=1.514.
 Rule 1 open-commit sub-rule added: implementation cycles with a tunable
 pass_condition must commit the Active Cycle block before verification, so the
 frozen bar is auditable in git history; docs/governance cycles with a
@@ -661,13 +646,14 @@ layer. Do not resume this work.
 
 ## Next Cycle Direction
 
-No active cycle is open. The next implementation cycle can build on the
-verified Linux direct-copy network-to-HDMI path. If the goal is smoother
-human-facing video, the next display-pipeline cycle should move from fbdev
-direct writes toward DRM/KMS double buffering or a GStreamer `kmssink` route.
-Because the next cycle will carry a tunable numeric `pass_condition`, it must
-follow the Rule 1 open-commit sub-rule: commit the `## Active Cycle` block with
-the frozen `pass_condition:`/`validator:` before running verification, then
-close in a separate commit. A durable follow-up would commit an offline JPEG
-re-decode tool in a prior cycle and run it over all saved frames so the
-single-source trace-builder concern noted in the 15fps review is closed.
+No active cycle is open. The next implementation cycle can build on two
+verified facts: the Linux direct-copy network-to-HDMI transfer chain passes,
+and the board display side can page-flip textured motion through DRM/KMS with
+stable vblank cadence when network receive is removed. If the goal is smooth
+network-driven video, the next cycle should combine these facts by pacing PC
+UDP receive into a DRM/KMS or GStreamer display path, with a frozen
+pass_condition that still includes tearing and smoothness thresholds. Because
+that cycle will carry a tunable numeric `pass_condition`, it must follow the
+Rule 1 open-commit sub-rule: commit the `## Active Cycle` block with the frozen
+`pass_condition:`/`validator:` before running verification, then close in a
+separate commit.
