@@ -884,3 +884,101 @@ pass_condition design. The next cycle that claims to address "human-facing
 video" or "mature display path" must satisfy all four points above; a cycle
 that satisfies only points 1-2 and defers 3-4 to "residual risks" is the
 failure mode this instruction was written to stop.
+
+### Audit of the registered `gstreamer-rtp-kmssink-route-gate` pass_condition
+
+Reviewer: independent audit (2026-07-02), non-blocking. The cycle is currently
+open; this audit reviews its frozen `pass_condition` for the "lowering the bar
+by removing the ruler" pattern before the cycle runs verification.
+
+#### Path direction is correct
+
+The three-cycle progression is sound:
+
+- `drm-kms-vblank-motion-tearing` — FAILED honestly. DRM page-flip + vblank +
+  real textured motion, but `frame_duration_stddev_ms=19.614` exceeded the
+  frozen `<= 4.0`. This is the governance rules working as intended: the bar
+  was not lowered, the failure was recorded.
+- `drm-kms-local-motion-pacing` — PASSED. Removed the network, generated
+  textured motion locally on the board, proved the display side alone reaches
+  `stddev=1.514`. This correctly isolated the remaining problem to network
+  receive jitter, not the display path.
+- `gstreamer-rtp-kmssink-route-gate` (open) — targets GStreamer
+  `rtpjitterbuffer` + `kmssink` to solve the network-jitter problem with
+  mature Linux components. This is the right direction and the right tool.
+
+The route-gate boundary is also clean: missing plugins mean FAILED, no scope
+creep into PetaLinux rebuild, fbdev live-write and self-written UDP reassembly
+are explicitly forbidden. The work instruction's points 1-2 are satisfied.
+
+#### The pass_condition removed exactly the rulers that failed last time
+
+Comparing the three frozen pass_conditions:
+
+| Metric | vblank-motion-tearing (FAILED) | local-motion-pacing (PASSED) | gstreamer route-gate (open) |
+| --- | --- | --- | --- |
+| `tearing_frames == 0` | yes | yes | yes |
+| `frame_duration_stddev_ms <= 4.0` | yes (failed at 19.614) | yes (passed at 1.514) | **removed** |
+| frame-drop accountability (`dropped==0` or `drop_rate<=0.05`) | yes | n/a (local) | **removed (only `>= 120`)** |
+| frame_id correspondence (unified validator) | yes | n/a (local) | **removed** |
+
+The open cycle kept the ruler that already passed (`tearing_frames == 0`) and
+removed the ruler that caused the last failure (`frame_duration_stddev_ms`),
+along with the frame-drop and frame-correspondence rulers. This is not
+lowering a threshold — it is removing the measuring instruments entirely, so
+that the same visual roughness the user reported can no longer be detected by
+the pass gate.
+
+This was confirmed against the validator source. `tools/validate_motion_tearing.py:151`
+sets `validator_status = "pass"` based only on `captured_motion_frames >= 60
+and tearing_frames == 0`. The script computes `frame_duration_stddev_ms` at
+line 155 and writes it to the result JSON, but does not use it in the pass/fail
+decision. So `validator_status == pass` in the current pass_condition cannot
+catch the "frequency instability" the user reported — the one metric that
+measures it is present in the output but absent from the gate.
+
+The `>= 120` thresholds for `pc_sender_frames`, `hdmi_captured_frames`, and
+`captured_motion_frames` have the same gap: if the PC sends 200 frames and
+only 120 arrive (40% frame loss), the cycle still PASSes. Prior cycles held
+`receiver_dropped_packets == 0` and `trace_drop_rate <= 0.05`; both are gone.
+
+#### What the pass_condition must add before verification runs
+
+The cycle is still open and has not run verification, so the bar can still be
+tightened by closing this cycle and reopening with a corrected pass_condition
+(per Rule 1 freeze discipline — do not edit a frozen bar in place). The
+corrected pass_condition must include:
+
+1. `frame_duration_stddev_ms <= 4.0` — restore the smoothness ruler that the
+   last cycle failed on and that `local-motion-pacing` proved is reachable on
+   this display path. This is the direct quantification of the user's
+   "frequency problem".
+2. Frame-drop accountability — either `sent_frames == received_frames` or
+   `drop_rate <= 0.05`. A `>= 120` floor with no sent-frame count or drop-rate
+   ceiling lets 40% frame loss pass silently.
+3. frame_id correspondence — run the already-committed unified validator on
+   the saved trace and require `trace_matched_frames >= 0.95 *
+   trace_sent_frames`. This proves "original video returned faithfully", not
+   just "some motion appeared on screen". A route gate may relax the 100%
+   match of earlier cycles, but it must not drop correspondence entirely.
+
+With these three additions, the cycle either genuinely achieves smooth
+faithful pass-through via the mature Linux pipeline, or it FAILS — it cannot
+land in the "looks rough but PASSED" state that the current pass_condition
+permits.
+
+#### Why this is the same pattern the governance rules exist to prevent
+
+The verification-standard-governance rules were written after a third-party
+review found the project growing four mutually inconsistent ad-hoc validation
+standards, each weaker than the last. The mechanism was "standards passively
+adapted to code between cycles". Here the mechanism is sharper: within a
+three-cycle sequence that explicitly targets the user's visual-quality
+complaint, the cycle that introduces the mature solution removes the two
+rulers that measure that complaint. Point 4 of the work instruction above
+requires the frozen pass_condition to include a tearing/smoothness threshold;
+`tearing_frames == 0` satisfies the letter of that requirement while
+`frame_duration_stddev_ms` — the ruler that actually failed — is dropped. This
+is the same "technically compliant but substantively evasive" behavior the
+work instruction was written to stop, and it should be corrected before
+verification runs, not after.
