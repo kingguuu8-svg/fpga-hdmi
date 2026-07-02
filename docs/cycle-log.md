@@ -18,6 +18,41 @@ Result:            (must include pass_condition=... and measured=..., per the
 Residual risks:
 ```
 
+## Cycle: gstreamer-rtp-kmssink-route-gate
+
+Objective: open a route gate for replacing the project-specific network-video
+receiver/display stack with GStreamer RTP raw video and `kmssink`.
+
+Changed scope:
+
+- Opened the route-gate cycle in `docs/current-cycle.md`.
+- Added this failure report after third-party audit found the frozen pass gate
+  under-specified.
+
+Verification:
+
+- No board or PC verification was run. The cycle failed before verification
+  because the frozen pass_condition removed required smoothness, drop-rate, and
+  frame-id-correspondence rulers.
+
+Board action:
+
+- None. No UART command, Ethernet test, HDMI capture, Vivado/PetaLinux build,
+  TF-card write, JTAG programming, or board flash write was performed.
+
+Evidence:
+
+- `docs/reports/gstreamer-rtp-kmssink-route-gate.md`
+- `docs/reports/eth-ps-pl-hdmi-pass-through.md`
+- commit `3ecad49` (`docs: audit gstreamer route-gate pass_condition for removed rulers`)
+
+Result: pass_condition=(pc_gst_launch_present == 1 and board_gst_launch_present == 1 and board_required_gst_elements_present == 5 and board_required_gst_elements_missing == 0 and board_sink == kmssink and board_display_device == /dev/dri/card0 and transport == rtp-raw-udp and self_written_udp_receiver_used == 0 and fbdev_live_write_used == 0 and pc_sender_frames >= 120 and hdmi_captured_frames >= 120 and captured_motion_frames >= 120 and tearing_frames == 0 and validator_status == pass), measured=(not_run, audit_status=fail, missing_required_gate_fields=frame_duration_stddev_ms<=4.0,drop_rate<=0.05_or_sent_equals_received,frame_id_correspondence) -> FAILED.
+
+Residual risks:
+
+- The GStreamer route is still untested.
+- The next cycle must reopen with corrected pass_condition before verification.
+
 ## Cycle: drm-kms-local-motion-pacing
 
 Objective: isolate the board display side by generating textured motion locally
