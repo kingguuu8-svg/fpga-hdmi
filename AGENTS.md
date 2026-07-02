@@ -26,8 +26,8 @@
   by the PC sender and PS baremetal receiver.
 - `docs/protocols/unified-passthrough-trace.md`: decoded sender/capture trace
   schema for reusable temporal pass-through validation.
-- `docs/current-cycle.md`: the current active cycle, or an explicit statement
-  that no implementation cycle is open.
+- `docs/current-cycle.md`: lightweight current-work note, or an explicit
+  statement that no work note is open.
 - `docs/cycle-log.md`: completed cycle ledger with commit IDs, verification
   scope, and residual risks.
 - `docs/reports/`: concise, git-tracked evidence reports for completed cycles.
@@ -53,12 +53,12 @@ Load the following child skills only when the corresponding stage is needed:
 
 - Keep one active route in `docs/project-roadmap.md`; do not scatter competing
   roadmaps across unregistered files.
-- A hardware work cycle is: write or modify sources, run simulation or the
-  closest available automated test, build/program the board when the change is
-  hardware-affecting, record evidence, then make one git commit.
-- For RTL, XDC, Tcl, board, or video-pipeline changes, a cycle is incomplete
-  until simulation and board programming have either passed or are explicitly
-  recorded as not run with the reason.
+- For meaningful project movement, leave an audit trail: what changed, why it
+  changed, what was verified, what was not verified, where the evidence lives,
+  and how to return to the previous known-good point.
+- For RTL, XDC, Tcl, board, or video-pipeline changes, run simulation or the
+  closest available automated test, and build/program the board when the change
+  is hardware-affecting unless there is a recorded reason not to.
 - Documentation-only changes may close as a documentation cycle without
   simulation or board programming, but must not be described as hardware
   verified.
@@ -83,87 +83,28 @@ Load the following child skills only when the corresponding stage is needed:
 - Backlog ideas are not active requirements. Promote an idea by adding it to the
   registered roadmap or asking the user to confirm the scope.
 
-## Verification standard governance
+## Cycle audit model
 
-These three rules exist to stop a cycle from lowering its own pass bar. They
-were added after a third-party review found that the project grew four
-mutually inconsistent ad-hoc validation standards along the dashboard line,
-each weaker than the last, while the strong validator was only ever used on
-static content and abandoned once content became dynamic. The fix is
-structural: make a weak standard unable to masquerade as a strong one, rather
-than relying on the cycle author to self-regulate.
+Cycle records are an audit aid, not a permission system. Trust the agent to
+move, but require it to leave a useful trail.
 
-### Rule 1 — pass-condition preregistration and freeze
-
-- Every implementation cycle must state its pass gate up front in
-  `docs/current-cycle.md` as two frozen fields, not as free-text `Closure
-  criteria:`:
-  - `pass_condition:` — a precise, numeric or boolean threshold. Examples:
-    `mean_luma > 8`, `frame_id match rate >= 95% over 50 captured frames`,
-    `grep -c finds the three named rules == 3`. Prose such as "capture looks
-    right" or "loop works" is not a valid pass_condition.
-  - `validator:` — the already-committed script, command, or check that
-    produces the measured value, named by path or command.
-- These two lines are frozen the moment the cycle becomes active. They must
-  not be edited during the work phase. To change the pass bar, close the
-  current cycle and open a new one that states the new bar up front.
-- The freeze must be auditable in git history. The `## Active Cycle` block
-  containing the frozen `pass_condition:` and `validator:` lines must be
-  committed to `docs/current-cycle.md` in a dedicated cycle-open commit BEFORE
-  any verification, simulation, or board action runs. The cycle-close commit
-  (which records `measured=` and moves the entry to `Recently Closed`) is a
-  separate, later commit. A cycle whose open and close land in a single commit
-  leaves no trail proving the bar was set before the result was known, and is
-  non-conformant. This sub-rule exists because
-  `unified-passthrough-validator-calibration`,
-  `unified-validator-boundary-order-fix`, and
-  `unified-15fps-image-evidence-pass-through` each opened and closed in one
-  commit, so `pass_condition` and `measured=` appeared together with no
-  evidence the bar was chosen first; a subsequent audit found the 15 fps cycle
-  had been iterated to convergence (multiple failed probe logs and a
-  discovered `sent_time_offset_ms` alignment parameter) before its frozen bar
-  was committed — exactly the retroactive bar-setting the freeze is meant to
-  prevent.
-- Exception: a cycle whose `pass_condition` is purely structural presence (for
-  example `grep finds the three named rules`, `template field names present`)
-  and that runs no verification whose numeric outcome could inform the bar may
-  close in a single commit, because no measurement could retroactively set a
-  presence check. Documentation-only, governance, and source-checkpoint cycles
-  typically qualify. Historical cycles before this sub-rule keep their
-  single-commit form; it applies forward, like Rule 3.
-- A cycle that closes with a `measured=` value failing its own preregistered
-  `pass_condition` must record Result as FAILED, not PASSED. Lowering the bar
-  to make a failing run pass is a governance violation, not a rescue.
-
-### Rule 2 — validator same-cycle prohibition
-
-- A validator script that serves as a cycle's primary pass gate must have been
-  committed in a prior cycle. A cycle may not both introduce a new validator
-  and use it to judge itself PASSED in the same commit.
-- The single exception is a cycle whose explicit objective is to introduce a
-  new validator. Such a cycle must calibrate the validator against both a
-  known-good case (the validator passes on correct output) and a known-bad
-  case (the validator fails on black screen, wrong color, or wrong frame
-  order). Both calibration results must be recorded in the cycle report. A
-  validator that passes everything, or that has only ever been run on the
-  output it was written to judge, is not calibrated and may not be used as a
-  pass gate by later cycles until it is calibrated.
-- This rule exists because `probe_mjpeg_stream.py` color classification,
-  `capture_hdmi.py` `non-black`/`none` profiles, and the `best-of-45` selection
-  were all written and used to judge PASSED in the same cycle that introduced
-  them. That is "building the ruler to fit the result".
-
-### Rule 3 — cycle-log records threshold and measured value
-
-- The `Result:` line in every `docs/cycle-log.md` entry must carry
-  `pass_condition=...` and `measured=...`, so a black-screen PASSED
-  (`pass_condition=mean_luma>8, measured=0.05`) is visible in the ledger
-  without excavating each report's residual risks.
-- Historical entries before this rule keep their existing prose `Result:`;
-  the rule applies forward from the cycle that introduced it. Rewriting
-  history is not required and not preferred.
-- A `Result:` line that says only `PASSED` or `FAILED` without the two fields
-  is non-conformant and must be amended in the same commit.
+- A cycle records meaningful project movement after or during the work. It does
+  not pre-approve direction, freeze a pass bar, or require a two-commit open
+  and close sequence.
+- `docs/current-cycle.md` may be used as a lightweight scratchpad when work is
+  large enough that a future reader would benefit from seeing intent before it
+  is closed. Small, obvious changes may skip it.
+- `docs/cycle-log.md` records completed work worth keeping in the project
+  ledger. It should capture intent, changed scope, verification performed,
+  evidence, rollback point, residual risk, and optional third-party review.
+- Verification should be concrete and honest. A result can cite thresholds and
+  measured values when they are useful, but the project no longer requires
+  fixed `pass_condition` or `validator` fields for every cycle.
+- Third-party review is the main review inlet. Append it to the relevant report
+  or cycle entry when performed; do not block current work waiting for it unless
+  the user explicitly asks.
+- Historical records that used frozen pass conditions remain valid historical
+  evidence. Do not rewrite them only to match the current lighter process.
 
 ## Fact consistency
 
@@ -173,10 +114,10 @@ not hold the concrete value of these facts; they may only reference the owner.
 | Fact class | Owner document |
 | --- | --- |
 | MVP scope, resolution, pixel format, input/output spec | `docs/project-roadmap.md` |
-| Active cycle state | `docs/current-cycle.md` |
+| Current work note | `docs/current-cycle.md` |
 | Board hard facts (pins, clocks, voltage, IP parameters) | `docs/boards/hellofpga-smart-zynq-sl.md` |
 | Workflow entry points and shortest paths | `skills/zynq7020-pipeline/SKILL.md` |
-| Pass-condition preregistration, validator same-cycle prohibition, cycle-log threshold/measured rules | `AGENTS.md` (this file, "Verification standard governance") |
+| Cycle audit model and third-party review inlet | `AGENTS.md` (this file, "Cycle audit model") |
 
 When an owner document changes one of these facts, every reference to it must
 be updated in the same commit. References must say "see `<owner>`" rather than
@@ -194,16 +135,15 @@ fix is not having conflicting copies in the first place.
 `skills/zynq7020-pipeline/SKILL.md` is a living workflow index, not a frozen
 initial version. It must grow as the project discovers new verified paths.
 
-When a cycle opens and follows a build/simulate/program/verify path that the
-pipeline skill does not yet record, and that path is later verified feasible in
-that cycle (a marker prints, a board action passes, or equivalent evidence),
-the same commit that closes the cycle must add that path to the pipeline skill
-as a new entry point.
+When work follows a build/simulate/program/verify path that the pipeline skill
+does not yet record, and that path is later verified feasible (a marker prints,
+a board action passes, or equivalent evidence), the same change should add that
+path to the pipeline skill as a new entry point.
 
 When a cycle verifies a shorter feasible path than one already recorded in the
-pipeline skill, the same commit must add the shorter path to the skill and mark
-it `preferred`, superseding the older longer path. The older path is kept for
-recovery context but is no longer the recommended first choice.
+pipeline skill, the same change should add the shorter path to the skill and
+mark it `preferred`, superseding the older longer path. The older path is kept
+for recovery context but is no longer the recommended first choice.
 
 A path may only be promoted into the skill after it is verified feasible.
 Paths that were attempted but failed (for example, a hand-written RGMII bridge
@@ -219,15 +159,11 @@ single-commit update discipline applies.
 
 ## Git management
 
-- Implementation cycles that preregister a frozen `pass_condition` require two
-  commits per cycle: (1) a cycle-open commit recording the `## Active Cycle`
-  block with the frozen `pass_condition:`/`validator:` and risk-field lines,
-  before verification runs; (2) a cycle-close commit recording `measured=` and
-  moving the entry to `Recently Closed`. Documentation-only, governance, and
-  source-checkpoint cycles whose `pass_condition` is structural presence may
-  remain a single commit (see the Rule 1 exception). Do not commit
-  half-finished write, simulation, or board-programming states unless the user
-  explicitly asks for a checkpoint commit.
+- Prefer one coherent commit per completed piece of work. Use additional
+  commits only when they improve review, rollback, or user-requested
+  checkpointing.
+- Do not commit half-finished write, simulation, or board-programming states
+  unless the user explicitly asks for a checkpoint commit.
 - Before committing, run `git status --short`, stage only files that belong to
   the completed cycle, and preserve unrelated user changes.
 - Commit message format: `cycle: <short result>` for implementation cycles,

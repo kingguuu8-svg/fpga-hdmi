@@ -1,76 +1,43 @@
 # Current Cycle
 
-Status: no active implementation cycle is open.
+Status: no active work note is open.
 
 ## Rule
 
-Open a cycle here before starting implementation work that should end in a
-commit. A cycle must have a concrete objective, verification plan, and closure
-criteria.
+Use this file as a lightweight current-work note when the work is large enough
+that intent, evidence, rollback point, or third-party review context would help
+a future reader. It is not a permission gate and does not need to be opened for
+small, obvious changes.
 
-## Cycle Template
+## Work Note Template
 
 ```text
 Cycle ID:
-Objective:
-Scope:
-Verification plan:
+Intent:
+Changed scope:
+Verification performed:
 Board action:
-Evidence target:
-pass_condition:
-validator:
-Highest-risk assumption this cycle falsifies:
-Cheapest alternative way to falsify the same assumption:
+Evidence:
+Rollback point:
+Third-party review:
+Residual risk:
 ```
 
-The last two fields are the human review gate for opening a cycle. They force
-the cycle author to state, before any work begins, which assumption is the
-riskiest one being tested and whether a cheaper experiment could falsify the
-same assumption. If the "cheapest alternative" line names a much shorter path
-than the planned scope, the cycle direction should be reconsidered before
-approval, not after debugging. These two lines exist to be read by a human at
-cycle open time; they are not a self-audit checklist for cycle close.
+`Verification performed` records what actually ran and what it showed. It may
+include thresholds and measured values when that is useful, but future work no
+longer requires frozen `pass_condition` or `validator` fields.
 
-The `pass_condition:` and `validator:` lines replace the former free-text
-`Closure criteria:`. They are governed by the "Verification standard
-governance" section of `AGENTS.md`:
+`Rollback point` should name the commit, artifact backup, or board image state
+that lets a future agent return to the previous known-good point.
 
-- `pass_condition:` is a precise, numeric or boolean threshold (for example
-  `mean_luma > 8`, `frame_id match rate >= 95%`, `grep finds the three named
-  rules`). Free-text prose like "capture looks right" is not acceptable.
-- `validator:` names the already-committed script, command, or check that
-  produces the measured value. It must point to a script that existed in a
-  prior commit (see the validator same-cycle prohibition rule in `AGENTS.md`),
-  unless this cycle's explicit objective is to introduce a new validator, in
-  which case the cycle must calibrate it against a known-good and a known-bad
-  case before it may be used as the pass gate.
-- These two lines are frozen once the cycle becomes active: they must not be
-  edited during the work phase. To change the pass bar, close this cycle and
-  open a new one with the new bar stated up front.
-- The freeze must be auditable: commit the `## Active Cycle` block (with the
-  frozen `pass_condition:`/`validator:` and risk-field lines) in a cycle-open
-  commit BEFORE running verification, then record `measured=` in a separate
-  cycle-close commit. See the Rule 1 open-commit sub-rule in `AGENTS.md`.
-  Cycles whose `pass_condition` is purely structural presence may use a single
-  commit.
+`Third-party review` is the review inlet. If no review was performed, write
+`none` or omit the line in the completed report.
 
-### Optional third-party review (recorded after cycle close, non-blocking)
-
-A closed cycle may carry a `## Third-party review` section appended after the
-cycle's own report. It records an external reviewer's verification findings:
-what was independently checked, whether claims hold up, and any residual
-concerns the reviewer spotted that the cycle's own closure criteria did not
-cover. This section is non-blocking — it does not reopen the cycle or gate the
-next one. Its purpose is to leave a durable, checked record so that the next
-agent or the human can read the reviewer's view alongside the cycle's own PASSED
-claim, and decide whether the residual concerns deserve a follow-up cycle.
-If no review was performed, omit the section entirely; do not write a
-placeholder.
 
 ## Active Cycle
 
 ```text
-No active implementation cycle is open.
+No active work note is open.
 ```
 
 ## Recently Closed Cycle
@@ -724,7 +691,7 @@ MJPEG frames as the source colors.
 Dashboard UART pause/resume/status actions now return real receiver markers
 from the running board receiver through `/tmp/video_ctl`.
 Unified pass-through trace validator is calibrated against synthetic good/bad
-cases and is the required pass gate for future faithful live pass-through
+cases and is the preferred evidence check for future faithful live pass-through
 claims.
 Unified pass-through validator boundary/order edge cases are fixed: exact
 19/20 matching passes at drop_rate=0.05, unmatched captures fail without
@@ -741,10 +708,9 @@ DRM/KMS local textured-motion display pacing is closed: the board generates
 120 textured frames locally, writes only DRM dumb back buffers, receives 120
 vblank page-flip events on /dev/dri/card0, HDMI capture validates 255
 motion-like frames, tearing_frames=0, and frame_duration_stddev_ms=1.514.
-Rule 1 open-commit sub-rule added: implementation cycles with a tunable
-pass_condition must commit the Active Cycle block before verification, so the
-frozen bar is auditable in git history; docs/governance cycles with a
-structural-presence pass_condition are excepted.
+Cycle governance is simplified: cycle records are now audit packages and
+third-party review inlets, not preregistered pass-gate procedures. Current
+rules live in AGENTS.md.
 Third-party review with independently re-run validator evidence appended to the
 boundary-fix and 15fps reports; one saved HDMI JPEG was independently
 marker-decoded and matched the trace's claimed frame_id.
@@ -759,9 +725,9 @@ ping result as the hand-written bridge BUFIO/BUFG crossing, not the physical
 layer. Do not resume this work.
 ```
 
-## Next Cycle Direction
+## Next Work Direction
 
-No active cycle is open. The next implementation cycle can build on two
+No active work note is open. The next implementation step can build on two
 verified facts: the Linux direct-copy network-to-HDMI transfer chain passes,
 and the board display side can page-flip textured motion through DRM/KMS with
 stable vblank cadence when network receive is removed. The hot-install-first
@@ -769,11 +735,7 @@ dependency route has now been falsified for the currently booted board image:
 the board has no apt/dpkg/opkg/rpm-style package manager, no default route or
 DNS, and a small in-memory rootfs rather than a package-managed ext4 rootfs.
 If the goal remains smooth network-driven video through mature Linux
-components, the next dependency cycle should build a PetaLinux/rootfs image
+components, the next dependency step should build a PetaLinux/rootfs image
 that includes GStreamer, or deliberately switch to a rootfs strategy that
 provides package management and persistent storage. PC-side GStreamer also
 needs a safe install path because winget failed on an installer hash mismatch.
-Because the next cycle will carry a tunable numeric `pass_condition`, it must
-follow the Rule 1 open-commit sub-rule: commit the `## Active Cycle` block with
-the frozen `pass_condition:`/`validator:` before running verification, then
-close in a separate commit.

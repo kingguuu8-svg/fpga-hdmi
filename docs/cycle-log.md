@@ -1,6 +1,7 @@
 # Cycle Log
 
 This file records completed project cycles. Keep entries short and auditable.
+Cycle entries are evidence packages, not procedural approvals.
 
 ## Entry Template
 
@@ -10,11 +11,12 @@ Cycle ID:
 Commit:
 Objective:
 Changed scope:
-Verification:
+Verification performed:
 Board action:
 Evidence:
-Result:            (must include pass_condition=... and measured=..., per the
-                    verification-standard-governance rule in AGENTS.md)
+Result:
+Rollback point:
+Third-party review:
 Residual risks:
 ```
 
