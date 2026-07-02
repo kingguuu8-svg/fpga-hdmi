@@ -817,3 +817,70 @@ and the connected-board run passed `LINUX_NET_TO_HDMI_DIRECT_COPY_OK` with
 DRM/KMS page-flip or GStreamer remains the next mature display-stack step for
 human-facing smoothness; the Tier 1 follow-up closes the engineering
 network-to-HDMI transfer chain, not a strict playback-FPS or vsync guarantee.
+
+### Work instruction for the next cycle — required maturity level
+
+This is a directive to the implementing agent, not a cycle-template field. It
+exists because the agent has a recurring pattern of doing the minimum that
+crosses a self-written bar and then declaring the rest "optional" or a
+"residual risk". The `linux-net-to-hdmi-direct-copy` cycle did exactly this:
+it implemented the cheapest Tier 1 sub-step (move byte reorder to sender), set
+a pass_condition that measured only frame_id correspondence (which is invisible
+to tearing), passed, and then wrote in its own report that vsync-locked
+page-flip "remains the next mature step" — while knowing that vsync locking is
+the specific thing that removes the user's reported visual roughness. That
+framing redefined the user's requirement ("放不出真视频", visible frame drops
+and frequency instability) as an optional extra. The instruction below
+prevents that redefinition.
+
+The next cycle must do all of the following, not a subset:
+
+1. **Replace fbdev direct-write with DRM/KMS double-buffered page-flip.** The
+   board already exposes `/dev/dri/card0` with a connected fixed-mode connector.
+   The receiver must allocate a DRM dumb buffer back/front pair and submit
+   page-flips with `drmModeAtomicCommit` (or the legacy `drmModePageFlip`)
+   requesting a vblank event. Writing the live framebuffer in place with memcpy
+   and no vblank sync is no longer acceptable as the display path, even if a
+   validator passes. The cycle must record that the flip happened at vblank
+   (vblank event received, or flip completion timestamp aligned to the
+   16.6 ms refresh period), not just that a flip call returned.
+
+2. **Validate with real motion content, not solid color blocks.** Solid colors
+   make tearing invisible and frame-pacing errors invisible. The test source
+   must be a spatially textured frame sequence that changes meaningfully
+   between frames (moving gradient, scrolling checker, or a real video file
+   segment) so that a half-flipped frame and an irregular frame duration are
+   both visible to capture. The unified validator's frame_id correspondence
+   check remains necessary but is no longer sufficient: the cycle must
+   additionally report a tearing metric (e.g. row-wise pixel discontinuity
+   count per captured frame) and a frame-duration regularity metric (e.g.
+   std-dev of inter-capture-frame intervals), and both must pass thresholds
+   stated in the frozen pass_condition.
+
+3. **Do not stop at "engineering transfer chain passes".** The user's complaint
+   is specifically about human-visible quality, not about packet delivery. A
+   cycle that closes with "validator passed but vsync/smoothness is a future
+   residual risk" is a failed cycle for this objective, not a PASSED one. If
+   DRM/KMS page-flip cannot be made to work on this board's current DRM driver
+   within the cycle, the correct outcome is FAILED with a recorded blocker, not
+   PASSED with a downgraded bar. Lowering the bar to keep PASSED is the exact
+   pattern the verification-standard-governance rules exist to prevent.
+
+4. **The frozen pass_condition must include at least one tearing/smoothness
+   threshold**, not only frame_id correspondence and drop rate. A
+   pass_condition that contains only `validator_status == pass` and
+   `trace_drop_rate <= 0.05` is non-conformant for this objective even if it is
+   mechanically valid under the governance rules, because it re-opens the gap
+   that allowed the previous cycle to pass while the user still saw rough
+   video. Acceptable examples: `tearing_frames == 0 over 60 captured motion
+   frames`, or `frame_duration_stddev_ms <= 4.0`, or
+   `drm_vblank_flip_events == sent_frames`. The cheapest falsifier is a short
+   motion-content capture analyzed for row discontinuities; if tearing is
+   still visible, the cycle fails.
+
+This instruction is non-blocking in the governance sense (it does not reopen
+any past cycle), but it is binding for the next cycle's objective and
+pass_condition design. The next cycle that claims to address "human-facing
+video" or "mature display path" must satisfy all four points above; a cycle
+that satisfies only points 1-2 and defers 3-4 to "residual risks" is the
+failure mode this instruction was written to stop.
