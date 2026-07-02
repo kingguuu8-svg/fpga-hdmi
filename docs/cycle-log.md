@@ -1837,3 +1837,28 @@ Residual risks:
 - This cycle is itself single-commit. It qualifies for the structural-presence
   exception: its pass_condition is a grep presence check, not a tunable
   threshold, and no verification result could retroactively set the bar.
+
+## Cycle: dashboard-unified-15fps-paired-preview
+
+Objective: move Dashboard onto the unified sender and pair its left preview to
+the HDMI-decoded frame ID.
+
+Verification:
+
+- PC compile and Dashboard/sender self-tests passed.
+- Connected board wrote all 90 validation IDs with network dropped=0.
+- Dedicated UVC producer allowed the committed trace validator to match 90/90
+  HDMI-returned frame IDs with no order/content/black/image-path failures.
+- Twenty preview header checks reported equal left/HDMI IDs.
+- User rejected the equality-by-construction preview because it hid natural
+  latency rather than presenting independent sent and received timelines.
+- Supplemental sender-trace timing measured 12.011 actual fps despite the
+  configured 15 fps value.
+
+Board action: Linux receiver from `/tmp`, UDP RGB888 over Ethernet, HDMI/UVC
+capture, and UART shell control. No persistent board write.
+
+Evidence: `docs/reports/dashboard-unified-15fps-paired-preview.md` and
+`build/dashboard-unified-15fps-paired-preview/`.
+
+Result: pass_condition=(dashboard_sender_kind == unified and sender_fps == 15 and receiver_present_fps == 15 and hdmi_sample_fps == 15 and content_dwell_seconds == 5 and paired_preview_samples >= 20 and paired_preview_id_mismatches == 0 and sent_frames == 90 and receiver_written_frames == 90 and receiver_dropped_packets == 0 and validator_status == pass and trace_matched_frames >= 86 and trace_drop_rate <= 0.05 and trace_order_violations == 0 and trace_content_mismatches == 0 and trace_black_frames == 0 and trace_image_path_failures == 0 and trace_max_latency_ms <= 1000), measured=(dashboard_sender_kind=unified, configured_sender_fps=15, sender_measured_fps=12.011, receiver_present_fps=15, hdmi_sample_fps=15, content_dwell_seconds=5, paired_preview_samples=20, paired_preview_id_mismatches=0, sent_frames=90, receiver_written_frames=90, receiver_dropped_packets=0, validator_status=pass, trace_matched_frames=90, trace_drop_rate=0.0, trace_order_violations=0, trace_content_mismatches=0, trace_black_frames=0, trace_image_path_failures=0, trace_max_latency_ms=141.088, user_acceptance=failed-paired-preview-rejected) -> FAILED.

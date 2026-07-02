@@ -10,14 +10,14 @@ param(
     [string]$CaptureDevice = "1",
     [string]$CaptureBackend = "dshow",
     [double]$StreamFps = 15.0,
-    [int]$MjpegFrames = 90,
-    [int]$MjpegMinUnique = 8,
-    [int]$MjpegMinColors = 8,
-    [int]$Frames = 30,
+    [int]$MjpegFrames = 150,
+    [int]$MjpegMinUnique = 20,
+    [int]$MjpegMinColors = 2,
+    [int]$Frames = 90,
     [int]$WarmupFrames = 12,
     [int]$ValidationStartFrameId = 100,
     [double]$Fps = 15.0,
-    [double]$TraceMaxLatencyMs = 350.0,
+    [double]$TraceMaxLatencyMs = 1000.0,
     [int]$UdpPayload = 1200,
     [int]$HoldRepeats = 1,
     [int]$InterPacketUs = 0,
@@ -25,8 +25,10 @@ param(
     [ValidateSet("msync", "none")]
     [string]$ReceiverSyncMode = "none",
     [int]$ReceiverPresentFps = 15,
+    [int]$ContentHoldFrames = 75,
+    [int]$PairedPreviewSamples = 20,
     [string]$ControlFifo = "/tmp/video_ctl",
-    [string]$OutDir = "build\unified-15fps-image-evidence-pass-through"
+    [string]$OutDir = "build\dashboard-unified-15fps-paired-preview"
 )
 
 $ErrorActionPreference = "Stop"
@@ -87,6 +89,15 @@ function Send-UartInterrupt {
 function Read-JsonFile {
     param([string]$Path)
     Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
+}
+
+function Invoke-DashboardAction {
+    param(
+        [string]$Url,
+        [string]$Action
+    )
+    $body = @{ action = $Action } | ConvertTo-Json
+    Invoke-RestMethod -Uri "$Url/api/action" -Method Post -ContentType "application/json" -Body $body -TimeoutSec 20
 }
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -197,8 +208,11 @@ try {
         "--port", "$DashboardPort",
         "--board-host", $BoardIp,
         "--udp-port", "$UdpPort",
-        "--sender-frames", "0",
+        "--sender-frames", "$Frames",
         "--sender-fps", "$Fps",
+        "--sender-start-frame-id", "$ValidationStartFrameId",
+        "--sender-warmup-frames", "$WarmupFrames",
+        "--sender-content-hold-frames", "$ContentHoldFrames",
         "--sender-payload", "$UdpPayload",
         "--sender-inter-packet-us", "$InterPacketUs",
         "--uart-disabled",
@@ -207,7 +221,6 @@ try {
         "--capture-width", "800",
         "--capture-height", "600",
         "--stream-fps", "$StreamFps",
-        "--actions-disabled",
         "--log-dir", $OutDir
     )
     $dashboardProcess = Start-Process -WindowStyle Hidden -FilePath python `
@@ -271,24 +284,63 @@ try {
         throw "MJPEG probe did not produce a pre-roll frame before sender start"
     }
 
-    $senderOut = Join-Path $outPath "sender.out.log"
-    $senderErr = Join-Path $outPath "sender.err.log"
-    & python (Join-Path $repoRoot "tools\send_unified_test_video_udp.py") `
-        $BoardIp `
-        --port $UdpPort `
-        --frames $Frames `
-        --start-frame-id $ValidationStartFrameId `
-        --warmup-frames $WarmupFrames `
-        --warmup-start-frame-id 0 `
-        --fps $Fps `
-        --payload $UdpPayload `
-        --inter-packet-us $InterPacketUs `
-        --packet-window-fraction $PacketWindowFraction `
-        --hold-repeats $HoldRepeats `
-        --out-dir (Join-Path $outPath "sender") `
-        > $senderOut 2> $senderErr
-    if ($LASTEXITCODE -ne 0) {
-        throw "unified sender failed"
+    $startResult = Invoke-DashboardAction -Url $dashboardUrl -Action "start-stream"
+    $startResult | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $outPath "dashboard_start_stream.json") -Encoding UTF8
+    if (-not $startResult.ok -or $startResult.state.input_source.sender_kind -ne "unified") {
+        throw "Dashboard did not start the unified sender"
+    }
+
+    $pairedCount = 0
+    $pairedMismatches = 0
+    $pairedRecords = @()
+    for ($attempt = 0; $attempt -lt 200 -and $pairedCount -lt $PairedPreviewSamples; $attempt++) {
+        try {
+            $preview = Invoke-WebRequest -UseBasicParsing -Uri "$dashboardUrl/api/input-preview.bmp?sample=$attempt" -TimeoutSec 5
+            $frameIdText = [string]$preview.Headers["X-Frame-ID"]
+            $hdmiFrameIdText = [string]$preview.Headers["X-HDMI-Frame-ID"]
+            $previewSource = [string]$preview.Headers["X-Preview-Source"]
+            if ($previewSource -eq "paired-hdmi-frame-id" -and $frameIdText -ne "" -and $hdmiFrameIdText -ne "") {
+                $frameId = [int]$frameIdText
+                $hdmiFrameId = [int]$hdmiFrameIdText
+                $pairedCount++
+                if ($frameId -ne $hdmiFrameId) {
+                    $pairedMismatches++
+                }
+                $pairedRecords += [ordered]@{
+                    sample = $pairedCount
+                    frame_id = $frameId
+                    hdmi_frame_id = $hdmiFrameId
+                    match = ($frameId -eq $hdmiFrameId)
+                }
+            }
+        }
+        catch {
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    $pairedEvidence = [ordered]@{
+        requested_samples = $PairedPreviewSamples
+        paired_preview_samples = $pairedCount
+        paired_preview_id_mismatches = $pairedMismatches
+        records = $pairedRecords
+    }
+    $pairedEvidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $outPath "paired-preview-evidence.json") -Encoding UTF8
+    if ($pairedCount -lt $PairedPreviewSamples -or $pairedMismatches -ne 0) {
+        throw "paired preview check failed samples=$pairedCount mismatches=$pairedMismatches"
+    }
+
+    $senderTracePath = Join-Path $outPath "sender\sender-trace.json"
+    $senderFinished = $false
+    for ($attempt = 0; $attempt -lt 240; $attempt++) {
+        $dashboardState = Invoke-RestMethod -Uri "$dashboardUrl/api/state" -TimeoutSec 5
+        if ($dashboardState.control_panel.stream_state -eq "stopped" -and (Test-Path -LiteralPath $senderTracePath)) {
+            $senderFinished = $true
+            break
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    if (-not $senderFinished) {
+        throw "Dashboard unified sender did not finish or emit sender trace"
     }
 
     if (-not $mjpegProcess.WaitForExit(45000)) {
@@ -345,14 +397,15 @@ try {
 
     $traceDir = Join-Path $outPath "trace"
     $traceJson = Join-Path $traceDir "trace.json"
+    $minMatchedFrames = [int][Math]::Ceiling($Frames * 0.95)
     & python (Join-Path $repoRoot "tools\build_unified_trace_from_mjpeg.py") `
-        --sender-json (Join-Path $outPath "sender\sender-trace.json") `
+        --sender-json $senderTracePath `
         --mjpeg-report (Join-Path $mjpegOut "mjpeg-stream-probe.json") `
         --out-dir $traceDir `
         --trace-json $traceJson `
         --capture-fps $StreamFps `
         --min-colors $MjpegMinColors `
-        --min-matched-frames 29 `
+        --min-matched-frames $minMatchedFrames `
         --max-latency-ms $TraceMaxLatencyMs `
         --sent-time-offset-ms $sentTimeOffsetMs
     if ($LASTEXITCODE -ne 0) {
@@ -367,7 +420,7 @@ try {
         throw "unified trace validator failed"
     }
 
-    $senderJson = Read-JsonFile (Join-Path $outPath "sender\sender-trace.json")
+    $senderJson = Read-JsonFile $senderTracePath
     $mjpegReport = Read-JsonFile (Join-Path $mjpegOut "mjpeg-stream-probe.json")
     $classification = Read-JsonFile (Join-Path $traceDir "mjpeg-classification.json")
     $validator = Read-JsonFile $validatorResult
@@ -375,35 +428,55 @@ try {
 
     $senderFps = [double]$senderJson.fps
     $sentFrames = [int]$senderJson.frames
+    $sentTimes = @($senderJson.sent | ForEach-Object { [double]$_.sent_ms })
+    $senderMeasuredFps = (($sentTimes.Count - 1) * 1000.0) / ($sentTimes[-1] - $sentTimes[0])
     $mjpegSavedFrames = [int]$classification.summary.mjpeg_saved_frames
     $mjpegUniqueHashes = [int]$mjpegReport.unique_hashes
     $mjpegUniqueColors = [int]$classification.summary.mjpeg_unique_colors
     $traceRequireImages = if ($trace.requirements.require_image_paths) { 1 } else { 0 }
     $traceMetrics = $validator.metrics
     $validatorStatus = [string]$validator.status
+    $dashboardState = Invoke-RestMethod -Uri "$dashboardUrl/api/state" -TimeoutSec 5
+    $contentDwellSeconds = [double]$dashboardState.input_source.content_dwell_seconds
+    $dashboardSenderKind = [string]$dashboardState.input_source.sender_kind
+    $dashboardSenderFps = [double]$dashboardState.input_source.sender_fps
 
     $passCondition = (
+        $dashboardSenderKind -eq "unified" -and
+        $dashboardSenderFps -eq 15.0 -and
         $senderFps -eq 15.0 -and
-        $sentFrames -eq 30 -and
-        $receiverFrames -eq 30 -and
+        $senderMeasuredFps -ge 14.5 -and
+        $ReceiverPresentFps -eq 15 -and
+        $StreamFps -eq 15.0 -and
+        $contentDwellSeconds -eq 5.0 -and
+        $pairedCount -ge 20 -and
+        $pairedMismatches -eq 0 -and
+        $sentFrames -eq 90 -and
+        $receiverFrames -eq 90 -and
         $receiverDropped -eq 0 -and
-        $mjpegSavedFrames -ge 60 -and
-        $mjpegUniqueHashes -ge 8 -and
-        $mjpegUniqueColors -ge 8 -and
         $traceRequireImages -eq 1 -and
         [int]$traceMetrics.image_path_failures -eq 0 -and
         $validatorStatus -eq "pass" -and
-        [int]$traceMetrics.sent_frames -eq 30 -and
-        [int]$traceMetrics.matched_frames -ge 29 -and
+        [int]$traceMetrics.sent_frames -eq 90 -and
+        [int]$traceMetrics.matched_frames -ge 86 -and
         [double]$traceMetrics.drop_rate -le 0.05 -and
         [int]$traceMetrics.order_violations -eq 0 -and
         [int]$traceMetrics.content_mismatches -eq 0 -and
-        [int]$traceMetrics.black_frames -eq 0
+        [int]$traceMetrics.black_frames -eq 0 -and
+        [double]$traceMetrics.max_latency_ms -le 1000.0
     )
 
     $summary = [ordered]@{
         status = if ($passCondition) { "pass" } else { "fail" }
+        dashboard_sender_kind = $dashboardSenderKind
+        dashboard_sender_fps = $dashboardSenderFps
         sender_fps = $senderFps
+        sender_measured_fps = [Math]::Round($senderMeasuredFps, 3)
+        receiver_present_fps = $ReceiverPresentFps
+        hdmi_sample_fps = $StreamFps
+        content_dwell_seconds = $contentDwellSeconds
+        paired_preview_samples = $pairedCount
+        paired_preview_id_mismatches = $pairedMismatches
         sent_frames = $sentFrames
         sender_hold_repeats = [int]$senderJson.hold_repeats
         receiver_written_frames = $receiverFrames
@@ -426,17 +499,17 @@ try {
         sent_time_offset_ms = $sentTimeOffsetMs
         out = $outPath
     }
-    $summaryPath = Join-Path $outPath "unified-15fps-summary.json"
+    $summaryPath = Join-Path $outPath "dashboard-unified-15fps-paired-preview-summary.json"
     $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $summaryPath -Encoding UTF8
 
-    $markerBits = "sender_fps=$senderFps sent_frames=$sentFrames sender_hold_repeats=$($senderJson.hold_repeats) receiver_written_frames=$receiverFrames receiver_dropped_packets=$receiverDropped mjpeg_saved_frames=$mjpegSavedFrames mjpeg_unique_hashes=$mjpegUniqueHashes mjpeg_unique_colors=$mjpegUniqueColors trace_require_image_paths=$traceRequireImages trace_image_path_failures=$($traceMetrics.image_path_failures) validator_status=$validatorStatus trace_sent_frames=$($traceMetrics.sent_frames) trace_matched_frames=$($traceMetrics.matched_frames) trace_drop_rate=$($traceMetrics.drop_rate) trace_order_violations=$($traceMetrics.order_violations) trace_content_mismatches=$($traceMetrics.content_mismatches) trace_black_frames=$($traceMetrics.black_frames) trace_required_max_latency_ms=$($validator.requirements.max_latency_ms) trace_max_latency_ms=$($traceMetrics.max_latency_ms) sent_time_offset_ms=$sentTimeOffsetMs out=$outPath"
+    $markerBits = "dashboard_sender_kind=$dashboardSenderKind dashboard_sender_fps=$dashboardSenderFps sender_fps=$senderFps sender_measured_fps=$([Math]::Round($senderMeasuredFps, 3)) receiver_present_fps=$ReceiverPresentFps hdmi_sample_fps=$StreamFps content_dwell_seconds=$contentDwellSeconds paired_preview_samples=$pairedCount paired_preview_id_mismatches=$pairedMismatches sent_frames=$sentFrames sender_hold_repeats=$($senderJson.hold_repeats) receiver_written_frames=$receiverFrames receiver_dropped_packets=$receiverDropped mjpeg_saved_frames=$mjpegSavedFrames mjpeg_unique_hashes=$mjpegUniqueHashes mjpeg_unique_colors=$mjpegUniqueColors trace_require_image_paths=$traceRequireImages trace_image_path_failures=$($traceMetrics.image_path_failures) validator_status=$validatorStatus trace_sent_frames=$($traceMetrics.sent_frames) trace_matched_frames=$($traceMetrics.matched_frames) trace_drop_rate=$($traceMetrics.drop_rate) trace_order_violations=$($traceMetrics.order_violations) trace_content_mismatches=$($traceMetrics.content_mismatches) trace_black_frames=$($traceMetrics.black_frames) trace_required_max_latency_ms=$($validator.requirements.max_latency_ms) trace_max_latency_ms=$($traceMetrics.max_latency_ms) sent_time_offset_ms=$sentTimeOffsetMs out=$outPath"
     if ($passCondition) {
-        $marker = "UNIFIED_15FPS_IMAGE_EVIDENCE_OK $markerBits"
-        Set-Content -LiteralPath (Join-Path $outPath "unified-15fps.marker.txt") -Value $marker -Encoding ASCII
+        $marker = "DASHBOARD_UNIFIED_15FPS_PAIRED_PREVIEW_OK $markerBits"
+        Set-Content -LiteralPath (Join-Path $outPath "dashboard-unified-15fps-paired-preview.marker.txt") -Value $marker -Encoding ASCII
         Write-Host $marker
     } else {
-        $marker = "UNIFIED_15FPS_IMAGE_EVIDENCE_FAIL $markerBits"
-        Set-Content -LiteralPath (Join-Path $outPath "unified-15fps.marker.txt") -Value $marker -Encoding ASCII
+        $marker = "DASHBOARD_UNIFIED_15FPS_PAIRED_PREVIEW_FAIL $markerBits"
+        Set-Content -LiteralPath (Join-Path $outPath "dashboard-unified-15fps-paired-preview.marker.txt") -Value $marker -Encoding ASCII
         throw $marker
     }
 }

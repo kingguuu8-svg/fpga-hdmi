@@ -11,6 +11,7 @@ import argparse
 import html
 import json
 import mimetypes
+import queue
 import socket
 import struct
 import subprocess
@@ -22,12 +23,18 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
-try:
-    from dashboard.demo_source import frame_sha256, make_demo_frame
-except ModuleNotFoundError:
-    from demo_source import frame_sha256, make_demo_frame
+TOOLS_DIR = Path(__file__).resolve().parents[1]
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_DIR))
+
+from send_unified_test_video_udp import (  # noqa: E402
+    color_for_frame,
+    decode_marker_from_frame,
+    frame_sha256,
+    make_color_frame,
+)
 
 
 DEFAULT_WIDTH = 800
@@ -35,9 +42,11 @@ DEFAULT_HEIGHT = 600
 DEFAULT_BOARD_HOST = "192.168.1.10"
 DEFAULT_UDP_PORT = 5005
 DEFAULT_SENDER_FRAMES = 0
-DEFAULT_SENDER_FPS = 1.0
+DEFAULT_SENDER_FPS = 15.0
+DEFAULT_SENDER_START_FRAME_ID = 100
+DEFAULT_CONTENT_HOLD_FRAMES = 75
 DEFAULT_SENDER_PAYLOAD = 1200
-DEFAULT_SENDER_INTER_PACKET_US = 200.0
+DEFAULT_SENDER_INTER_PACKET_US = 0.0
 DEFAULT_UART_PORT = "COM16"
 DEFAULT_UART_BAUD = 115200
 DEFAULT_CONTROL_FIFO = "/tmp/video_ctl"
@@ -48,7 +57,7 @@ DEFAULT_CAPTURE_HEIGHT = 600
 DEFAULT_CAPTURE_FRAMES = 8
 DEFAULT_CAPTURE_PROFILE = "none"
 DEFAULT_CAPTURE_SAVE_SAMPLES = 0
-DEFAULT_STREAM_FPS = 10.0
+DEFAULT_STREAM_FPS = 15.0
 NO_CAMERA_POLICY = "Generated PC input only. Camera/webcam and custom file input are disabled for MVP."
 
 
@@ -57,13 +66,13 @@ ACTION_DEFINITIONS = [
         "id": "start-stream",
         "label": "Start stream",
         "kind": "sender-process",
-        "semantics": "start dashboard-owned fixed demo UDP sender; right panel reads HDMI return MJPEG",
+        "semantics": "start dashboard-owned unified 15 fps UDP sender; right panel reads HDMI return MJPEG",
     },
     {
         "id": "stop-stream",
         "label": "Stop stream",
         "kind": "sender-process",
-        "semantics": "stop dashboard-owned fixed demo UDP sender",
+        "semantics": "stop dashboard-owned unified UDP sender",
     },
     {
         "id": "capture-output",
@@ -110,6 +119,53 @@ def rgb888_to_bmp(frame: bytes, width: int, height: int) -> bytes:
     if len(frame) != expected:
         raise ValueError(f"RGB888 frame has {len(frame)} bytes, expected {expected}")
 
+    try:
+        from PIL import Image
+
+        image = Image.frombytes("RGB", (width, height), frame)
+        packed = image.transpose(Image.Transpose.FLIP_TOP_BOTTOM).tobytes("raw", "BGR")
+        row_bytes = width * 3
+        row_size = ((row_bytes + 3) // 4) * 4
+        if row_size == row_bytes:
+            pixel_bytes = packed
+        else:
+            padding = b"\x00" * (row_size - row_bytes)
+            pixel_bytes = b"".join(
+                packed[offset : offset + row_bytes] + padding
+                for offset in range(0, len(packed), row_bytes)
+            )
+        file_size = 14 + 40 + len(pixel_bytes)
+        return (
+            b"BM"
+            + struct.pack("<IHHI", file_size, 0, 0, 54)
+            + struct.pack("<IiiHHIIiiII", 40, width, height, 1, 24, 0, len(pixel_bytes), 2835, 2835, 0, 0)
+            + pixel_bytes
+        )
+    except ImportError:
+        pass
+
+    try:
+        import numpy as np
+
+        rgb = np.frombuffer(frame, dtype=np.uint8).reshape((height, width, 3))
+        row_size = ((width * 3 + 3) // 4) * 4
+        bgr_bottom_up = rgb[::-1, :, ::-1]
+        if row_size == width * 3:
+            pixel_bytes = bgr_bottom_up.tobytes()
+        else:
+            padded = np.zeros((height, row_size), dtype=np.uint8)
+            padded[:, : width * 3] = bgr_bottom_up.reshape((height, width * 3))
+            pixel_bytes = padded.tobytes()
+        file_size = 14 + 40 + len(pixel_bytes)
+        return (
+            b"BM"
+            + struct.pack("<IHHI", file_size, 0, 0, 54)
+            + struct.pack("<IiiHHIIiiII", 40, width, height, 1, 24, 0, len(pixel_bytes), 2835, 2835, 0, 0)
+            + pixel_bytes
+        )
+    except ImportError:
+        pass
+
     row_size = ((width * 3 + 3) // 4) * 4
     pixel_bytes = bytearray(row_size * height)
     for out_y in range(height):
@@ -129,9 +185,16 @@ def rgb888_to_bmp(frame: bytes, width: int, height: int) -> bytes:
     )
 
 
-def make_input_bmp(frame: int, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT) -> tuple[bytes, str]:
-    """Return the exact deterministic source frame used by the UDP sender."""
-    rgb = make_demo_frame(width, height, frame)
+def make_input_bmp(
+    frame_id: int,
+    width: int = DEFAULT_WIDTH,
+    height: int = DEFAULT_HEIGHT,
+    content_hold_frames: int = DEFAULT_CONTENT_HOLD_FRAMES,
+    content_start_frame_id: int = DEFAULT_SENDER_START_FRAME_ID,
+) -> tuple[bytes, str]:
+    """Rebuild an actually sent unified frame from its committed frame ID."""
+    _, color = color_for_frame(frame_id, content_hold_frames, content_start_frame_id)
+    rgb = make_color_frame(width, height, color, frame_id)
     return rgb888_to_bmp(rgb, width, height), frame_sha256(rgb)
 
 
@@ -218,8 +281,8 @@ def dashboard_html(actions_enabled: bool = True) -> bytes:
   <main>
     <section data-panel="input">
       <h2>Input to FPGA</h2>
-      <img class="preview" id="input-preview" src="/api/input-preview.bmp?frame=0" alt="actual generated PC UDP frame preview">
-      <div class="meta">source: exact generated PC RGB888 UDP frame
+      <img class="preview" id="input-preview" src="/api/input-preview.bmp" alt="actual sent PC UDP frame paired to HDMI return">
+      <div class="meta">source: actual sent unified RGB888 frame, paired by HDMI frame_id
 camera: disabled
 custom file: deferred</div>
     </section>
@@ -256,11 +319,13 @@ note: Windows may label the HDMI/UVC adapter as a camera device</div>
         " sender_pid=" + (state.control_panel.sender_pid || "none") +
         " hdmi=" + state.output_preview.capture_status +
         " uart=" + state.control_panel.uart_status +
-        " effect=" + state.control_panel.selected_effect;
+        " effect=" + state.control_panel.selected_effect +
+        " sent_id=" + (state.input_source.latest_sent_frame_id ?? "waiting") +
+        " hdmi_id=" + (state.input_source.latest_hdmi_frame_id ?? "waiting");
     }}
     async function refreshState() {{
       frame = (frame + 1) % 100000;
-      document.getElementById("input-preview").src = "/api/input-preview.bmp?frame=" + frame;
+      document.getElementById("input-preview").src = "/api/input-preview.bmp?refresh=" + frame;
       const state = await fetch("/api/state").then(r => r.json());
       applyState(state);
     }}
@@ -297,6 +362,9 @@ class DashboardState:
         udp_port: int = DEFAULT_UDP_PORT,
         sender_frames: int = DEFAULT_SENDER_FRAMES,
         sender_fps: float = DEFAULT_SENDER_FPS,
+        sender_start_frame_id: int = DEFAULT_SENDER_START_FRAME_ID,
+        sender_warmup_frames: int = 0,
+        sender_content_hold_frames: int = DEFAULT_CONTENT_HOLD_FRAMES,
         sender_width: int = DEFAULT_WIDTH,
         sender_height: int = DEFAULT_HEIGHT,
         sender_payload: int = DEFAULT_SENDER_PAYLOAD,
@@ -324,6 +392,9 @@ class DashboardState:
         self.udp_port = udp_port
         self.sender_frames = sender_frames
         self.sender_fps = sender_fps
+        self.sender_start_frame_id = sender_start_frame_id
+        self.sender_warmup_frames = sender_warmup_frames
+        self.sender_content_hold_frames = sender_content_hold_frames
         self.sender_width = sender_width
         self.sender_height = sender_height
         self.sender_payload = sender_payload
@@ -344,6 +415,9 @@ class DashboardState:
         self.actions_enabled = actions_enabled
         self.action_mode = action_mode
         self.log_dir = log_dir or self.repo_root / "build" / "dashboard-live"
+        self.sender_out_dir = self.log_dir / "sender"
+        self.sender_live_state_path = self.sender_out_dir / "live-state.json"
+        self.sender_live_state_path.unlink(missing_ok=True)
         self.output_image = output_image or (self.log_dir / "hdmi-capture" / "latest.png")
         self.lock = threading.Lock()
         self.sender_process: subprocess.Popen[bytes] | None = None
@@ -359,6 +433,8 @@ class DashboardState:
         self.live_stream_status = "enabled" if capture_enabled else "disabled"
         self.live_stream_detail = ""
         self.live_stream_clients = 0
+        self.last_returned_frame_id: int | None = None
+        self.last_returned_frame_at_s: float | None = None
         self.receiver_paused = False
         self.selected_effect = "none"
         self.last_action: dict[str, Any] | None = None
@@ -366,6 +442,7 @@ class DashboardState:
             "dashboard ready",
             "ui: minimal",
             f"sender target: {board_host}:{udp_port}",
+            f"sender kind: unified fps={sender_fps:g} content_dwell={sender_content_hold_frames / sender_fps:g}s",
             f"sender frames: {'continuous' if sender_frames == 0 else sender_frames}",
             f"hdmi capture: {'enabled' if capture_enabled else 'disabled'}",
             "hdmi return: live MJPEG preview; Windows may report the HDMI capture adapter as camera access",
@@ -380,6 +457,39 @@ class DashboardState:
     def _append_log_locked(self, line: str) -> None:
         self.logs.append(line)
         del self.logs[:-120]
+
+    def _read_sender_live_state_locked(self) -> dict[str, Any] | None:
+        try:
+            return json.loads(self.sender_live_state_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return None
+
+    def input_preview_descriptor(self) -> dict[str, Any]:
+        with self.lock:
+            live = self._read_sender_live_state_locked()
+            hdmi_frame_id = self.last_returned_frame_id
+            if live is None:
+                return {
+                    "frame_id": self.sender_start_frame_id,
+                    "hdmi_frame_id": None,
+                    "latest_sent_frame_id": None,
+                    "source": "waiting-for-actual-sent-frame",
+                }
+
+            latest_sent = int(live["frame_id"])
+            first_sent = int(live["first_frame_id"])
+            paired = hdmi_frame_id is not None and first_sent <= hdmi_frame_id <= latest_sent
+            return {
+                "frame_id": int(hdmi_frame_id) if paired else latest_sent,
+                "hdmi_frame_id": int(hdmi_frame_id) if paired else None,
+                "latest_sent_frame_id": latest_sent,
+                "source": "paired-hdmi-frame-id" if paired else "latest-actual-sent-frame",
+            }
+
+    def _record_returned_frame_id(self, frame_id: int) -> None:
+        with self.lock:
+            self.last_returned_frame_id = frame_id
+            self.last_returned_frame_at_s = round(time.time() - self.started_at, 3)
 
     def _sender_alive_locked(self) -> bool:
         if self.sender_process is None:
@@ -402,7 +512,7 @@ class DashboardState:
     def _sender_command_locked(self) -> list[str]:
         return [
             sys.executable,
-            str(self.repo_root / "tools" / "send_demo_video_udp.py"),
+            str(self.repo_root / "tools" / "send_unified_test_video_udp.py"),
             self.board_host,
             "--port",
             str(self.udp_port),
@@ -414,10 +524,25 @@ class DashboardState:
             f"{self.sender_fps:g}",
             "--frames",
             str(self.sender_frames),
+            "--start-frame-id",
+            str(self.sender_start_frame_id),
+            "--warmup-frames",
+            str(self.sender_warmup_frames),
+            "--warmup-start-frame-id",
+            "0",
             "--payload",
             str(self.sender_payload),
             "--inter-packet-us",
             f"{self.sender_inter_packet_us:g}",
+            "--packet-window-fraction",
+            "0.85",
+            "--burst",
+            "--content-hold-frames",
+            str(self.sender_content_hold_frames),
+            "--live-state-json",
+            str(self.sender_live_state_path),
+            "--out-dir",
+            str(self.sender_out_dir),
         ]
 
     def _capture_command_locked(self) -> tuple[list[str], Path, Path, Path]:
@@ -598,6 +723,10 @@ class DashboardState:
 
         stdout_path, stderr_path = self._sender_log_paths()
         cmd = self._sender_command_locked()
+        self.sender_live_state_path.unlink(missing_ok=True)
+        self.sender_out_dir.mkdir(parents=True, exist_ok=True)
+        self.last_returned_frame_id = None
+        self.last_returned_frame_at_s = None
         with stdout_path.open("ab") as stdout_file, stderr_path.open("ab") as stderr_file:
             self.sender_process = subprocess.Popen(
                 cmd,
@@ -790,16 +919,25 @@ class DashboardState:
     def _as_json_locked(self) -> dict[str, Any]:
         sender_pid = self._sender_pid_locked()
         stream_state = "running" if sender_pid is not None else "stopped"
+        live = self._read_sender_live_state_locked()
         return {
             "status": "action-ready" if self.actions_enabled else "disabled",
             "panels": ["input-preview", "fpga-output-preview", "function-control-panel"],
             "input_source": {
-                "kind": "generated",
+                "kind": "unified-actual-sent",
                 "camera_enabled": False,
                 "custom_file_enabled": False,
                 "policy": NO_CAMERA_POLICY,
                 "preview_endpoint": "/api/input-preview.bmp",
                 "preview_matches_sender_source": True,
+                "preview_mode": "paired-actual-sent-frame",
+                "sender_kind": "unified",
+                "sender_fps": self.sender_fps,
+                "content_hold_frames": self.sender_content_hold_frames,
+                "content_dwell_seconds": self.sender_content_hold_frames / self.sender_fps,
+                "latest_sent_frame_id": None if live is None else int(live["frame_id"]),
+                "latest_hdmi_frame_id": self.last_returned_frame_id,
+                "latest_hdmi_frame_at_s": self.last_returned_frame_at_s,
             },
             "output_preview": {
                 "kind": "hdmi-capture-slot",
@@ -874,15 +1012,49 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
             self.send_header("X-HDMI-Capture-Device", str(index))
             self.end_headers()
             delay_s = 1.0 / max(1.0, state.stream_fps)
-            try:
-                while True:
+            frame_queue: queue.Queue[tuple[int, Any]] = queue.Queue(maxsize=256)
+            stop_capture = threading.Event()
+
+            def capture_frames() -> None:
+                last_frame_id: int | None = None
+                while not stop_capture.is_set():
                     ok, frame = cap.read()
                     if not ok or frame is None or not frame.size:
-                        time.sleep(delay_s)
                         continue
+                    try:
+                        height, width = frame.shape[:2]
+                        rgb_bytes = frame[:, :, ::-1].tobytes()
+                        frame_id = decode_marker_from_frame(rgb_bytes, width, height)
+                    except ValueError:
+                        continue
+                    if frame_id == last_frame_id:
+                        continue
+                    last_frame_id = frame_id
+                    try:
+                        frame_queue.put((frame_id, frame.copy()), timeout=0.1)
+                    except queue.Full:
+                        continue
+
+            capture_thread = threading.Thread(target=capture_frames, daemon=True)
+            capture_thread.start()
+            latest: tuple[int, Any] | None = None
+            next_emit = time.perf_counter()
+            try:
+                while True:
+                    try:
+                        latest = frame_queue.get(timeout=delay_s)
+                    except queue.Empty:
+                        if latest is None:
+                            continue
+                    assert latest is not None
+                    frame_id, frame = latest
+                    remaining = next_emit - time.perf_counter()
+                    if remaining > 0:
+                        time.sleep(remaining)
+                    next_emit = max(next_emit + delay_s, time.perf_counter())
+                    state._record_returned_frame_id(frame_id)
                     ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
                     if not ok:
-                        time.sleep(delay_s)
                         continue
                     payload = encoded.tobytes()
                     self.wfile.write(b"--frame\r\n")
@@ -891,10 +1063,11 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
                     self.wfile.write(payload)
                     self.wfile.write(b"\r\n")
                     self.wfile.flush()
-                    time.sleep(delay_s)
             except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
                 pass
             finally:
+                stop_capture.set()
+                capture_thread.join(timeout=2)
                 cap.release()
                 state._set_live_stream_status("enabled", "last client disconnected", delta_clients=-1)
 
@@ -915,17 +1088,26 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
                 self.stream_mjpeg()
                 return
             if parsed.path == "/api/input-preview.bmp":
-                frame_text = parse_qs(parsed.query).get("frame", ["0"])[0]
-                try:
-                    frame = int(frame_text)
-                except ValueError:
-                    frame = 0
-                payload, sha = make_input_bmp(frame, state.sender_width, state.sender_height)
+                descriptor = state.input_preview_descriptor()
+                frame_id = int(descriptor["frame_id"])
+                payload, sha = make_input_bmp(
+                    frame_id,
+                    state.sender_width,
+                    state.sender_height,
+                    state.sender_content_hold_frames,
+                    state.sender_start_frame_id,
+                )
                 self.send_response(200)
                 self.send_header("Content-Type", "image/bmp")
                 self.send_header("Content-Length", str(len(payload)))
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("X-Frame-SHA256", sha)
+                self.send_header("X-Frame-ID", str(frame_id))
+                self.send_header(
+                    "X-HDMI-Frame-ID",
+                    "" if descriptor["hdmi_frame_id"] is None else str(descriptor["hdmi_frame_id"]),
+                )
+                self.send_header("X-Preview-Source", str(descriptor["source"]))
                 self.end_headers()
                 self.wfile.write(payload)
                 return
@@ -976,6 +1158,9 @@ def run_server(
     udp_port: int,
     sender_frames: int,
     sender_fps: float,
+    sender_start_frame_id: int,
+    sender_warmup_frames: int,
+    sender_content_hold_frames: int,
     sender_width: int,
     sender_height: int,
     sender_payload: int,
@@ -1003,6 +1188,9 @@ def run_server(
         udp_port=udp_port,
         sender_frames=sender_frames,
         sender_fps=sender_fps,
+        sender_start_frame_id=sender_start_frame_id,
+        sender_warmup_frames=sender_warmup_frames,
+        sender_content_hold_frames=sender_content_hold_frames,
         sender_width=sender_width,
         sender_height=sender_height,
         sender_payload=sender_payload,
@@ -1059,9 +1247,12 @@ def run_self_test(out_dir: Path) -> int:
         board_host="127.0.0.1",
         udp_port=udp_port,
         sender_frames=0,
-        sender_fps=30.0,
-        sender_width=80,
-        sender_height=60,
+        sender_fps=15.0,
+        sender_start_frame_id=100,
+        sender_warmup_frames=0,
+        sender_content_hold_frames=75,
+        sender_width=800,
+        sender_height=600,
         sender_payload=480,
         sender_inter_packet_us=0.0,
         uart_port="",
@@ -1078,7 +1269,7 @@ def run_self_test(out_dir: Path) -> int:
         html_bytes = urllib.request.urlopen(url + "/", timeout=5).read()
         state_bytes = urllib.request.urlopen(url + "/api/state", timeout=5).read()
         actions_bytes = urllib.request.urlopen(url + "/api/actions", timeout=5).read()
-        input_response = urllib.request.urlopen(url + "/api/input-preview.bmp?frame=7", timeout=5)
+        input_response = urllib.request.urlopen(url + "/api/input-preview.bmp", timeout=5)
         input_bytes = input_response.read()
         input_sha = input_response.headers.get("X-Frame-SHA256")
         output_bytes = urllib.request.urlopen(url + "/api/output-preview", timeout=5).read()
@@ -1090,7 +1281,7 @@ def run_self_test(out_dir: Path) -> int:
             raise AssertionError("sender packet magic mismatch")
         width = struct.unpack_from("<H", first_packet, 8)[0]
         height = struct.unpack_from("<H", first_packet, 10)[0]
-        if (width, height) != (80, 60):
+        if (width, height) != (800, 600):
             raise AssertionError("sender packet dimensions mismatch")
 
         stop_status, stop_result = post_json(url + "/api/action", {"action": "stop-stream"})
@@ -1153,9 +1344,12 @@ def run_self_test(out_dir: Path) -> int:
         assert any("ACTION_OK action=start-stream" in line for line in final_state["logs"])
         assert any("ACTION_OK action=stop-stream" in line for line in final_state["logs"])
         assert any("ACTION_ERROR action=pause-receiver UART_NOT_CONFIGURED" in line for line in final_state["logs"])
-        expected_input = make_demo_frame(80, 60, 7)
+        expected_input = make_color_frame(800, 600, color_for_frame(100, 75, 100)[1], 100)
         assert input_bytes[:2] == b"BM"
         assert input_sha == frame_sha256(expected_input)
+        assert data["input_source"]["sender_kind"] == "unified"
+        assert data["input_source"]["sender_fps"] == 15.0
+        assert data["input_source"]["content_dwell_seconds"] == 5.0
         assert b"FPGA OUTPUT" in output_bytes
     finally:
         try:
@@ -1182,6 +1376,9 @@ def main() -> int:
     parser.add_argument("--udp-port", type=int, default=DEFAULT_UDP_PORT)
     parser.add_argument("--sender-frames", type=int, default=DEFAULT_SENDER_FRAMES)
     parser.add_argument("--sender-fps", type=float, default=DEFAULT_SENDER_FPS)
+    parser.add_argument("--sender-start-frame-id", type=int, default=DEFAULT_SENDER_START_FRAME_ID)
+    parser.add_argument("--sender-warmup-frames", type=int, default=0)
+    parser.add_argument("--sender-content-hold-frames", type=int, default=DEFAULT_CONTENT_HOLD_FRAMES)
     parser.add_argument("--sender-width", type=int, default=DEFAULT_WIDTH)
     parser.add_argument("--sender-height", type=int, default=DEFAULT_HEIGHT)
     parser.add_argument("--sender-payload", type=int, default=DEFAULT_SENDER_PAYLOAD)
@@ -1219,6 +1416,9 @@ def main() -> int:
         udp_port=args.udp_port,
         sender_frames=args.sender_frames,
         sender_fps=args.sender_fps,
+        sender_start_frame_id=args.sender_start_frame_id,
+        sender_warmup_frames=args.sender_warmup_frames,
+        sender_content_hold_frames=args.sender_content_hold_frames,
         sender_width=args.sender_width,
         sender_height=args.sender_height,
         sender_payload=args.sender_payload,

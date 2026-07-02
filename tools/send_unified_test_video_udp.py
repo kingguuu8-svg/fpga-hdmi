@@ -32,8 +32,15 @@ MARKER_CELL = 32
 MARKER_INNER = 20
 
 
-def color_for_frame(frame_id: int) -> tuple[str, tuple[int, int, int]]:
-    return UNIFIED_COLORS[frame_id % len(UNIFIED_COLORS)]
+def color_for_frame(
+    frame_id: int,
+    content_hold_frames: int = 1,
+    content_start_frame_id: int = 0,
+) -> tuple[str, tuple[int, int, int]]:
+    if content_hold_frames <= 0:
+        raise ValueError("content_hold_frames must be positive")
+    content_index = max(0, frame_id - content_start_frame_id) // content_hold_frames
+    return UNIFIED_COLORS[content_index % len(UNIFIED_COLORS)]
 
 
 def content_id_for_frame(frame_id: int, color_name: str) -> str:
@@ -109,6 +116,15 @@ def frame_sha256(frame: bytes) -> str:
     return hashlib.sha256(frame).hexdigest()
 
 
+def write_live_state(path: Path | None, state: dict[str, object]) -> None:
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(state), encoding="utf-8")
+    temporary.replace(path)
+
+
 def send_frame_spread(
     sock: socket.socket,
     target: tuple[str, int],
@@ -150,14 +166,16 @@ def run_sender(args: argparse.Namespace) -> int:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.frames <= 0:
-        raise SystemExit("frames must be positive for unified finite validation")
+    if args.frames < 0:
+        raise SystemExit("frames must be zero (continuous) or positive")
     if args.fps <= 0:
         raise SystemExit("fps must be positive")
     if args.hold_repeats <= 0:
         raise SystemExit("hold-repeats must be positive")
     if args.payload <= 0 or args.payload > 1400:
         raise SystemExit("payload must be in range 1..1400")
+    if args.content_hold_frames <= 0:
+        raise SystemExit("content-hold-frames must be positive")
 
     frame_period = 1.0 / args.fps
     inter_packet_delay = args.inter_packet_us / 1_000_000.0
@@ -165,12 +183,17 @@ def run_sender(args: argparse.Namespace) -> int:
     sent: list[dict[str, object]] = []
     total_packets = 0
     origin = time.perf_counter()
+    live_state_path = Path(args.live_state_json) if args.live_state_json else None
 
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         target = (args.host, args.port)
         for warmup_index in range(args.warmup_frames):
             frame_id = args.warmup_start_frame_id + warmup_index
-            color_name, rgb = color_for_frame(frame_id)
+            color_name, rgb = color_for_frame(
+                frame_id,
+                args.content_hold_frames,
+                args.start_frame_id,
+            )
             frame = make_color_frame(args.width, args.height, rgb, frame_id)
             started = time.perf_counter()
             if args.burst or args.inter_packet_us > 0:
@@ -206,9 +229,14 @@ def run_sender(args: argparse.Namespace) -> int:
             if remaining > 0:
                 time.sleep(remaining)
 
-        for index in range(args.frames):
+        index = 0
+        while args.frames == 0 or index < args.frames:
             frame_id = args.start_frame_id + index
-            color_name, rgb = color_for_frame(frame_id)
+            color_name, rgb = color_for_frame(
+                frame_id,
+                args.content_hold_frames,
+                args.start_frame_id,
+            )
             frame = make_color_frame(args.width, args.height, rgb, frame_id)
             sent_ms = round((time.perf_counter() - origin) * 1000.0, 3)
             packets_for_frame = 0
@@ -247,21 +275,38 @@ def run_sender(args: argparse.Namespace) -> int:
                     flush=True,
                 )
                 remaining = frame_period - elapsed
-                if (repeat_index + 1 < args.hold_repeats or index + 1 < args.frames) and remaining > 0:
+                more_frames = args.frames == 0 or index + 1 < args.frames
+                if (repeat_index + 1 < args.hold_repeats or more_frames) and remaining > 0:
                     time.sleep(remaining)
-            sent.append(
+            sent_item = {
+                "frame_id": frame_id,
+                "sent_ms": sent_ms,
+                "content_id": content_id_for_frame(frame_id, color_name),
+                "color": color_name,
+                "rgb": list(rgb),
+                "sha256": frame_sha256(frame),
+                "packets": packets_for_frame,
+                "hold_repeats": args.hold_repeats,
+                "elapsed_s": round(elapsed, 6),
+            }
+            if args.frames > 0:
+                sent.append(sent_item)
+            write_live_state(
+                live_state_path,
                 {
+                    "schema": "unified-sender-live-v1",
+                    "sender_kind": "unified",
                     "frame_id": frame_id,
-                    "sent_ms": sent_ms,
-                    "content_id": content_id_for_frame(frame_id, color_name),
-                    "color": color_name,
-                    "rgb": list(rgb),
-                    "sha256": frame_sha256(frame),
-                    "packets": packets_for_frame,
-                    "hold_repeats": args.hold_repeats,
-                    "elapsed_s": round(elapsed, 6),
-                }
+                    "first_frame_id": args.start_frame_id,
+                    "fps": args.fps,
+                    "content_hold_frames": args.content_hold_frames,
+                    "content_dwell_seconds": args.content_hold_frames / args.fps,
+                    "width": args.width,
+                    "height": args.height,
+                    **sent_item,
+                },
             )
+            index += 1
 
     metadata = {
         "schema": "unified-test-sender-v1",
@@ -270,12 +315,14 @@ def run_sender(args: argparse.Namespace) -> int:
         "width": args.width,
         "height": args.height,
         "fps": args.fps,
-        "frames": args.frames,
+        "frames": len(sent),
         "payload": args.payload,
         "inter_packet_us": args.inter_packet_us,
         "burst": args.burst,
         "packet_window_fraction": args.packet_window_fraction,
         "hold_repeats": args.hold_repeats,
+        "content_hold_frames": args.content_hold_frames,
+        "content_dwell_seconds": args.content_hold_frames / args.fps,
         "warmup_frames": args.warmup_frames,
         "warmup_start_frame_id": args.warmup_start_frame_id,
         "frame_marker": marker_geometry(),
@@ -286,7 +333,7 @@ def run_sender(args: argparse.Namespace) -> int:
     metadata_path = out_dir / "sender-trace.json"
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     print(
-        f"UNIFIED_TEST_VIDEO_SEND_OK fps={args.fps:g} frames={args.frames} "
+        f"UNIFIED_TEST_VIDEO_SEND_OK fps={args.fps:g} frames={len(sent)} "
         f"packets={total_packets} target={args.host}:{args.port} report={metadata_path}",
         flush=True,
     )
@@ -303,6 +350,8 @@ def run_self_test(out_dir: Path) -> int:
         raise AssertionError("frame marker did not round-trip")
     if any(rgb == (0, 0, 0) for _, rgb in UNIFIED_COLORS):
         raise AssertionError("unified validation palette must not include black")
+    if color_for_frame(74, 75)[0] != "red" or color_for_frame(75, 75)[0] != "green":
+        raise AssertionError("content hold cadence is incorrect")
     result = {
         "status": "pass",
         "colors": [{"name": name, "rgb": list(rgb)} for name, rgb in UNIFIED_COLORS],
@@ -329,6 +378,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--inter-packet-us", type=float, default=0.0)
     parser.add_argument("--packet-window-fraction", type=float, default=0.85)
     parser.add_argument("--hold-repeats", type=int, default=1)
+    parser.add_argument("--content-hold-frames", type=int, default=1)
+    parser.add_argument("--live-state-json", default="")
     parser.add_argument("--burst", action="store_true", help="send each frame as a burst instead of spreading packets")
     parser.add_argument("--out-dir", default="build/unified-15fps-image-evidence-pass-through/sender")
     parser.add_argument("--self-test", action="store_true")
