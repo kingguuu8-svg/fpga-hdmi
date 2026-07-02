@@ -43,6 +43,24 @@ No active work note is open.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: gstreamer-rtp-raw-kmssink-closed-loop
+Result: PASSED. PC GStreamer 1.28.4 from the local conda environment generated
+  a moving-ball RTP/raw RGB stream, sent it over Ethernet, and the board
+  GStreamer 1.12.2 pipeline received it with udpsrc, rtpjitterbuffer,
+  rtpvrawdepay, videoconvert, videoscale, and kmssink. The passing route uses
+  320x240 RTP/raw input scaled on the board to 800x600 BGR for HDMI output.
+  kmssink required force-modesetting=true; without it, both local and network
+  tests displayed a valid first frame but stayed static. Final HDMI return
+  validation passed with HDMI_BALL_MOTION_OK samples=24 unique_hashes=23
+  frames_with_ball=24 x_span=110.605 y_span=200.274. A diagnostic fakesink
+  route counted 59 complete depay buffers from a 60-frame PC send.
+Evidence: docs/reports/gstreamer-rtp-raw-kmssink-closed-loop.md and
+  build/gstreamer-rtp-kmssink-route/
+Board action: ran userspace GStreamer pipelines on the already-booted
+  PetaLinux rootfs, sent RTP/raw over Ethernet, controlled through UART, and
+  captured HDMI through the PC adapter. No Vivado/PetaLinux rebuild, JTAG
+  programming, TF-card image write, or board flash write was performed.
+
 Cycle ID: petalinux-gstreamer-rootfs-integration
 Result: PASSED for dependency/image integration. The project PetaLinux image
   now boots on the connected board with GStreamer 1.12.2, gst-launch,
@@ -732,6 +750,11 @@ the connected board with GStreamer 1.12.2, gst-launch/gst-inspect, base/good/
 bad plugins, kmssink, DRM/KMS tools, and V4L utilities available; fakesink
 pipeline smoke passes and kmssink negotiates 800x600 KMS caps. The final RTP
 raw-video-to-kmssink route is not yet closed.
+GStreamer RTP/raw-to-kmssink closed loop is closed: PC conda GStreamer sends
+moving-ball RTP/raw RGB over Ethernet, board GStreamer receives through
+udpsrc/rtpjitterbuffer/rtpvrawdepay, converts/scales to 800x600 BGR, and
+kmssink force-modesetting=true outputs to HDMI. HDMI return validation passed
+with 24 temporal samples, 23 unique hashes, and moving-ball centroid motion.
 Cycle governance is simplified: cycle records are now audit packages and
 third-party review inlets, not preregistered pass-gate procedures. Current
 rules live in AGENTS.md.
@@ -751,12 +774,13 @@ layer. Do not resume this work.
 
 ## Next Work Direction
 
-No active work note is open. The next implementation step can build on three
+No active work note is open. The next implementation step can build on four
 verified facts: the Linux direct-copy network-to-HDMI transfer chain passes,
 the board display side can page-flip textured motion through DRM/KMS with
-stable vblank cadence when network receive is removed, and the board now boots
-a PetaLinux rootfs with GStreamer tools/plugins plus kmssink available. The
-next route gate should use the mature media stack for a real network-video
-pipeline, preferably RTP/raw UDP into GStreamer with explicit frame/drop
-accounting and HDMI return validation. PC-side GStreamer still needs a safe
-install path because winget failed on an installer hash mismatch.
+stable vblank cadence when network receive is removed, the board boots a
+PetaLinux rootfs with GStreamer tools/plugins plus kmssink available, and the
+PC-to-board GStreamer RTP/raw-to-kmssink route now passes dynamic HDMI return
+validation. The next route should either raise this GStreamer path from
+320x240 input to a higher input resolution with the same validation standard,
+or add frame-id/drop accounting around the GStreamer route before layering
+video effects.

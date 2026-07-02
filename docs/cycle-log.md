@@ -20,6 +20,91 @@ Third-party review:
 Residual risks:
 ```
 
+## Cycle: gstreamer-rtp-raw-kmssink-closed-loop
+
+Date: 2026-07-02
+
+Commit: this commit (`cycle: close gstreamer rtp kmssink loop`)
+
+Objective: complete the standard GStreamer network-video route: PC
+GStreamer-generated RTP/raw video over Ethernet into board GStreamer
+`udpsrc -> rtpjitterbuffer -> rtpvrawdepay -> videoconvert -> kmssink`, with
+HDMI capture proving a dynamic returned image corresponding to the source.
+
+Changed scope:
+
+- Created an isolated PC conda GStreamer environment in
+  `build/conda-gstreamer-pc`.
+- Added temporal HDMI sampling support to `tools/capture_hdmi.py`.
+- Added `tools/validate_hdmi_ball_motion.py` for source-specific moving-ball
+  HDMI validation.
+- Ran and documented the final GStreamer RTP/raw route with 320x240 input
+  scaled to the board's HDMI output size by board-side GStreamer.
+
+Verification performed:
+
+- PC GStreamer through conda reports `gst-launch-1.0 version 1.28.4`.
+- PC source validation passed:
+  `HDMI_BALL_MOTION_OK samples=12 unique_hashes=12 frames_with_ball=12
+  x_span=18.954 y_span=4.365`.
+- Board GStreamer dependency probe found `udpsrc`, `rtpjitterbuffer`,
+  `rtpvrawdepay`, `videoconvert`, `videoscale`, `queue`, `capsfilter`,
+  `identity`, `fpsdisplaysink`, and `kmssink`.
+- Board identity/fakesink diagnostic received 59 complete 320x240 RGB depay
+  buffers from a 60-frame PC RTP/raw send.
+- Board-local `videotestsrc -> kmssink force-modesetting=true` passed HDMI
+  motion validation with `unique_hashes=24`, `x_span=590.956`, and
+  `y_span=373.838`.
+- Final route passed HDMI return validation:
+  `HDMI_BALL_MOTION_OK samples=24 unique_hashes=23 frames_with_ball=24
+  x_span=110.605 y_span=200.274`.
+- Final board log shows RTP/raw caps at `udpsrc`, `rtpjitterbuffer`,
+  `rtpvrawdepay`, `videoconvert`, `videoscale`, and `kmssink` with final sink
+  caps `video/x-raw, format=BGR, width=800, height=600`.
+
+Board action:
+
+- Ran GStreamer userspace processes from the booted PetaLinux rootfs.
+- Used Ethernet for PC-to-board RTP/raw video, UART for shell control, and the
+  PC HDMI capture adapter for validation.
+- No Vivado build, PetaLinux build, JTAG programming, TF-card image write, or
+  board flash write was performed.
+
+Evidence:
+
+- `docs/reports/gstreamer-rtp-raw-kmssink-closed-loop.md`
+- `build/gstreamer-rtp-kmssink-route/pc-conda-create.log`
+- `build/gstreamer-rtp-kmssink-route/pc-source-raw-abs-motion.log`
+- `build/gstreamer-rtp-kmssink-route/uart-board-identity-fakesink-after-send.log`
+- `build/gstreamer-rtp-kmssink-route/uart-board-rx-320scale-force-after-send.log`
+- `build/gstreamer-rtp-kmssink-route/hdmi-320scale-force-validation.json`
+- `build/gstreamer-rtp-kmssink-route/hdmi-320scale-force-capture/`
+
+Result:
+
+- PASSED.
+
+Rollback point:
+
+- Previous commit before this cycle: `0a8e33c`.
+- PC conda environment can be removed at `build/conda-gstreamer-pc`.
+- Board image rollback remains
+  `/run/media/mmcblk0p1/image.ub.prev-gstreamer-rootfs-20260702`.
+
+Third-party review:
+
+- None for this cycle.
+
+Residual risks:
+
+- The closed loop uses 320x240 RTP/raw input scaled to 800x600 on the board.
+  Direct 800x600 RTP/raw reached caps negotiation but did not pass dynamic HDMI
+  validation in this cycle.
+- `kmssink force-modesetting=true` is required on the current image; plain
+  `kmssink` displayed a valid first frame but did not update dynamically.
+- This validates dynamic moving-ball source correspondence, not full frame-id
+  correspondence or product-grade smoothness.
+
 ## Cycle: petalinux-gstreamer-rootfs-integration
 
 Date: 2026-07-02

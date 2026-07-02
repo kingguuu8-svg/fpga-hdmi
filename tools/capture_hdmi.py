@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 import cv2
@@ -60,7 +61,7 @@ def roi_rgb(frame_bgr: np.ndarray, x: int, y: int, nominal_w: int = 640, nominal
     return bgr[::-1]
 
 
-def grab_frames(index: int, backend_name: str, backend: int, width: int, height: int, frames: int) -> tuple[bool, list[np.ndarray], dict]:
+def grab_frames(index: int, backend_name: str, backend: int, width: int, height: int, frames: int, read_interval_ms: int) -> tuple[bool, list[np.ndarray], dict]:
     cap = cv2.VideoCapture(index, backend)
     if not cap.isOpened():
         return False, [], {"index": index, "backend": backend_name, "opened": False}
@@ -76,6 +77,8 @@ def grab_frames(index: int, backend_name: str, backend: int, width: int, height:
         if ok and candidate is not None and candidate.size:
             samples.append(candidate)
             ok_count += 1
+        if read_interval_ms > 0:
+            time.sleep(read_interval_ms / 1000.0)
     actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
@@ -217,6 +220,7 @@ def main() -> int:
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--frames", type=int, default=45)
+    parser.add_argument("--read-interval-ms", type=int, default=0, help="delay between capture reads for temporal sampling")
     parser.add_argument("--save-samples", type=int, default=0, help="save N evenly spaced captured frames")
     parser.add_argument("--validation-profile", default="pip", choices=["none", "non-black", "pip", "rgb-stripes", "inverted-rgb-stripes"])
     parser.add_argument("--out-dir", default="build/reports/hdmi-capture")
@@ -242,7 +246,7 @@ def main() -> int:
 
     for index in indices:
         for backend_name, backend in backends:
-            ok, samples, meta = grab_frames(index, backend_name, backend, args.width, args.height, args.frames)
+            ok, samples, meta = grab_frames(index, backend_name, backend, args.width, args.height, args.frames, args.read_interval_ms)
             if not ok or not samples:
                 attempts.append({**meta, "validation_pass": False, "checks": []})
                 continue

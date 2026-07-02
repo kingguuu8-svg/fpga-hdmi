@@ -739,5 +739,43 @@ ffmpeg unless license flags are explicitly accepted. Do not use
 packagegroup-petalinux-gstreamer on this image; it pulls OMX, which failed to
 compile and is not needed for the Zynq-7020 DRM/KMS route.
 
+Verified GStreamer RTP/raw-to-kmssink closed-loop path (preferred mature media
+route gate, 2026-07-02):
+
+```text
+1. Ensure the disposable PC GStreamer environment exists:
+   rtk powershell.exe -NoProfile -Command "conda create -y -p .\build\conda-gstreamer-pc -c conda-forge --override-channels gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad"
+2. Probe the PC sender source if the environment was recreated:
+   conda run -p .\build\conda-gstreamer-pc gst-launch-1.0 --version
+   conda run -p .\build\conda-gstreamer-pc gst-inspect-1.0 videotestsrc rtpvrawpay udpsink
+3. Start the board receiver over UART:
+   gst-launch-1.0 -v udpsrc port=5011 caps="application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string)RAW, sampling=(string)RGB, depth=(string)8, width=(string)320, height=(string)240, colorimetry=(string)SMPTE240M, payload=(int)96, a-framerate=(string)5" ! rtpjitterbuffer latency=100 drop-on-latency=true ! rtpvrawdepay ! videoconvert ! videoscale ! video/x-raw,format=BGR,width=800,height=600 ! kmssink force-modesetting=true sync=true
+4. Send the PC source:
+   conda run -p .\build\conda-gstreamer-pc gst-launch-1.0 -v videotestsrc num-buffers=360 is-live=true pattern=ball motion=sweep animation-mode=wall-time flip=true ! video/x-raw,format=RGB,width=320,height=240,framerate=5/1 ! rtpvrawpay pt=96 mtu=1200 ! udpsink host=192.168.1.10 port=5011 sync=false async=false
+5. Capture temporal HDMI samples:
+   rtk powershell.exe -NoProfile -Command "python .\tools\capture_hdmi.py --device 1 --backend dshow --width 800 --height 600 --frames 60 --read-interval-ms 200 --save-samples 24 --validation-profile none --out-dir build\gstreamer-rtp-kmssink-route\hdmi-320scale-force-capture"
+6. Validate moving-ball correspondence:
+   rtk powershell.exe -NoProfile -Command "python .\tools\validate_hdmi_ball_motion.py 'build/gstreamer-rtp-kmssink-route/hdmi-320scale-force-capture/latest-sample-*.png' --out-json build\gstreamer-rtp-kmssink-route\hdmi-320scale-force-validation.json"
+7. Require:
+   - HDMI_BALL_MOTION_OK
+   - at least 24 temporal samples
+   - unique_hashes >= 4
+   - frames_with_ball >= 8
+   - centroid_span >= 20
+   - final board log shows udpsrc -> rtpjitterbuffer -> rtpvrawdepay ->
+     videoconvert -> videoscale -> kmssink caps
+```
+
+Verified outcome:
+The PC-to-board mature-media route passed with PC GStreamer 1.28.4 sending
+moving-ball RTP/raw RGB, board GStreamer 1.12.2 receiving/depaying/converting/
+scaling, and kmssink outputting to HDMI. The final HDMI validation measured
+24 samples, 23 unique hashes, frames_with_ball=24, x_span=110.605, and
+y_span=200.274. On this image, `kmssink force-modesetting=true` is required:
+plain kmssink displayed a valid first frame but did not update dynamically.
+The verified input is 320x240 RTP/raw scaled to 800x600 on the board; direct
+800x600 RTP/raw needs a separate higher-bandwidth route gate before it is
+promoted.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.
