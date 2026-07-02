@@ -53,6 +53,57 @@ Residual risks:
 
 - Hot install still needs to be tried in a corrected cycle.
 
+## Cycle: gstreamer-hot-install-first
+
+Objective: try GStreamer dependency provisioning by hot install before
+rebuilding the PetaLinux/rootfs image.
+
+Changed scope:
+
+- Probed PC-side GStreamer commands and winget package availability.
+- Tried winget installation of the official GStreamer package.
+- Probed the connected board over UART for apt, other package managers,
+  network route/DNS, rootfs mount shape, DRM node, and GStreamer commands.
+- Did not run the RTP route gate, HDMI capture, PetaLinux build, TF-card image
+  write, or board flash write.
+
+Verification:
+
+- PC before install: `gst-launch-1.0` and `gst-inspect-1.0` missing; winget
+  present.
+- winget found `gstreamerproject.gstreamer` 1.28.4, downloaded the official
+  installer, then failed on hash mismatch.
+- PC after winget attempt: `gst-launch-1.0` and `gst-inspect-1.0` still
+  missing.
+- Board UART probe: apt, apt-get, dpkg, opkg, rpm, dnf, yum, and pacman are
+  all missing.
+- Board network probe: direct PC link works, but default route and DNS are
+  absent.
+- Board mount probe: `/` is a small in-memory rootfs and the TF card exposes
+  only a FAT boot partition at `/run/media/mmcblk0p1`.
+- Board display probe: `/dev/dri/card0` exists.
+
+Board action:
+
+- UART read-only probes only. No board package install was possible.
+
+Evidence:
+
+- `docs/reports/gstreamer-hot-install-first.md`
+- `build/gstreamer-hot-install-first/host-probe-before-install.log`
+- `build/gstreamer-hot-install-first/host-probe-after-winget.log`
+- `build/gstreamer-hot-install-first/board-hot-install-probe.log`
+- `build/gstreamer-hot-install-first/board-package-manager-probe2.log`
+
+Result: pass_condition=(pc_gst_launch_present == 1 and pc_gst_inspect_present == 1 and pc_required_gst_elements_missing == 0 and board_apt_probe_completed == 1 and board_install_method == apt-hot-install and board_apt_update_status == pass and board_apt_install_status == pass and board_gst_launch_present == 1 and board_gst_inspect_present == 1 and board_required_gst_elements_missing == 0 and board_drm_card0_present == 1 and board_rootfs_free_mb_after >= 200 and petalinux_image_built == 0 and tf_card_image_written == 0), measured=(pc_gst_launch_present=0, pc_gst_inspect_present=0, pc_required_gst_elements_missing=4, pc_winget_package_found=1, pc_winget_install_status=failed_hash_mismatch, board_apt_probe_completed=1, board_install_method=none, board_apt_update_status=not_run_no_apt, board_apt_install_status=not_run_no_apt, board_gst_launch_present=0, board_gst_inspect_present=0, board_required_gst_elements_missing=5, board_drm_card0_present=1, board_package_managers_present=0, board_default_route_present=0, board_dns_present=0, board_rootfs_type=rootfs_ram, board_rootfs_size_mb=237, tf_boot_partition_mounted_mb=1020, petalinux_image_built=0, tf_card_image_written=0) -> FAILED.
+
+Residual risks:
+
+- PC-side GStreamer remains unresolved because the safe winget path failed.
+- The board-side conclusion is strong for the currently booted image, but a
+  different rootfs with apt/opkg and persistent storage would change the
+  dependency strategy.
+
 ## Cycle: gstreamer-rtp-kmssink-corrected-route-gate
 
 Objective: verify the corrected mature Linux route gate for RTP/raw GStreamer

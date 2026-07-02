@@ -70,51 +70,48 @@ placeholder.
 ## Active Cycle
 
 ```text
-Cycle ID: gstreamer-hot-install-first
-Objective: provision the GStreamer runtime dependencies by hot install before
-  considering a PetaLinux/rootfs rebuild.
-Scope: install or expose PC-side GStreamer with the available host package
-  manager, then try board-side apt hot install on the running TF-card Linux
-  rootfs. If board apt is absent, has no network route, cannot update after
-  old-releases source repair, or cannot install required packages, close this
-  cycle FAILED and leave PetaLinux rebuild for a later cycle. Do not run the
-  RTP video route gate in this cycle.
-Verification plan: probe PC gst commands and required sender elements; probe
-  board apt, rootfs free space, route/DNS, and /dev/dri/card0; if apt exists,
-  try apt-get update, repair Ubuntu 18.04 sources to old-releases only if the
-  update failure matches stale bionic repository symptoms, then install the
-  required board GStreamer packages; re-probe gst commands/elements and record
-  measured values.
-Board action: UART shell commands only. Runtime rootfs package install may be
-  attempted through apt. No Vivado/PetaLinux build, JTAG programming,
-  BOOT.BIN/image.ub packaging, TF-card image write, board flash write, or HDMI
-  capture.
-Evidence target: docs/reports/gstreamer-hot-install-first.md and
-  build/gstreamer-hot-install-first/
-pass_condition: pc_gst_launch_present == 1 and pc_gst_inspect_present == 1
-  and pc_required_gst_elements_missing == 0 and board_apt_probe_completed == 1
-  and board_install_method == apt-hot-install and board_apt_update_status == pass
-  and board_apt_install_status == pass and board_gst_launch_present == 1
-  and board_gst_inspect_present == 1 and board_required_gst_elements_missing == 0
-  and board_drm_card0_present == 1 and board_rootfs_free_mb_after >= 200
-  and petalinux_image_built == 0 and tf_card_image_written == 0
-validator: rtk powershell.exe -NoProfile -Command "Get-Command gst-launch-1.0,
-  gst-inspect-1.0; gst-inspect-1.0 videotestsrc videoconvert rtpvrawpay udpsink"
-  plus tools/uart_run_commands.ps1 running command -v apt-get, df -Pm /,
-  ls -l /dev/dri/card0, apt-get update/install, command -v gst-launch-1.0,
-  command -v gst-inspect-1.0, and gst-inspect-1.0 udpsrc rtpjitterbuffer
-  rtpvrawdepay videoconvert kmssink.
-Highest-risk assumption this cycle falsifies: the running board Linux rootfs
-  can install the missing GStreamer stack in place through apt, so no slow
-  PetaLinux rebuild is needed for the mature Linux route.
-Cheapest alternative way to falsify the same assumption: probe command -v
-  apt-get and apt-get update before any package install; if apt or networked
-  package index update is impossible, the hot-install route is false.
+No active implementation cycle is open.
 ```
 
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: gstreamer-hot-install-first
+Result: FAILED. The hot-install-first assumption was falsified before any
+  video route gate ran. PC-side GStreamer installation through winget found
+  gstreamerproject.gstreamer 1.28.4 but failed because the downloaded official
+  installer did not match the winget manifest hash; `gst-launch-1.0` and
+  `gst-inspect-1.0` remained missing. More importantly, the connected board
+  has no apt, apt-get, dpkg, opkg, rpm, dnf, yum, or pacman command; it also
+  has no default route or DNS and uses a small in-memory rootfs plus a mounted
+  FAT boot partition, not a package-managed ext4 rootfs. `/dev/dri/card0`
+  exists, but board-side GStreamer hot install is not possible on this image.
+  pass_condition=(pc_gst_launch_present == 1 and pc_gst_inspect_present == 1
+  and pc_required_gst_elements_missing == 0 and board_apt_probe_completed == 1
+  and board_install_method == apt-hot-install and
+  board_apt_update_status == pass and board_apt_install_status == pass and
+  board_gst_launch_present == 1 and board_gst_inspect_present == 1 and
+  board_required_gst_elements_missing == 0 and board_drm_card0_present == 1
+  and board_rootfs_free_mb_after >= 200 and petalinux_image_built == 0 and
+  tf_card_image_written == 0),
+  measured=(pc_gst_launch_present=0, pc_gst_inspect_present=0,
+  pc_required_gst_elements_missing=4, pc_winget_package_found=1,
+  pc_winget_install_status=failed_hash_mismatch,
+  board_apt_probe_completed=1, board_install_method=none,
+  board_apt_update_status=not_run_no_apt,
+  board_apt_install_status=not_run_no_apt, board_gst_launch_present=0,
+  board_gst_inspect_present=0, board_required_gst_elements_missing=5,
+  board_drm_card0_present=1, board_package_managers_present=0,
+  board_default_route_present=0, board_dns_present=0,
+  board_rootfs_type=rootfs_ram, board_rootfs_size_mb=237,
+  tf_boot_partition_mounted_mb=1020, petalinux_image_built=0,
+  tf_card_image_written=0).
+Evidence: docs/reports/gstreamer-hot-install-first.md and
+  build/gstreamer-hot-install-first/
+Board action: UART read-only probes only. No apt install, package install,
+  Vivado/PetaLinux build, JTAG programming, TF-card image write, board flash
+  write, RTP pipeline, or HDMI capture was performed.
+
 Cycle ID: gstreamer-rtp-kmssink-route-gate
 Result: FAILED before verification. The GStreamer direction is correct, but
   the independent audit in docs/reports/eth-ps-pl-hdmi-pass-through.md found
@@ -767,13 +764,16 @@ layer. Do not resume this work.
 No active cycle is open. The next implementation cycle can build on two
 verified facts: the Linux direct-copy network-to-HDMI transfer chain passes,
 and the board display side can page-flip textured motion through DRM/KMS with
-stable vblank cadence when network receive is removed. If the goal is smooth
-network-driven video through mature Linux components, the next dependency
-cycle must try hot install first: install PC-side GStreamer with an available
-host package manager and try board-side `apt-get` installation, repairing
-Ubuntu 18.04 sources to old-releases if needed. Only if hot install fails
-should a later cycle rebuild the PetaLinux/rootfs image. Because the next cycle
-will carry a tunable numeric `pass_condition`, it must follow the Rule 1
-open-commit sub-rule: commit the `## Active Cycle` block with the frozen
-`pass_condition:`/`validator:` before running verification, then close in a
-separate commit.
+stable vblank cadence when network receive is removed. The hot-install-first
+dependency route has now been falsified for the currently booted board image:
+the board has no apt/dpkg/opkg/rpm-style package manager, no default route or
+DNS, and a small in-memory rootfs rather than a package-managed ext4 rootfs.
+If the goal remains smooth network-driven video through mature Linux
+components, the next dependency cycle should build a PetaLinux/rootfs image
+that includes GStreamer, or deliberately switch to a rootfs strategy that
+provides package management and persistent storage. PC-side GStreamer also
+needs a safe install path because winget failed on an installer hash mismatch.
+Because the next cycle will carry a tunable numeric `pass_condition`, it must
+follow the Rule 1 open-commit sub-rule: commit the `## Active Cycle` block with
+the frozen `pass_condition:`/`validator:` before running verification, then
+close in a separate commit.
