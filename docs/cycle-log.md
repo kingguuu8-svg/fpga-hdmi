@@ -1862,3 +1862,40 @@ Evidence: `docs/reports/dashboard-unified-15fps-paired-preview.md` and
 `build/dashboard-unified-15fps-paired-preview/`.
 
 Result: pass_condition=(dashboard_sender_kind == unified and sender_fps == 15 and receiver_present_fps == 15 and hdmi_sample_fps == 15 and content_dwell_seconds == 5 and paired_preview_samples >= 20 and paired_preview_id_mismatches == 0 and sent_frames == 90 and receiver_written_frames == 90 and receiver_dropped_packets == 0 and validator_status == pass and trace_matched_frames >= 86 and trace_drop_rate <= 0.05 and trace_order_violations == 0 and trace_content_mismatches == 0 and trace_black_frames == 0 and trace_image_path_failures == 0 and trace_max_latency_ms <= 1000), measured=(dashboard_sender_kind=unified, configured_sender_fps=15, sender_measured_fps=12.011, receiver_present_fps=15, hdmi_sample_fps=15, content_dwell_seconds=5, paired_preview_samples=20, paired_preview_id_mismatches=0, sent_frames=90, receiver_written_frames=90, receiver_dropped_packets=0, validator_status=pass, trace_matched_frames=90, trace_drop_rate=0.0, trace_order_violations=0, trace_content_mismatches=0, trace_black_frames=0, trace_image_path_failures=0, trace_max_latency_ms=141.088, user_acceptance=failed-paired-preview-rejected) -> FAILED.
+
+## Cycle: dashboard-truthful-sent-received-timelines
+
+Objective: freeze the attempt to show truthful independent sent and returned
+dashboard timelines after the user requested stop-work.
+
+Verification:
+
+- Compile/self-tests had passed before the hardware run.
+- Connected board receiver wrote all 90 validation frames with dropped=0.
+- Dashboard input-preview headers reported `latest-actual-sent-frame`.
+- Twenty timeline samples had zero negative-lag samples, three positive-lag
+  samples, four distinct sent IDs, four distinct HDMI IDs, and max lag of two
+  frames.
+- The committed unified validator matched 90/90 saved HDMI-return frames with
+  drop_rate=0.0 and no order/content/black/image-path failures.
+- The frozen sender-rate gate failed: configured sender FPS was 10, but the
+  measured sender FPS was 8.047.
+
+Board action: Linux receiver from `/tmp`, Dashboard-owned UDP RGB888 over
+Ethernet, HDMI/UVC capture, and UART shell control. No Vivado/PetaLinux/JTAG/
+TF-card/flash write.
+
+Evidence: `docs/reports/dashboard-truthful-sent-received-timelines.md` and
+`build/dashboard-truthful-sent-received-timelines/`.
+
+Result: pass_condition=(preview_source == latest-actual-sent-frame and configured_sender_fps == 10 and 9.5 <= sender_measured_fps <= 10.5 and receiver_present_fps == 10 and hdmi_delivery_fps == 10 and content_dwell_seconds == 5 and timeline_samples >= 20 and negative_lag_samples == 0 and positive_lag_samples >= 1 and distinct_sent_ids >= 3 and distinct_hdmi_ids >= 3 and max_lag_frames <= 30 and sent_frames == 90 and receiver_written_frames == 90 and receiver_dropped_packets == 0 and validator_status == pass and trace_matched_frames >= 86 and trace_drop_rate <= 0.05 and trace_order_violations == 0 and trace_content_mismatches == 0 and trace_black_frames == 0 and trace_image_path_failures == 0 and trace_max_latency_ms <= 1000), measured=(preview_source=latest-actual-sent-frame, configured_sender_fps=10, sender_measured_fps=8.047, receiver_present_fps=10, hdmi_delivery_fps=10, content_dwell_seconds=5, timeline_samples=20, negative_lag_samples=0, positive_lag_samples=3, distinct_sent_ids=4, distinct_hdmi_ids=4, max_lag_frames=2, sent_frames=90, receiver_written_frames=90, receiver_dropped_packets=0, validator_status=pass, trace_matched_frames=90, trace_drop_rate=0.0, trace_order_violations=0, trace_content_mismatches=0, trace_black_frames=0, trace_image_path_failures=0, trace_max_latency_ms=135.028) -> FAILED.
+
+Residual risks:
+
+- The frozen source snapshot is useful evidence but not a promoted workflow
+  entry point because the cycle failed its own gate.
+- The sender-rate bottleneck is on the PC/Dashboard sender side, not shown as
+  Ethernet loss: the receiver wrote all frames and the trace matched all
+  frames.
+- Human-facing dashboard presentation still needs a separate cycle; this one
+  only froze the failed engineering attempt.

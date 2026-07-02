@@ -9,14 +9,14 @@ param(
     [int]$DashboardPort = 8765,
     [string]$CaptureDevice = "1",
     [string]$CaptureBackend = "dshow",
-    [double]$StreamFps = 15.0,
+    [double]$StreamFps = 10.0,
     [int]$MjpegFrames = 150,
     [int]$MjpegMinUnique = 20,
     [int]$MjpegMinColors = 2,
     [int]$Frames = 90,
     [int]$WarmupFrames = 12,
     [int]$ValidationStartFrameId = 100,
-    [double]$Fps = 15.0,
+    [double]$Fps = 10.0,
     [double]$TraceMaxLatencyMs = 1000.0,
     [int]$UdpPayload = 1200,
     [int]$HoldRepeats = 1,
@@ -24,11 +24,11 @@ param(
     [double]$PacketWindowFraction = 0.85,
     [ValidateSet("msync", "none")]
     [string]$ReceiverSyncMode = "none",
-    [int]$ReceiverPresentFps = 15,
-    [int]$ContentHoldFrames = 75,
-    [int]$PairedPreviewSamples = 20,
+    [int]$ReceiverPresentFps = 10,
+    [int]$ContentHoldFrames = 50,
+    [int]$TimelineSamples = 20,
     [string]$ControlFifo = "/tmp/video_ctl",
-    [string]$OutDir = "build\dashboard-unified-15fps-paired-preview"
+    [string]$OutDir = "build\dashboard-truthful-sent-received-timelines"
 )
 
 $ErrorActionPreference = "Stop"
@@ -290,27 +290,42 @@ try {
         throw "Dashboard did not start the unified sender"
     }
 
-    $pairedCount = 0
-    $pairedMismatches = 0
-    $pairedRecords = @()
-    for ($attempt = 0; $attempt -lt 200 -and $pairedCount -lt $PairedPreviewSamples; $attempt++) {
+    $timelineCount = 0
+    $negativeLagSamples = 0
+    $positiveLagSamples = 0
+    $maxLagFrames = 0
+    $timelinePreviewSource = ""
+    $timelineRecords = @()
+    $sentTimelineIds = New-Object 'System.Collections.Generic.HashSet[int]'
+    $hdmiTimelineIds = New-Object 'System.Collections.Generic.HashSet[int]'
+    for ($attempt = 0; $attempt -lt 200 -and $timelineCount -lt $TimelineSamples; $attempt++) {
         try {
             $preview = Invoke-WebRequest -UseBasicParsing -Uri "$dashboardUrl/api/input-preview.bmp?sample=$attempt" -TimeoutSec 5
             $frameIdText = [string]$preview.Headers["X-Frame-ID"]
             $hdmiFrameIdText = [string]$preview.Headers["X-HDMI-Frame-ID"]
             $previewSource = [string]$preview.Headers["X-Preview-Source"]
-            if ($previewSource -eq "paired-hdmi-frame-id" -and $frameIdText -ne "" -and $hdmiFrameIdText -ne "") {
-                $frameId = [int]$frameIdText
+            if ($previewSource -eq "latest-actual-sent-frame" -and $frameIdText -ne "" -and $hdmiFrameIdText -ne "") {
+                $timelinePreviewSource = $previewSource
+                $sentFrameId = [int]$frameIdText
                 $hdmiFrameId = [int]$hdmiFrameIdText
-                $pairedCount++
-                if ($frameId -ne $hdmiFrameId) {
-                    $pairedMismatches++
+                $lagFrames = $sentFrameId - $hdmiFrameId
+                $timelineCount++
+                [void]$sentTimelineIds.Add($sentFrameId)
+                [void]$hdmiTimelineIds.Add($hdmiFrameId)
+                if ($lagFrames -lt 0) {
+                    $negativeLagSamples++
                 }
-                $pairedRecords += [ordered]@{
-                    sample = $pairedCount
-                    frame_id = $frameId
+                if ($lagFrames -gt 0) {
+                    $positiveLagSamples++
+                }
+                if ($lagFrames -gt $maxLagFrames) {
+                    $maxLagFrames = $lagFrames
+                }
+                $timelineRecords += [ordered]@{
+                    sample = $timelineCount
+                    sent_frame_id = $sentFrameId
                     hdmi_frame_id = $hdmiFrameId
-                    match = ($frameId -eq $hdmiFrameId)
+                    lag_frames = $lagFrames
                 }
             }
         }
@@ -318,15 +333,22 @@ try {
         }
         Start-Sleep -Milliseconds 100
     }
-    $pairedEvidence = [ordered]@{
-        requested_samples = $PairedPreviewSamples
-        paired_preview_samples = $pairedCount
-        paired_preview_id_mismatches = $pairedMismatches
-        records = $pairedRecords
+    $timelineEvidence = [ordered]@{
+        preview_source = "latest-actual-sent-frame"
+        requested_samples = $TimelineSamples
+        timeline_samples = $timelineCount
+        negative_lag_samples = $negativeLagSamples
+        positive_lag_samples = $positiveLagSamples
+        distinct_sent_ids = $sentTimelineIds.Count
+        distinct_hdmi_ids = $hdmiTimelineIds.Count
+        max_lag_frames = $maxLagFrames
+        records = $timelineRecords
     }
-    $pairedEvidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $outPath "paired-preview-evidence.json") -Encoding UTF8
-    if ($pairedCount -lt $PairedPreviewSamples -or $pairedMismatches -ne 0) {
-        throw "paired preview check failed samples=$pairedCount mismatches=$pairedMismatches"
+    $timelineEvidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $outPath "timeline-evidence.json") -Encoding UTF8
+    if ($timelineCount -lt $TimelineSamples -or $negativeLagSamples -ne 0 -or
+        $positiveLagSamples -lt 1 -or $sentTimelineIds.Count -lt 3 -or
+        $hdmiTimelineIds.Count -lt 3 -or $maxLagFrames -gt 30) {
+        throw "timeline check failed samples=$timelineCount negative=$negativeLagSamples positive=$positiveLagSamples distinct_sent=$($sentTimelineIds.Count) distinct_hdmi=$($hdmiTimelineIds.Count) max_lag=$maxLagFrames"
     }
 
     $senderTracePath = Join-Path $outPath "sender\sender-trace.json"
@@ -443,14 +465,20 @@ try {
 
     $passCondition = (
         $dashboardSenderKind -eq "unified" -and
-        $dashboardSenderFps -eq 15.0 -and
-        $senderFps -eq 15.0 -and
-        $senderMeasuredFps -ge 14.5 -and
-        $ReceiverPresentFps -eq 15 -and
-        $StreamFps -eq 15.0 -and
+        $timelinePreviewSource -eq "latest-actual-sent-frame" -and
+        $dashboardSenderFps -eq 10.0 -and
+        $senderFps -eq 10.0 -and
+        $senderMeasuredFps -ge 9.5 -and
+        $senderMeasuredFps -le 10.5 -and
+        $ReceiverPresentFps -eq 10 -and
+        $StreamFps -eq 10.0 -and
         $contentDwellSeconds -eq 5.0 -and
-        $pairedCount -ge 20 -and
-        $pairedMismatches -eq 0 -and
+        $timelineCount -ge 20 -and
+        $negativeLagSamples -eq 0 -and
+        $positiveLagSamples -ge 1 -and
+        $sentTimelineIds.Count -ge 3 -and
+        $hdmiTimelineIds.Count -ge 3 -and
+        $maxLagFrames -le 30 -and
         $sentFrames -eq 90 -and
         $receiverFrames -eq 90 -and
         $receiverDropped -eq 0 -and
@@ -469,14 +497,19 @@ try {
     $summary = [ordered]@{
         status = if ($passCondition) { "pass" } else { "fail" }
         dashboard_sender_kind = $dashboardSenderKind
+        preview_source = $timelinePreviewSource
         dashboard_sender_fps = $dashboardSenderFps
         sender_fps = $senderFps
         sender_measured_fps = [Math]::Round($senderMeasuredFps, 3)
         receiver_present_fps = $ReceiverPresentFps
-        hdmi_sample_fps = $StreamFps
+        hdmi_delivery_fps = $StreamFps
         content_dwell_seconds = $contentDwellSeconds
-        paired_preview_samples = $pairedCount
-        paired_preview_id_mismatches = $pairedMismatches
+        timeline_samples = $timelineCount
+        negative_lag_samples = $negativeLagSamples
+        positive_lag_samples = $positiveLagSamples
+        distinct_sent_ids = $sentTimelineIds.Count
+        distinct_hdmi_ids = $hdmiTimelineIds.Count
+        max_lag_frames = $maxLagFrames
         sent_frames = $sentFrames
         sender_hold_repeats = [int]$senderJson.hold_repeats
         receiver_written_frames = $receiverFrames
@@ -499,17 +532,17 @@ try {
         sent_time_offset_ms = $sentTimeOffsetMs
         out = $outPath
     }
-    $summaryPath = Join-Path $outPath "dashboard-unified-15fps-paired-preview-summary.json"
+    $summaryPath = Join-Path $outPath "dashboard-truthful-sent-received-timelines-summary.json"
     $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $summaryPath -Encoding UTF8
 
-    $markerBits = "dashboard_sender_kind=$dashboardSenderKind dashboard_sender_fps=$dashboardSenderFps sender_fps=$senderFps sender_measured_fps=$([Math]::Round($senderMeasuredFps, 3)) receiver_present_fps=$ReceiverPresentFps hdmi_sample_fps=$StreamFps content_dwell_seconds=$contentDwellSeconds paired_preview_samples=$pairedCount paired_preview_id_mismatches=$pairedMismatches sent_frames=$sentFrames sender_hold_repeats=$($senderJson.hold_repeats) receiver_written_frames=$receiverFrames receiver_dropped_packets=$receiverDropped mjpeg_saved_frames=$mjpegSavedFrames mjpeg_unique_hashes=$mjpegUniqueHashes mjpeg_unique_colors=$mjpegUniqueColors trace_require_image_paths=$traceRequireImages trace_image_path_failures=$($traceMetrics.image_path_failures) validator_status=$validatorStatus trace_sent_frames=$($traceMetrics.sent_frames) trace_matched_frames=$($traceMetrics.matched_frames) trace_drop_rate=$($traceMetrics.drop_rate) trace_order_violations=$($traceMetrics.order_violations) trace_content_mismatches=$($traceMetrics.content_mismatches) trace_black_frames=$($traceMetrics.black_frames) trace_required_max_latency_ms=$($validator.requirements.max_latency_ms) trace_max_latency_ms=$($traceMetrics.max_latency_ms) sent_time_offset_ms=$sentTimeOffsetMs out=$outPath"
+    $markerBits = "dashboard_sender_kind=$dashboardSenderKind preview_source=$timelinePreviewSource configured_sender_fps=$dashboardSenderFps sender_measured_fps=$([Math]::Round($senderMeasuredFps, 3)) receiver_present_fps=$ReceiverPresentFps hdmi_delivery_fps=$StreamFps content_dwell_seconds=$contentDwellSeconds timeline_samples=$timelineCount negative_lag_samples=$negativeLagSamples positive_lag_samples=$positiveLagSamples distinct_sent_ids=$($sentTimelineIds.Count) distinct_hdmi_ids=$($hdmiTimelineIds.Count) max_lag_frames=$maxLagFrames sent_frames=$sentFrames receiver_written_frames=$receiverFrames receiver_dropped_packets=$receiverDropped mjpeg_saved_frames=$mjpegSavedFrames mjpeg_unique_hashes=$mjpegUniqueHashes mjpeg_unique_colors=$mjpegUniqueColors trace_require_image_paths=$traceRequireImages trace_image_path_failures=$($traceMetrics.image_path_failures) validator_status=$validatorStatus trace_sent_frames=$($traceMetrics.sent_frames) trace_matched_frames=$($traceMetrics.matched_frames) trace_drop_rate=$($traceMetrics.drop_rate) trace_order_violations=$($traceMetrics.order_violations) trace_content_mismatches=$($traceMetrics.content_mismatches) trace_black_frames=$($traceMetrics.black_frames) trace_required_max_latency_ms=$($validator.requirements.max_latency_ms) trace_max_latency_ms=$($traceMetrics.max_latency_ms) sent_time_offset_ms=$sentTimeOffsetMs out=$outPath"
     if ($passCondition) {
-        $marker = "DASHBOARD_UNIFIED_15FPS_PAIRED_PREVIEW_OK $markerBits"
-        Set-Content -LiteralPath (Join-Path $outPath "dashboard-unified-15fps-paired-preview.marker.txt") -Value $marker -Encoding ASCII
+        $marker = "DASHBOARD_TRUTHFUL_SENT_RECEIVED_TIMELINES_OK $markerBits"
+        Set-Content -LiteralPath (Join-Path $outPath "dashboard-truthful-sent-received-timelines.marker.txt") -Value $marker -Encoding ASCII
         Write-Host $marker
     } else {
-        $marker = "DASHBOARD_UNIFIED_15FPS_PAIRED_PREVIEW_FAIL $markerBits"
-        Set-Content -LiteralPath (Join-Path $outPath "dashboard-unified-15fps-paired-preview.marker.txt") -Value $marker -Encoding ASCII
+        $marker = "DASHBOARD_TRUTHFUL_SENT_RECEIVED_TIMELINES_FAIL $markerBits"
+        Set-Content -LiteralPath (Join-Path $outPath "dashboard-truthful-sent-received-timelines.marker.txt") -Value $marker -Encoding ASCII
         throw $marker
     }
 }

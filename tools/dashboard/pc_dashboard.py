@@ -42,9 +42,9 @@ DEFAULT_HEIGHT = 600
 DEFAULT_BOARD_HOST = "192.168.1.10"
 DEFAULT_UDP_PORT = 5005
 DEFAULT_SENDER_FRAMES = 0
-DEFAULT_SENDER_FPS = 15.0
+DEFAULT_SENDER_FPS = 10.0
 DEFAULT_SENDER_START_FRAME_ID = 100
-DEFAULT_CONTENT_HOLD_FRAMES = 75
+DEFAULT_CONTENT_HOLD_FRAMES = 50
 DEFAULT_SENDER_PAYLOAD = 1200
 DEFAULT_SENDER_INTER_PACKET_US = 0.0
 DEFAULT_UART_PORT = "COM16"
@@ -57,7 +57,7 @@ DEFAULT_CAPTURE_HEIGHT = 600
 DEFAULT_CAPTURE_FRAMES = 8
 DEFAULT_CAPTURE_PROFILE = "none"
 DEFAULT_CAPTURE_SAVE_SAMPLES = 0
-DEFAULT_STREAM_FPS = 15.0
+DEFAULT_STREAM_FPS = 10.0
 NO_CAMERA_POLICY = "Generated PC input only. Camera/webcam and custom file input are disabled for MVP."
 
 
@@ -281,8 +281,8 @@ def dashboard_html(actions_enabled: bool = True) -> bytes:
   <main>
     <section data-panel="input">
       <h2>Input to FPGA</h2>
-      <img class="preview" id="input-preview" src="/api/input-preview.bmp" alt="actual sent PC UDP frame paired to HDMI return">
-      <div class="meta">source: actual sent unified RGB888 frame, paired by HDMI frame_id
+      <img class="preview" id="input-preview" src="/api/input-preview.bmp" alt="latest actual sent PC UDP frame">
+      <div class="meta">source: latest frame actually completed by the PC sender
 camera: disabled
 custom file: deferred</div>
     </section>
@@ -477,13 +477,11 @@ class DashboardState:
                 }
 
             latest_sent = int(live["frame_id"])
-            first_sent = int(live["first_frame_id"])
-            paired = hdmi_frame_id is not None and first_sent <= hdmi_frame_id <= latest_sent
             return {
-                "frame_id": int(hdmi_frame_id) if paired else latest_sent,
-                "hdmi_frame_id": int(hdmi_frame_id) if paired else None,
+                "frame_id": latest_sent,
+                "hdmi_frame_id": hdmi_frame_id,
                 "latest_sent_frame_id": latest_sent,
-                "source": "paired-hdmi-frame-id" if paired else "latest-actual-sent-frame",
+                "source": "latest-actual-sent-frame",
             }
 
     def _record_returned_frame_id(self, frame_id: int) -> None:
@@ -930,7 +928,7 @@ class DashboardState:
                 "policy": NO_CAMERA_POLICY,
                 "preview_endpoint": "/api/input-preview.bmp",
                 "preview_matches_sender_source": True,
-                "preview_mode": "paired-actual-sent-frame",
+                "preview_mode": "latest-actual-sent-frame",
                 "sender_kind": "unified",
                 "sender_fps": self.sender_fps,
                 "content_hold_frames": self.sender_content_hold_frames,
@@ -1247,10 +1245,10 @@ def run_self_test(out_dir: Path) -> int:
         board_host="127.0.0.1",
         udp_port=udp_port,
         sender_frames=0,
-        sender_fps=15.0,
+        sender_fps=10.0,
         sender_start_frame_id=100,
         sender_warmup_frames=0,
-        sender_content_hold_frames=75,
+        sender_content_hold_frames=50,
         sender_width=800,
         sender_height=600,
         sender_payload=480,
@@ -1344,11 +1342,11 @@ def run_self_test(out_dir: Path) -> int:
         assert any("ACTION_OK action=start-stream" in line for line in final_state["logs"])
         assert any("ACTION_OK action=stop-stream" in line for line in final_state["logs"])
         assert any("ACTION_ERROR action=pause-receiver UART_NOT_CONFIGURED" in line for line in final_state["logs"])
-        expected_input = make_color_frame(800, 600, color_for_frame(100, 75, 100)[1], 100)
+        expected_input = make_color_frame(800, 600, color_for_frame(100, 50, 100)[1], 100)
         assert input_bytes[:2] == b"BM"
         assert input_sha == frame_sha256(expected_input)
         assert data["input_source"]["sender_kind"] == "unified"
-        assert data["input_source"]["sender_fps"] == 15.0
+        assert data["input_source"]["sender_fps"] == 10.0
         assert data["input_source"]["content_dwell_seconds"] == 5.0
         assert b"FPGA OUTPUT" in output_bytes
     finally:
