@@ -6,6 +6,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 linux_recipe_dir="${project_path}/project-spec/meta-user/recipes-kernel/linux"
 dt_files_dir="${project_path}/project-spec/meta-user/recipes-bsp/device-tree/files"
+image_recipe_dir="${project_path}/project-spec/meta-user/recipes-core/images"
 
 install_file_with_backup() {
 	local src="$1"
@@ -29,6 +30,8 @@ install_file_with_backup \
 	"${linux_recipe_dir}/files/0001-drm-xlnx-add-fixed-hdmi-output-component.patch"
 install_file_with_backup "${script_dir}/system-user.dtsi" \
 	"${dt_files_dir}/system-user.dtsi"
+install_file_with_backup "${script_dir}/petalinux-user-image.bbappend" \
+	"${image_recipe_dir}/petalinux-user-image.bbappend"
 
 old_dir="${linux_recipe_dir}/linux-xlnx"
 if [[ -d "$old_dir" ]]; then

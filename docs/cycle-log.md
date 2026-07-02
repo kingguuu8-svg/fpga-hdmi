@@ -20,6 +20,97 @@ Third-party review:
 Residual risks:
 ```
 
+## Cycle: petalinux-gstreamer-rootfs-integration
+
+Date: 2026-07-02
+
+Commit: this commit (`cycle: integrate gstreamer rootfs`)
+
+Objective: formally integrate GStreamer into the PetaLinux rootfs image so the
+connected board boots with a standard Linux media pipeline foundation for later
+network video, format conversion, buffering, and DRM/KMS HDMI output work.
+
+Changed scope:
+
+- Added a `petalinux-user-image.bbappend` overlay for the active
+  `petalinux-user-image` build target.
+- Updated the HDMI Linux display-stack overlay installer so it deploys the
+  image bbappend into the PetaLinux project.
+- Built a new PetaLinux `image.ub` in the verified Ubuntu 18.04 chroot.
+- Updated the TF-card `image.ub` from the running board over Ethernet after
+  SHA-256 verification.
+- Probed board-side GStreamer tools, elements, DRM/KMS tools, V4L tools, and
+  simple runtime pipelines over UART.
+
+Verification performed:
+
+- PetaLinux build completed with `Attempted 4725 tasks ... all succeeded`.
+- Built `image.ub` SHA-256:
+  `3c8f131a1e8424e08a73c356bdc3e808ec6d42c79dfe5cc063642d046830d6b4`.
+- Built `rootfs.manifest` SHA-256:
+  `3f6752190bdfe926ff01f70b0d243fe807801b30064adff82ebafaa60ce6dc16`.
+- Board downloaded the new image over HTTP, verified the SHA-256, backed up
+  the previous TF-card image, copied the new image, synced, and rebooted.
+- U-Boot loaded the new 31,795,488-byte `image.ub`.
+- Board runtime probe found `/usr/bin/gst-launch-1.0`,
+  `/usr/bin/gst-inspect-1.0`, and GStreamer version 1.12.2.
+- Board element probe found required elements including `udpsrc`,
+  `rtpjitterbuffer`, `rtpvrawdepay`, `rtph264depay`, `videoconvert`,
+  `videoscale`, `queue`, `fpsdisplaysink`, `kmssink`, `v4l2src`, and
+  `v4l2sink`.
+- Board tool probe found `modetest`, `v4l2-ctl`, and `yavta`.
+- Board GStreamer fakesink smoke pipeline passed.
+- `kmssink` was present and negotiated 800x600 KMS caps in a background smoke
+  run, but a clean finite `kmssink` playback/EOS route was not closed.
+
+Board action:
+
+- Replaced TF-card `image.ub` through the running board Linux shell using
+  Ethernet download and SHA-256 verification.
+- Rebooted the board from TF card and verified the runtime over UART.
+- No Vivado rebuild, JTAG programming, QSPI, NAND, eMMC, or other non-TF-card
+  board nonvolatile write was performed.
+
+Evidence:
+
+- `docs/reports/petalinux-gstreamer-rootfs-integration.md`
+- `build/petalinux-gstreamer-rootfs-integration/petalinux-build.log`
+- `build/petalinux-gstreamer-rootfs-integration/rootfs.manifest`
+- `build/petalinux-gstreamer-rootfs-integration/sha256sum.txt`
+- `build/petalinux-gstreamer-rootfs-integration/uart-board-image-update.log`
+- `build/petalinux-gstreamer-rootfs-integration/uart-gstreamer-runtime-probe.log`
+- `build/petalinux-gstreamer-rootfs-integration/uart-gstreamer-element-probe.log`
+- `build/petalinux-gstreamer-rootfs-integration/uart-gstreamer-pipeline-smoke.log`
+- `build/petalinux-gstreamer-rootfs-integration/uart-kmssink-diag.log`
+- `build/petalinux-gstreamer-rootfs-integration/uart-kmssink-bg-smoke.log`
+
+Result:
+
+- PASSED for dependency/image integration.
+- The final RTP/raw-video-to-`kmssink` route remains a separate route gate.
+
+Rollback point:
+
+- Previous git commit before this work: `d7f0a84`.
+- Board image backup:
+  `/run/media/mmcblk0p1/image.ub.prev-gstreamer-rootfs-20260702`.
+
+Third-party review:
+
+- None for this cycle.
+
+Residual risks:
+
+- PC-side GStreamer remains unresolved because the earlier winget install path
+  failed on an installer hash mismatch.
+- `gstreamer1.0-plugins-ugly`, `gstreamer1.0-libav`, and `ffmpeg` were
+  excluded because their license flags are not accepted by default in this
+  build.
+- `packagegroup-petalinux-gstreamer` was not used because it pulls OMX, which
+  failed to compile and is unnecessary for the current Zynq-7020 DRM/KMS route.
+- HDMI capture validation and the final RTP/raw-video GStreamer route were not
+  run in this dependency integration cycle.
+
 ## Cycle: gstreamer-dependency-provisioning
 
 Objective: provide GStreamer dependencies for the mature Linux route.

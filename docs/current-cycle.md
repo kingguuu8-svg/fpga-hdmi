@@ -43,6 +43,25 @@ No active work note is open.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: petalinux-gstreamer-rootfs-integration
+Result: PASSED for dependency/image integration. The project PetaLinux image
+  now boots on the connected board with GStreamer 1.12.2, gst-launch,
+  gst-inspect, base/good/bad plugins, kmssink, DRM/KMS userspace tools, and
+  V4L utilities present in the rootfs. The board downloaded the new image.ub
+  over Ethernet, verified SHA-256
+  3c8f131a1e8424e08a73c356bdc3e808ec6d42c79dfe5cc063642d046830d6b4,
+  backed up the previous TF-card image, rebooted, and exposed /dev/dri/card0
+  plus /dev/fb0. A GStreamer fakesink smoke pipeline passed; kmssink is present
+  and negotiated 800x600 KMS caps in a background smoke run. This does not
+  claim the final RTP/raw-video-to-kmssink route is complete.
+Evidence: docs/reports/petalinux-gstreamer-rootfs-integration.md and
+  build/petalinux-gstreamer-rootfs-integration/
+Board action: replaced TF-card image.ub via running board Linux wget over
+  Ethernet after SHA-256 verification, retained the previous image.ub backup,
+  rebooted from TF card, and verified the runtime through UART. No Vivado
+  rebuild, JTAG programming, QSPI, NAND, eMMC, or other non-TF-card board
+  nonvolatile write was performed.
+
 Cycle ID: gstreamer-hot-install-first
 Result: FAILED. The hot-install-first assumption was falsified before any
   video route gate ran. PC-side GStreamer installation through winget found
@@ -708,6 +727,11 @@ DRM/KMS local textured-motion display pacing is closed: the board generates
 120 textured frames locally, writes only DRM dumb back buffers, receives 120
 vblank page-flip events on /dev/dri/card0, HDMI capture validates 255
 motion-like frames, tearing_frames=0, and frame_duration_stddev_ms=1.514.
+PetaLinux GStreamer rootfs integration is closed: the generated image boots on
+the connected board with GStreamer 1.12.2, gst-launch/gst-inspect, base/good/
+bad plugins, kmssink, DRM/KMS tools, and V4L utilities available; fakesink
+pipeline smoke passes and kmssink negotiates 800x600 KMS caps. The final RTP
+raw-video-to-kmssink route is not yet closed.
 Cycle governance is simplified: cycle records are now audit packages and
 third-party review inlets, not preregistered pass-gate procedures. Current
 rules live in AGENTS.md.
@@ -727,15 +751,12 @@ layer. Do not resume this work.
 
 ## Next Work Direction
 
-No active work note is open. The next implementation step can build on two
+No active work note is open. The next implementation step can build on three
 verified facts: the Linux direct-copy network-to-HDMI transfer chain passes,
-and the board display side can page-flip textured motion through DRM/KMS with
-stable vblank cadence when network receive is removed. The hot-install-first
-dependency route has now been falsified for the currently booted board image:
-the board has no apt/dpkg/opkg/rpm-style package manager, no default route or
-DNS, and a small in-memory rootfs rather than a package-managed ext4 rootfs.
-If the goal remains smooth network-driven video through mature Linux
-components, the next dependency step should build a PetaLinux/rootfs image
-that includes GStreamer, or deliberately switch to a rootfs strategy that
-provides package management and persistent storage. PC-side GStreamer also
-needs a safe install path because winget failed on an installer hash mismatch.
+the board display side can page-flip textured motion through DRM/KMS with
+stable vblank cadence when network receive is removed, and the board now boots
+a PetaLinux rootfs with GStreamer tools/plugins plus kmssink available. The
+next route gate should use the mature media stack for a real network-video
+pipeline, preferably RTP/raw UDP into GStreamer with explicit frame/drop
+accounting and HDMI return validation. PC-side GStreamer still needs a safe
+install path because winget failed on an installer hash mismatch.

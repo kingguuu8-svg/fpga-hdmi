@@ -693,5 +693,51 @@ tearing_frames=0, and measured frame_duration_stddev_ms=1.514 from DRM event
 timestamps. This is a display-side diagnostic route only; it does not prove that
 the PC UDP receive path is smooth.
 
+Verified PetaLinux GStreamer rootfs integration path (preferred before any
+GStreamer RTP-to-kmssink route gate, 2026-07-02):
+
+```text
+1. Apply the repository overlay to the active PetaLinux project:
+   rtk wsl -d Ubuntu-22.04 -- bash /mnt/e/main/fpga-hdml/software/petalinux/hdmi-linux-display-stack/apply-overlay.sh /home/petalinux/fpga-hdml-build/petalinux/vdma-hdmi-minimal-bionic
+2. Build in the verified Ubuntu 18.04 chroot:
+   rtk wsl -d Ubuntu-22.04 -u root -- bash /mnt/e/main/fpga-hdml/software/petalinux/hdmi-linux-display-stack/build-in-chroot.sh /opt/chroots/ubuntu18-petalinux2018 /home/petalinux/fpga-hdml-build/petalinux/vdma-hdmi-minimal-bionic /mnt/e/main/fpga-hdml/build/petalinux-gstreamer-rootfs-integration
+3. Require the PetaLinux build log to show all attempted tasks succeeded.
+4. Record image.ub and rootfs.manifest SHA-256 hashes.
+5. If the TF card is already booted in the board, update image.ub without
+   removing the card:
+   - serve build/petalinux-gstreamer-rootfs-integration/image.ub from the PC on
+     the direct-link interface
+   - board wget downloads it to /tmp
+   - board verifies SHA-256 before copying it to /run/media/mmcblk0p1/image.ub
+   - board backs up the previous image.ub first, syncs, and reboots
+6. After reboot, require:
+   - /usr/bin/gst-launch-1.0
+   - /usr/bin/gst-inspect-1.0
+   - gst-launch-1.0 version 1.12.2
+   - /dev/dri/card0 and /dev/fb0 still present
+7. Probe required elements with gst-inspect-1.0:
+   videotestsrc, filesrc, udpsrc, tcpclientsrc, tcpserversrc,
+   rtpjitterbuffer, rtpvrawdepay, rtph264depay, videoconvert, videoscale,
+   queue, capsfilter, identity, fpsdisplaysink, kmssink, v4l2src, v4l2sink
+8. Probe helper tools:
+   modetest, v4l2-ctl, yavta
+9. Run a cheap smoke pipeline:
+   gst-launch-1.0 -q videotestsrc num-buffers=5 ! video/x-raw,width=320,height=240,framerate=5/1 ! videoconvert ! fakesink
+10. Treat kmssink presence and KMS caps negotiation as dependency evidence
+    only. Do not claim the final RTP/raw-video-to-kmssink route until a later
+    route gate validates frame/drop accounting and HDMI return quality.
+```
+
+Verified outcome:
+The board boots a generated PetaLinux image with GStreamer tools, base/good/bad
+plugins, kmssink, DRM/KMS userspace tools, and V4L utilities in the rootfs. The
+image update path over board Ethernet passed SHA-256 verification and retained
+a TF-card rollback copy. The fakesink GStreamer smoke pipeline passed; kmssink
+loaded and negotiated 800x600 KMS caps in a background smoke run. The package
+set deliberately excludes gstreamer1.0-plugins-ugly, gstreamer1.0-libav, and
+ffmpeg unless license flags are explicitly accepted. Do not use
+packagegroup-petalinux-gstreamer on this image; it pulls OMX, which failed to
+compile and is not needed for the Zynq-7020 DRM/KMS route.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.
