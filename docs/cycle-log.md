@@ -18,6 +18,50 @@ Result:            (must include pass_condition=... and measured=..., per the
 Residual risks:
 ```
 
+## Cycle: gstreamer-rtp-kmssink-corrected-route-gate
+
+Objective: verify the corrected mature Linux route gate for RTP/raw GStreamer
+input through `rtpjitterbuffer` and `kmssink`, with smoothness, drop-rate, and
+frame-id correspondence restored in the frozen pass_condition.
+
+Changed scope:
+
+- Opened the corrected route-gate cycle in `docs/current-cycle.md`.
+- Ran the cheapest PC and board GStreamer dependency probes.
+- Added the cycle report.
+
+Verification:
+
+- PC probe reported `PC_CMD_MISSING gst-launch-1.0` and
+  `PC_CMD_MISSING gst-inspect-1.0`.
+- Board UART probe reported `BOARD_CMD_MISSING gst-launch-1.0` and
+  `BOARD_CMD_MISSING gst-inspect-1.0`.
+- Board `/dev/dri/card0` exists.
+- Required board GStreamer elements were recorded missing:
+  `udpsrc`, `rtpjitterbuffer`, `rtpvrawdepay`, `videoconvert`, `kmssink`.
+- No RTP pipeline, HDMI capture, trace validation, or tearing validation was
+  run because the dependency gate failed.
+
+Board action:
+
+- UART shell inspection only. No Ethernet video send, HDMI capture,
+  Vivado/PetaLinux build, TF-card write, JTAG programming, or board flash write
+  was performed.
+
+Evidence:
+
+- `docs/reports/gstreamer-rtp-kmssink-corrected-route-gate.md`
+- `build/gstreamer-rtp-kmssink-corrected-route-gate/pc-gstreamer-probe.log`
+- `build/gstreamer-rtp-kmssink-corrected-route-gate/board-gstreamer-probe-exact.log`
+
+Result: pass_condition=(pc_gst_launch_present == 1 and board_gst_launch_present == 1 and pc_required_gst_elements_missing == 0 and board_required_gst_elements_missing == 0 and board_sink == kmssink and board_display_device == /dev/dri/card0 and transport == rtp-raw-udp and jitter_buffer == rtpjitterbuffer and self_written_udp_receiver_used == 0 and fbdev_live_write_used == 0 and trace_sent_frames >= 120 and trace_captured_frames >= 114 and trace_matched_frames >= 114 and trace_drop_rate <= 0.05 and trace_order_violations == 0 and trace_content_mismatches == 0 and trace_black_frames == 0 and trace_image_path_failures == 0 and hdmi_captured_frames >= 120 and frame_duration_stddev_ms <= 4.0 and tearing_frames == 0 and unified_validator_status == pass and tearing_validator_status == pass), measured=(pc_gst_launch_present=0, board_gst_launch_present=0, pc_required_gst_elements_missing=5, board_required_gst_elements_missing=5, board_sink=missing, board_display_device=/dev/dri/card0, transport=not-run, jitter_buffer=missing, self_written_udp_receiver_used=0, fbdev_live_write_used=0, trace_sent_frames=0, trace_captured_frames=0, trace_matched_frames=0, trace_drop_rate=1.0, trace_order_violations=not-run, trace_content_mismatches=not-run, trace_black_frames=not-run, trace_image_path_failures=not-run, hdmi_captured_frames=0, frame_duration_stddev_ms=not-run, tearing_frames=not-run, unified_validator_status=not-run, tearing_validator_status=not-run) -> FAILED.
+
+Residual risks:
+
+- GStreamer must be installed/provided on both PC and board before the mature
+  Linux video route can be re-tested.
+- PetaLinux 2018.3 recipe names and rootfs size impact are not yet measured.
+
 ## Cycle: gstreamer-rtp-kmssink-route-gate
 
 Objective: open a route gate for replacing the project-specific network-video
