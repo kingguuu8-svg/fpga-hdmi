@@ -678,3 +678,130 @@ Next focused debug actions:
 
 This report is a board-fact audit checkpoint inside the active cycle, not cycle
 completion evidence.
+
+## Third-party review — Linux mature pipeline route
+
+Reviewer: independent audit (2026-07-02). This section is non-blocking: it does
+not reopen any cycle or gate the next one. It records the user's standing
+objection that the Ethernet-to-HDMI pass-through should be expressible entirely
+in mature Linux terms — "the network interface receives a signal, Linux turns
+it into a video signal, the display device shows it" — and the reviewer's
+agreement after checking the current code and docs.
+
+### User's position (verified against code)
+
+The user's framing is correct and is supported by the current sources:
+
+- The network path works: official Linux boots, `eth0` 1000/Full, ping 0% loss
+  (cycle `tf-card-linux-ping-route-gate`). The hand-written baremetal RGMII
+  bridge is retired as a dead end.
+- The PL HDMI path works: `/dev/dri/card0`, `/dev/fb0`, a connected fixed-mode
+  connector, and a 800x600@60Hz mode all exist (cycle
+  `hdmi-linux-fixed-mode-connector`). VDMA MM2S continuously scans the
+  framebuffer and drives `v_axi4s_vid_out -> rgb2dvi -> HDMI`.
+- So the project already has the two endpoints the user describes: a working
+  network interface and a working Linux-visible display device. What remains is
+  the middle, and the middle is a place Linux solved decades ago.
+
+### Why current output looks rough — three concrete code-level causes
+
+None of the three is a hard FPGA problem; all are missing-standard-display-
+plumbing problems, and all were invisible to the unified validator because the
+validation content was solid color blocks (tearing and frame-pacing errors are
+not visible on static single-color frames).
+
+1. **Tearing — the receiver writes the live framebuffer in place.**
+   `software/eth_pass_through/src/video_framebuffer.c:67-78` does a
+   per-pixel byte-reorder loop (1.44M single-byte writes) directly into the
+   mmap'd `/dev/fb0` memory. The device tree
+   (`software/petalinux/hdmi-linux-display-stack/system-user.dtsi:36-50`)
+   fixes HDMI at 800x600@60Hz, so VDMA is scanning that same memory ~60 times
+   per second. The write window is longer than one refresh period, so VDMA
+   reads a half-new half-old frame → a visible tear line. The `msync(MS_SYNC)`
+   at `fb_video_udp_receiver.c:329` flushes cache but does not wait for vblank,
+   so it does not help.
+
+2. **Single-packet loss drops an entire frame.**
+   `software/eth_pass_through/src/video_udp_receiver.c:107` only publishes a
+   frame when `bytes_received == VIDEO_UDP_FRAME_BYTES` exactly. At 15 fps that
+   is 18000 UDP packets/sec; a single dropped packet leaves the frame
+   permanently incomplete and the screen keeps showing the previous frame → a
+   visible stutter. There is no jitter buffer and no "show previous frame until
+   the next one is ready" pacing.
+
+3. **Frame pacing is not locked to the display.**
+   `fb_video_udp_receiver.c:539-544` throttles writes with `usleep` against
+   `present_interval_ms`, which is unrelated to the 60Hz display vsync. Write
+   moments land at arbitrary phases of the vsync cycle, so combined with cause
+   1 the tear position moves every frame and combined with cause 2 each frame's
+   on-screen duration is irregular. A human reads this as "frequency is
+   unstable".
+
+### Mature Linux solution that already fits this board
+
+The standard Linux video pipeline is well established and every segment has a
+production-grade implementation:
+
+```text
+net iface -> socket -> demux/jitter buffer -> decode -> display stack -> HDMI
+```
+
+Mapping to this project, segment by segment:
+
+| Segment | Mature Linux answer | Current project state | Gap |
+| --- | --- | --- | --- |
+| socket receive | UDP/RTP socket | UDP socket + custom ZVID protocol | protocol works; no reorder/loss recovery |
+| demux + jitter | GStreamer `rtpjitterbuffer` or equivalent | hand-written 1200-packet-per-frame reassembly, all-or-nothing | one dropped packet = one dropped frame |
+| decode | `decodebin` / hw decoder | none — raw RGB888 is sent, no decode | 7Z020 has no VCU, so H.264 must be soft-decoded or avoided |
+| format/scale | `videoconvert` / `videoscale` / dmabuf zero-copy | none — writes straight to fbdev mmap | no format conversion stage |
+| display stack | DRM/KMS atomic page-flip at vblank | bypassed — `mmap("/dev/fb0")` + in-place byte reorder | root cause of tearing and unlocked frame pacing |
+| HDMI | VDMA -> rgb2dvi (the PL chain) | working | none |
+
+The key observation: the project's `/dev/dri/card0` with a connected
+fixed-mode connector is already a DRM/KMS device. The receiver currently
+bypasses it by writing fbdev memory directly. Adopting the standard path
+(DRM dumb buffer back/front + `drmModeAtomicCommit` page-flip, or even
+fbdev double-buffer with `yres_virtual=2*yres` + `FBIO_PAN` at vblank) is
+pure Linux userspace work and touches none of the FPGA/RGMII/display-stack
+integration gates that were painful to close.
+
+### Recommended direction (non-blocking, for the user to approve)
+
+Two tiers, cheapest first, both pure-software, neither touches Vivado/PL:
+
+**Tier 1 — remove the long write window.** Move the RGB->BGR byte reorder to
+the PC sender so the receiver degenerates to one `memcpy` of 1.44 MB, which is
+sub-millisecond and far shorter than one 60Hz refresh. This alone removes most
+visible tearing and is a one-file Python change plus deleting the C reorder
+loop. It does not require GStreamer or DRM.
+
+**Tier 2 — adopt the mature Linux pipeline.** Replace the hand-written receive
+path with a GStreamer pipeline (`udpsrc ! rtpjitterbuffer ! ... ! videoconvert
+! kmssink` or `fpsdisplaysink`) ending in a DRM/KMS sink, or at minimum a
+fbdev double-buffer + vblank pan. This brings jitter-buffered loss recovery,
+standard format conversion, and vsync-locked page-flip in one step, and every
+segment is production code rather than a project-specific reimplementation.
+
+A single hardware ceiling remains and must be stated honestly: the 7Z020 has
+no VCU, so H.264 decode is software-only on the dual Cortex-A9 and will be
+frame-rate-limited. "True video" at full frame rate either stays on raw/light-
+compression transport (Tier 1/2 above), or requires a PL decode IP — a
+separate, larger route.
+
+### Why this belongs in this report
+
+The body of this report documents the hand-written baremetal RGMII bridge
+dead end and the route pivot to Linux. This review records the symmetric
+finding for the display side: the hand-written fbdev in-place write is the
+display-side equivalent of the hand-written RGMII bridge — a project-specific
+reimplementation of something Linux already does better, and the right move is
+the same as before: stop hand-writing the layer Linux already provides, and
+adopt the mature path. The network side already made that pivot (Linux +
+macb retired the hand-written bridge). The display side has not yet.
+
+This section is non-blocking. No cycle is reopened. The verified subchains
+(ETH RX under Linux, VDMA/HDMI under DRM/fbdev, frame_id correspondence under
+the unified validator) remain valid for what they proved. The concern is that
+the current display path proves "a frame can reach the screen", not "video
+plays smoothly", and the fix is to adopt the standard Linux video/display
+pipeline that this board's existing DRM device already supports.
