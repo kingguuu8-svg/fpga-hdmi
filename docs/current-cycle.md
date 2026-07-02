@@ -1,6 +1,6 @@
 # Current Cycle
 
-Status: no active implementation cycle is open.
+Status: implementation cycle active.
 
 ## Rule
 
@@ -70,7 +70,53 @@ placeholder.
 ## Active Cycle
 
 ```text
-No active implementation cycle is open.
+Cycle ID: drm-kms-vblank-motion-tearing
+Objective: Replace the board display path used by the video receiver from
+  fbdev live-screen writes to DRM/KMS double-buffered page-flip, and verify
+  human-visible motion quality with textured motion content. This cycle must
+  fail, not pass with residual risk, if DRM/KMS page-flip or vblank event
+  evidence cannot be made to work on the current board image.
+Scope: Linux/userspace only: add a DRM/KMS dumb-buffer page-flip receiver or
+  display path, add a textured motion source, add and calibrate a tearing/
+  smoothness validator, run connected-board verification, and record evidence.
+  No Vivado, PetaLinux, device-tree, bitstream, TF-card, or persistent board
+  write unless a blocker proves the current image cannot support DRM page-flip.
+Verification plan: Build host tests and the board binary, calibrate the new
+  tearing validator against synthetic no-tear and torn motion frames, deploy
+  the receiver to /tmp, receive and display at least 60 textured motion frames
+  using /dev/dri/card0 dumb buffers, require page-flip completion/vblank
+  events for every displayed validation frame, capture HDMI motion frames, and
+  run the calibrated validator on saved capture images.
+Board action: Linux receiver from /tmp, PC UDP textured motion payload over
+  Ethernet, DRM/KMS /dev/dri/card0 output with double-buffered dumb buffers,
+  HDMI/UVC capture, UART shell control. No fbdev live-screen mmap write is
+  allowed as the display path.
+Evidence target: docs/reports/drm-kms-vblank-motion-tearing.md and
+  build/drm-kms-vblank-motion-tearing/.
+pass_condition: display_backend == drm-kms and drm_device == /dev/dri/card0
+  and fbdev_live_write_used == 0 and drm_dumb_buffers == 2 and
+  drm_page_flip_calls == 60 and drm_vblank_flip_events == 60 and
+  sent_frames == 60 and receiver_written_frames == 60 and
+  receiver_dropped_packets == 0 and motion_content_type == textured-motion
+  and captured_motion_frames >= 60 and tearing_validator_calibrated == 1 and
+  tearing_frames == 0 and frame_duration_stddev_ms <= 4.0 and
+  validator_status == pass.
+validator: new tools/validate_motion_tearing.py calibrated in this cycle
+  against synthetic no-tear and torn textured-motion frames, plus direct board
+  log checks for display_backend=drm-kms, fbdev_live_write_used=0,
+  DRM_DUMB_BUFFERS count=2, DRM_PAGE_FLIP_SUBMITTED count=60,
+  DRM_PAGE_FLIP_EVENT count=60, receiver writes count=60, dropped=0, and
+  sender metadata motion_content_type=textured-motion. Because this cycle
+  introduces the tearing validator, closure requires calibration known_good
+  pass and known_bad torn fail before hardware results may be accepted.
+Highest-risk assumption this cycle falsifies: The current project Linux DRM
+  driver exposes enough KMS functionality for userspace dumb-buffer page-flip
+  with vblank events; if it does not, the correct cycle result is FAILED with
+  the DRM/KMS blocker recorded.
+Cheapest alternative way to falsify the same assumption: A board-side
+  modetest-style DRM probe can quickly show missing connectors/CRTC/page-flip
+  support, but completion requires the full Ethernet-to-DRM-to-HDMI motion
+  path with vblank and tearing evidence.
 ```
 
 ## Recently Closed Cycle
