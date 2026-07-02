@@ -18,6 +18,41 @@ Result:            (must include pass_condition=... and measured=..., per the
 Residual risks:
 ```
 
+## Cycle: gstreamer-dependency-provisioning
+
+Objective: provide GStreamer dependencies for the mature Linux route.
+
+Changed scope:
+
+- Opened the dependency provisioning cycle.
+- Ran partial PC and Yocto recipe probes.
+- Closed before provisioning because the frozen pass gate incorrectly required
+  PetaLinux image rebuild and excluded the shorter apt hot-install path.
+
+Verification:
+
+- PC probe found `winget` present but `gst-launch-1.0` and `gst-inspect-1.0`
+  missing.
+- Local PetaLinux/Yocto layers contain GStreamer recipes.
+- No install, image build, TF-card update, reboot, video pipeline, or HDMI
+  capture was run.
+
+Board action:
+
+- None.
+
+Evidence:
+
+- `docs/reports/gstreamer-dependency-provisioning.md`
+- `build/gstreamer-dependency-provisioning/host-gstreamer-availability.log`
+- `build/gstreamer-dependency-provisioning/yocto-gstreamer-recipes.log`
+
+Result: pass_condition=(pc_gst_launch_present == 1 and pc_gst_inspect_present == 1 and pc_required_gst_elements_missing == 0 and board_gst_launch_present == 1 and board_gst_inspect_present == 1 and board_required_gst_elements_missing == 0 and board_drm_card0_present == 1 and petalinux_image_built == 1 and board_booted_updated_image == 1 and tf_card_update_verified == 1), measured=(pc_gst_launch_present=0, pc_gst_inspect_present=0, pc_required_gst_elements_missing=not-run, board_gst_launch_present=0, board_gst_inspect_present=0, board_required_gst_elements_missing=not-run, board_drm_card0_present=1, petalinux_image_built=0, board_booted_updated_image=0, tf_card_update_verified=0, cycle_scope_error=hot_install_path_excluded) -> FAILED.
+
+Residual risks:
+
+- Hot install still needs to be tried in a corrected cycle.
+
 ## Cycle: gstreamer-rtp-kmssink-corrected-route-gate
 
 Objective: verify the corrected mature Linux route gate for RTP/raw GStreamer

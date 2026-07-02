@@ -1,6 +1,6 @@
 # Current Cycle
 
-Status: implementation cycle active.
+Status: no active implementation cycle is open.
 
 ## Rule
 
@@ -70,53 +70,7 @@ placeholder.
 ## Active Cycle
 
 ```text
-Cycle ID: gstreamer-dependency-provisioning
-Objective: Provide the missing GStreamer runtime dependencies required by the
-  mature Linux video route before re-running the RTP/raw `kmssink` route gate.
-  The previous corrected route gate failed because both PC and board lacked
-  `gst-launch-1.0` and `gst-inspect-1.0`; this cycle is dependency
-  provisioning only, not a video-quality claim.
-Scope: Host/board dependency work only. Find the shortest non-invasive PC-side
-  way to make `gst-launch-1.0` and `gst-inspect-1.0` command-visible with the
-  required PC elements. For the board, map PetaLinux 2018.3/Yocto package
-  names for GStreamer core and required plugins, update the existing
-  PetaLinux/rootfs configuration or overlay, build/package a new image if
-  needed, update the TF-card through the existing safe board-update path, boot
-  it, and probe GStreamer elements. Do not run the RTP video pipeline or claim
-  smooth playback in this cycle.
-Verification plan: Probe PC GStreamer before/after provisioning; inspect local
-  PetaLinux/Yocto recipes for exact package names; update only checked-in
-  rootfs/overlay/config sources needed to include GStreamer; build/package the
-  project image in the verified Ubuntu 18.04 chroot; update the TF-card image
-  with checksum/backup if a new image is built; reboot and use UART shell to
-  verify `gst-launch-1.0`, `gst-inspect-1.0`, required board elements, and
-  `/dev/dri/card0`.
-Board action: PetaLinux/rootfs rebuild and TF-card image update are allowed
-  only after checksum verification and existing image backup. No Vivado,
-  bitstream, device-tree, JTAG programming, QSPI, NAND, eMMC, or other board
-  flash write.
-Evidence target: docs/reports/gstreamer-dependency-provisioning.md and
-  build/gstreamer-dependency-provisioning/.
-pass_condition: pc_gst_launch_present == 1 and pc_gst_inspect_present == 1
-  and pc_required_gst_elements_missing == 0 and
-  board_gst_launch_present == 1 and board_gst_inspect_present == 1 and
-  board_required_gst_elements_missing == 0 and board_drm_card0_present == 1
-  and petalinux_image_built == 1 and board_booted_updated_image == 1 and
-  tf_card_update_verified == 1.
-validator: direct command/log checks from committed tools/uart_run_commands.ps1
-  for board commands, direct PC command checks for `gst-launch-1.0`,
-  `gst-inspect-1.0`, and required PC elements, PetaLinux build/package logs
-  from the verified chroot scripts, SHA-256 checks for `image.ub`, and UART
-  boot/runtime evidence for the updated image. No HDMI video-quality validator
-  is used in this dependency cycle because route quality is explicitly out of
-  scope.
-Highest-risk assumption this cycle falsifies: The existing PetaLinux 2018.3
-  project can include enough GStreamer runtime and plugin packages for
-  RTP/raw/`kmssink` without changing PL, Vivado, or the display device tree.
-Cheapest alternative way to falsify the same assumption: Search the local
-  Yocto/PetaLinux layers for the required GStreamer recipe/package names
-  before editing or building. If the required recipes are absent from the
-  available layers, close FAILED without a long image build.
+No active implementation cycle is open.
 ```
 
 ## Recently Closed Cycle
@@ -181,6 +135,25 @@ Evidence: docs/reports/gstreamer-rtp-kmssink-corrected-route-gate.md
 Board action: UART shell inspection only. No Ethernet video send, HDMI
   capture, Vivado/PetaLinux build, TF-card write, JTAG programming, or board
   flash write was performed.
+
+Cycle ID: gstreamer-dependency-provisioning
+Result: FAILED before provisioning. The cycle was opened with a pass condition
+  that required PetaLinux image rebuild and TF-card update. A shorter valid
+  route exists: hot-installing GStreamer into the running Linux rootfs via apt
+  if apt and network access work. Because the frozen bar cannot be edited in
+  place, this cycle is closed and a hot-install-first cycle must be opened.
+  pass_condition=(pc_gst_launch_present == 1 and pc_gst_inspect_present == 1
+  and pc_required_gst_elements_missing == 0 and board_gst_launch_present == 1
+  and board_gst_inspect_present == 1 and board_required_gst_elements_missing
+  == 0 and board_drm_card0_present == 1 and petalinux_image_built == 1 and
+  board_booted_updated_image == 1 and tf_card_update_verified == 1),
+  measured=(pc_gst_launch_present=0, pc_gst_inspect_present=0,
+  board_gst_launch_present=0, board_gst_inspect_present=0,
+  board_drm_card0_present=1, petalinux_image_built=0,
+  board_booted_updated_image=0, tf_card_update_verified=0,
+  cycle_scope_error=hot_install_path_excluded).
+Evidence: docs/reports/gstreamer-dependency-provisioning.md
+Board action: none.
 
 Cycle ID: drm-kms-local-motion-pacing
 Result: PASSED. Isolated the board display side by generating textured motion
@@ -756,12 +729,12 @@ No active cycle is open. The next implementation cycle can build on two
 verified facts: the Linux direct-copy network-to-HDMI transfer chain passes,
 and the board display side can page-flip textured motion through DRM/KMS with
 stable vblank cadence when network receive is removed. If the goal is smooth
-network-driven video through mature Linux components, the next cycle must
-first provide GStreamer: install PC-side GStreamer and rebuild or update the
-PetaLinux/rootfs image with `gst-launch-1.0`, `gst-inspect-1.0`, `udpsrc`,
-`rtpjitterbuffer`, `rtpvrawdepay`, `videoconvert`, and `kmssink`. Only after
-that dependency cycle passes should the RTP/raw `kmssink` route gate be run
-again. Because the next cycle will carry a tunable numeric `pass_condition`, it
-must follow the Rule 1 open-commit sub-rule: commit the `## Active Cycle` block
-with the frozen `pass_condition:`/`validator:` before running verification,
-then close in a separate commit.
+network-driven video through mature Linux components, the next dependency
+cycle must try hot install first: install PC-side GStreamer with an available
+host package manager and try board-side `apt-get` installation, repairing
+Ubuntu 18.04 sources to old-releases if needed. Only if hot install fails
+should a later cycle rebuild the PetaLinux/rootfs image. Because the next cycle
+will carry a tunable numeric `pass_condition`, it must follow the Rule 1
+open-commit sub-rule: commit the `## Active Cycle` block with the frozen
+`pass_condition:`/`validator:` before running verification, then close in a
+separate commit.
