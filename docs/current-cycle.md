@@ -1,6 +1,6 @@
 # Current Cycle
 
-Status: no active implementation cycle is open.
+Status: implementation cycle active.
 
 ## Rule
 
@@ -70,7 +70,71 @@ placeholder.
 ## Active Cycle
 
 ```text
-No active implementation cycle is open.
+Cycle ID: gstreamer-rtp-kmssink-corrected-route-gate
+Objective: Verify the shortest mature Linux route for smooth network-driven
+  video without using the project-specific UDP receiver/display scheduler:
+  PC GStreamer sends deterministic marker-backed RTP/raw video over UDP, the
+  board receives through GStreamer `udpsrc ! rtpjitterbuffer ! rtpvrawdepay !
+  videoconvert ! kmssink`, and HDMI capture proves both smooth visual cadence
+  and faithful returned frame identity. This cycle corrects the prior flawed
+  `gstreamer-rtp-kmssink-route-gate` pass gate by restoring the smoothness,
+  drop-rate, and frame-id correspondence rulers before verification runs.
+Scope: Linux/userspace route gate only. First inspect PC and board GStreamer
+  availability. If required GStreamer commands or elements are missing on the
+  current board image, close FAILED with exact missing elements; do not rebuild
+  PetaLinux in this cycle. If elements exist, run the RTP/raw pipeline and
+  validate HDMI output. No Vivado, device-tree, bitstream, JTAG, custom UDP
+  receiver, custom display scheduler, TF-card update, or persistent board
+  write.
+Verification plan: Use UART shell control to check board `gst-launch-1.0`,
+  `gst-inspect-1.0` elements, and `/dev/dri/card0`; check PC GStreamer
+  elements; generate deterministic marker-backed raw RGB frames using the
+  already-committed unified marker format as input fixtures; send those frames
+  through a PC GStreamer RTP/raw UDP pipeline; receive and display them on the
+  board with `rtpjitterbuffer` and `kmssink`; capture HDMI through the UVC
+  adapter; run already-committed `tools/build_unified_trace_from_mjpeg.py`,
+  `tools/validate_passthrough_trace.py`, and
+  `tools/validate_motion_tearing.py` where applicable; compute frame-duration
+  stddev from saved HDMI capture timestamps or decoded trace timestamps.
+Board action: Runtime-only Linux userspace commands from UART shell, Ethernet
+  UDP receive, DRM/KMS display through `kmssink`, HDMI/UVC capture. No
+  persistent board write, TF-card update, Vivado/PetaLinux build, JTAG
+  programming, or board flash write.
+Evidence target: docs/reports/gstreamer-rtp-kmssink-corrected-route-gate.md
+  and build/gstreamer-rtp-kmssink-corrected-route-gate/.
+pass_condition: pc_gst_launch_present == 1 and board_gst_launch_present == 1
+  and pc_required_gst_elements_missing == 0 and
+  board_required_gst_elements_missing == 0 and board_sink == kmssink and
+  board_display_device == /dev/dri/card0 and transport == rtp-raw-udp and
+  jitter_buffer == rtpjitterbuffer and self_written_udp_receiver_used == 0
+  and fbdev_live_write_used == 0 and trace_sent_frames >= 120 and
+  trace_captured_frames >= 114 and trace_matched_frames >= 114 and
+  trace_drop_rate <= 0.05 and trace_order_violations == 0 and
+  trace_content_mismatches == 0 and trace_black_frames == 0 and
+  trace_image_path_failures == 0 and hdmi_captured_frames >= 120 and
+  frame_duration_stddev_ms <= 4.0 and tearing_frames == 0 and
+  unified_validator_status == pass and tearing_validator_status == pass.
+validator: already-committed tools/build_unified_trace_from_mjpeg.py and
+  tools/validate_passthrough_trace.py for frame-id correspondence, drop-rate,
+  ordering, content, black-frame, and image-path checks; already-committed
+  tools/probe_hdmi_motion_capture.py and tools/validate_motion_tearing.py for
+  HDMI motion/tearing evidence; direct log checks from committed
+  tools/uart_run_commands.ps1 for `which gst-launch-1.0`,
+  `gst-inspect-1.0` required elements, board `kmssink` command line,
+  `/dev/dri/card0`, and absence of project-specific receiver processes. Frame
+  duration stddev is a direct measurement from saved HDMI capture or decoded
+  trace timestamps; it is a frozen pass-gate field even if an existing
+  validator script does not decide pass/fail on that field.
+Highest-risk assumption this cycle falsifies: The current board image and PC
+  environment already contain enough GStreamer userspace and plugins to route
+  RTP/raw video through `rtpjitterbuffer` and DRM/KMS `kmssink` while preserving
+  smooth cadence and frame identity, without rebuilding the image or retaining
+  project-specific UDP reassembly/display scheduling in the main path.
+Cheapest alternative way to falsify the same assumption: Run only
+  `which gst-launch-1.0` and `gst-inspect-1.0` for required PC/board elements.
+  That is sufficient to close FAILED if any required element is missing, but
+  insufficient for PASS because it does not prove `/dev/dri/card0` scanout,
+  HDMI motion smoothness, drop-rate, or frame-id correspondence.
 ```
 
 ## Recently Closed Cycle
