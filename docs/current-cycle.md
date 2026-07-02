@@ -1,6 +1,6 @@
 # Current Cycle
 
-Status: no active implementation cycle is open.
+Status: implementation cycle active.
 
 ## Rule
 
@@ -70,7 +70,61 @@ placeholder.
 ## Active Cycle
 
 ```text
-No active implementation cycle is open.
+Cycle ID: gstreamer-rtp-kmssink-route-gate
+Objective: Replace the project-specific network-video receiver/display stack
+  as the preferred smooth-video route with the shortest mature Linux ecosystem
+  path: PC GStreamer RTP raw-video sender over UDP into board-side GStreamer
+  `udpsrc ! rtpjitterbuffer ! rtpvrawdepay ! videoconvert ! kmssink`, ending
+  at `/dev/dri/card0` and HDMI. This cycle is a route gate: first try the
+  current board image without rebuilding PetaLinux. If required GStreamer
+  commands or plugins are missing, close FAILED with exact missing elements
+  and open a later image/rootfs cycle; do not fall back to self-written UDP
+  reassembly or fbdev mmap.
+Scope: Linux/userspace route gate only after human review approval. Planned
+  scope is to inspect PC and board GStreamer availability, run a PC
+  `videotestsrc` or fixed file source into RTP/raw UDP, run board-side
+  GStreamer receive/display into `kmssink`, capture HDMI, and validate
+  dynamic textured output with existing capture/tearing tools. No Vivado,
+  device-tree, bitstream, JTAG, or custom receiver code change. PetaLinux
+  rebuild is explicitly out of scope for this gate; missing packages make this
+  cycle fail rather than expanding scope.
+Verification plan: After review approval, use UART shell control to check
+  `gst-launch-1.0` and required board plugins, check PC `gst-launch-1.0`,
+  start the board RTP/raw receive pipeline with `kmssink`, start the PC
+  RTP/raw sender at the roadmap-owned mode, capture HDMI through the UVC
+  adapter, and run the already-committed motion tearing validator on saved
+  capture frames. Record exact GStreamer command lines and logs.
+Board action: Runtime-only Linux userspace commands from UART shell, Ethernet
+  UDP receive, DRM/KMS display through `kmssink`, HDMI/UVC capture. No
+  persistent board write, TF-card update, Vivado/PetaLinux build, JTAG
+  programming, or board flash write.
+Evidence target: docs/reports/gstreamer-rtp-kmssink-route-gate.md and
+  build/gstreamer-rtp-kmssink-route-gate/.
+pass_condition: pc_gst_launch_present == 1 and board_gst_launch_present == 1
+  and board_required_gst_elements_present == 5 and
+  board_required_gst_elements_missing == 0 and board_sink == kmssink and
+  board_display_device == /dev/dri/card0 and transport == rtp-raw-udp and
+  self_written_udp_receiver_used == 0 and fbdev_live_write_used == 0 and
+  pc_sender_frames >= 120 and hdmi_captured_frames >= 120 and
+  captured_motion_frames >= 120 and tearing_frames == 0 and
+  validator_status == pass.
+validator: already-committed tools/probe_hdmi_motion_capture.py and
+  tools/validate_motion_tearing.py, plus direct log checks from committed
+  tools/uart_run_commands.ps1 for `which gst-launch-1.0`,
+  `gst-inspect-1.0 udpsrc rtpjitterbuffer rtpvrawdepay videoconvert kmssink`,
+  the board `gst-launch-1.0` receive pipeline, and the PC `gst-launch-1.0`
+  sender command output. No new validator script may be introduced and used as
+  the primary pass gate in this cycle.
+Highest-risk assumption this cycle falsifies: The current board image already
+  contains enough GStreamer userspace and plugins to route RTP/raw video from
+  Ethernet directly into DRM/KMS `kmssink` without rebuilding the image or
+  keeping project-specific UDP reassembly/display scheduling code in the main
+  path.
+Cheapest alternative way to falsify the same assumption: Run only
+  `which gst-launch-1.0` and `gst-inspect-1.0` for the five required elements
+  on the board. That is cheaper but insufficient for a PASS because it does
+  not prove `/dev/dri/card0` scanout or HDMI motion; it is sufficient to close
+  FAILED if any required element is missing.
 ```
 
 ## Recently Closed Cycle
