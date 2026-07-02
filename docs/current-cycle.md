@@ -70,7 +70,46 @@ placeholder.
 ## Active Cycle
 
 ```text
-No active implementation cycle is open.
+Cycle ID: gstreamer-hot-install-first
+Objective: provision the GStreamer runtime dependencies by hot install before
+  considering a PetaLinux/rootfs rebuild.
+Scope: install or expose PC-side GStreamer with the available host package
+  manager, then try board-side apt hot install on the running TF-card Linux
+  rootfs. If board apt is absent, has no network route, cannot update after
+  old-releases source repair, or cannot install required packages, close this
+  cycle FAILED and leave PetaLinux rebuild for a later cycle. Do not run the
+  RTP video route gate in this cycle.
+Verification plan: probe PC gst commands and required sender elements; probe
+  board apt, rootfs free space, route/DNS, and /dev/dri/card0; if apt exists,
+  try apt-get update, repair Ubuntu 18.04 sources to old-releases only if the
+  update failure matches stale bionic repository symptoms, then install the
+  required board GStreamer packages; re-probe gst commands/elements and record
+  measured values.
+Board action: UART shell commands only. Runtime rootfs package install may be
+  attempted through apt. No Vivado/PetaLinux build, JTAG programming,
+  BOOT.BIN/image.ub packaging, TF-card image write, board flash write, or HDMI
+  capture.
+Evidence target: docs/reports/gstreamer-hot-install-first.md and
+  build/gstreamer-hot-install-first/
+pass_condition: pc_gst_launch_present == 1 and pc_gst_inspect_present == 1
+  and pc_required_gst_elements_missing == 0 and board_apt_probe_completed == 1
+  and board_install_method == apt-hot-install and board_apt_update_status == pass
+  and board_apt_install_status == pass and board_gst_launch_present == 1
+  and board_gst_inspect_present == 1 and board_required_gst_elements_missing == 0
+  and board_drm_card0_present == 1 and board_rootfs_free_mb_after >= 200
+  and petalinux_image_built == 0 and tf_card_image_written == 0
+validator: rtk powershell.exe -NoProfile -Command "Get-Command gst-launch-1.0,
+  gst-inspect-1.0; gst-inspect-1.0 videotestsrc videoconvert rtpvrawpay udpsink"
+  plus tools/uart_run_commands.ps1 running command -v apt-get, df -Pm /,
+  ls -l /dev/dri/card0, apt-get update/install, command -v gst-launch-1.0,
+  command -v gst-inspect-1.0, and gst-inspect-1.0 udpsrc rtpjitterbuffer
+  rtpvrawdepay videoconvert kmssink.
+Highest-risk assumption this cycle falsifies: the running board Linux rootfs
+  can install the missing GStreamer stack in place through apt, so no slow
+  PetaLinux rebuild is needed for the mature Linux route.
+Cheapest alternative way to falsify the same assumption: probe command -v
+  apt-get and apt-get update before any package install; if apt or networked
+  package index update is impossible, the hot-install route is false.
 ```
 
 ## Recently Closed Cycle
