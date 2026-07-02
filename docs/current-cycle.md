@@ -1,6 +1,6 @@
 # Current Cycle
 
-Status: no active implementation cycle is open.
+Status: implementation cycle active.
 
 ## Rule
 
@@ -66,6 +66,52 @@ agent or the human can read the reviewer's view alongside the cycle's own PASSED
 claim, and decide whether the residual concerns deserve a follow-up cycle.
 If no review was performed, omit the section entirely; do not write a
 placeholder.
+
+## Active Cycle
+
+```text
+Cycle ID: dashboard-unified-15fps-paired-preview
+Objective: Replace the Dashboard's legacy independent-clock demo path with the
+  already-proven unified 15 fps sender/receiver path, and make the left preview
+  represent an actually sent frame paired to the frame_id decoded from the live
+  HDMI return.
+Scope: Dashboard sender integration, sender live-frame state, HDMI marker decode
+  for preview pairing, 5-second content dwell at a 15 fps transport rate,
+  integrated PC tests, and connected-board HDMI/UVC validation. Do not change
+  Vivado, PetaLinux, the device tree, or FPGA bitstream.
+Verification plan: Run compile/self-tests first; then deploy the existing Linux
+  receiver to /tmp with present_fps=15, start the sender through Dashboard
+  start-stream, sample paired input-preview/HDMI frame IDs, save HDMI JPEGs,
+  build a unified trace, and run the already-committed pass-through validator.
+Board action: Run the Linux receiver from /tmp, send RGB888 UDP from the PC,
+  capture HDMI through the connected UVC adapter, and use UART for Linux shell
+  control. No TF-card, flash, JTAG, Vivado, or PetaLinux write.
+Evidence target: docs/reports/dashboard-unified-15fps-paired-preview.md and
+  build/dashboard-unified-15fps-paired-preview/.
+pass_condition: dashboard_sender_kind == unified and sender_fps == 15 and
+  receiver_present_fps == 15 and hdmi_sample_fps == 15 and
+  content_dwell_seconds == 5 and paired_preview_samples >= 20 and
+  paired_preview_id_mismatches == 0 and sent_frames == 90 and
+  receiver_written_frames == 90 and receiver_dropped_packets == 0 and
+  validator_status == pass and trace_matched_frames >= 86 and
+  trace_drop_rate <= 0.05 and trace_order_violations == 0 and
+  trace_content_mismatches == 0 and trace_black_frames == 0 and
+  trace_image_path_failures == 0 and trace_max_latency_ms <= 1000.
+validator: already-committed tools/validate_passthrough_trace.py on the decoded
+  Dashboard-started hardware trace, plus the direct PowerShell checks
+  `Invoke-RestMethod /api/state` for sender/rate/dwell fields and twenty
+  `Invoke-WebRequest /api/input-preview.bmp` checks requiring X-Frame-ID ==
+  X-HDMI-Frame-ID; this Active Cycle block commits those direct checks before
+  implementation.
+Highest-risk assumption this cycle falsifies: The Dashboard can sustain the
+  proven 15 fps transport while publishing actual-sent state and pairing its
+  left preview to HDMI-decoded frame IDs without reintroducing packet loss or
+  visible independent-clock drift.
+Cheapest alternative way to falsify the same assumption: A PC-only Dashboard
+  self-test can falsify sender/preview wiring, but it cannot test Ethernet,
+  framebuffer presentation, HDMI/UVC decoding, or sustained board-live loss;
+  the connected-board run is therefore required.
+```
 
 ## Recently Closed Cycle
 
