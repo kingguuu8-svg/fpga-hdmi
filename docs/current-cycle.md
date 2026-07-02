@@ -1,6 +1,6 @@
 # Current Cycle
 
-Status: no active implementation cycle is open.
+Status: implementation cycle active.
 
 ## Rule
 
@@ -70,7 +70,53 @@ placeholder.
 ## Active Cycle
 
 ```text
-No active implementation cycle is open.
+Cycle ID: gstreamer-dependency-provisioning
+Objective: Provide the missing GStreamer runtime dependencies required by the
+  mature Linux video route before re-running the RTP/raw `kmssink` route gate.
+  The previous corrected route gate failed because both PC and board lacked
+  `gst-launch-1.0` and `gst-inspect-1.0`; this cycle is dependency
+  provisioning only, not a video-quality claim.
+Scope: Host/board dependency work only. Find the shortest non-invasive PC-side
+  way to make `gst-launch-1.0` and `gst-inspect-1.0` command-visible with the
+  required PC elements. For the board, map PetaLinux 2018.3/Yocto package
+  names for GStreamer core and required plugins, update the existing
+  PetaLinux/rootfs configuration or overlay, build/package a new image if
+  needed, update the TF-card through the existing safe board-update path, boot
+  it, and probe GStreamer elements. Do not run the RTP video pipeline or claim
+  smooth playback in this cycle.
+Verification plan: Probe PC GStreamer before/after provisioning; inspect local
+  PetaLinux/Yocto recipes for exact package names; update only checked-in
+  rootfs/overlay/config sources needed to include GStreamer; build/package the
+  project image in the verified Ubuntu 18.04 chroot; update the TF-card image
+  with checksum/backup if a new image is built; reboot and use UART shell to
+  verify `gst-launch-1.0`, `gst-inspect-1.0`, required board elements, and
+  `/dev/dri/card0`.
+Board action: PetaLinux/rootfs rebuild and TF-card image update are allowed
+  only after checksum verification and existing image backup. No Vivado,
+  bitstream, device-tree, JTAG programming, QSPI, NAND, eMMC, or other board
+  flash write.
+Evidence target: docs/reports/gstreamer-dependency-provisioning.md and
+  build/gstreamer-dependency-provisioning/.
+pass_condition: pc_gst_launch_present == 1 and pc_gst_inspect_present == 1
+  and pc_required_gst_elements_missing == 0 and
+  board_gst_launch_present == 1 and board_gst_inspect_present == 1 and
+  board_required_gst_elements_missing == 0 and board_drm_card0_present == 1
+  and petalinux_image_built == 1 and board_booted_updated_image == 1 and
+  tf_card_update_verified == 1.
+validator: direct command/log checks from committed tools/uart_run_commands.ps1
+  for board commands, direct PC command checks for `gst-launch-1.0`,
+  `gst-inspect-1.0`, and required PC elements, PetaLinux build/package logs
+  from the verified chroot scripts, SHA-256 checks for `image.ub`, and UART
+  boot/runtime evidence for the updated image. No HDMI video-quality validator
+  is used in this dependency cycle because route quality is explicitly out of
+  scope.
+Highest-risk assumption this cycle falsifies: The existing PetaLinux 2018.3
+  project can include enough GStreamer runtime and plugin packages for
+  RTP/raw/`kmssink` without changing PL, Vivado, or the display device tree.
+Cheapest alternative way to falsify the same assumption: Search the local
+  Yocto/PetaLinux layers for the required GStreamer recipe/package names
+  before editing or building. If the required recipes are absent from the
+  available layers, close FAILED without a long image build.
 ```
 
 ## Recently Closed Cycle
