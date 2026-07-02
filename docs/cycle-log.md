@@ -1951,3 +1951,61 @@ Residual risks:
   video stream.
 - fbdev direct writes are still not vsync-locked; DRM/KMS or GStreamer remains
   the mature next display-pipeline step.
+
+## Cycle: drm-kms-vblank-motion-tearing
+
+Objective: replace fbdev live-screen writes with DRM/KMS double-buffered
+page-flip and validate textured-motion smoothness/tearing on the connected
+board.
+
+Changed scope:
+
+- Added `drm_kms_udp_receiver`, built as an ARM Linux receiver.
+- Added markerless textured-motion UDP sender and markerless HDMI capture
+  probe.
+- Added and calibrated the motion tearing validator.
+- Added the connected-board runner for DRM/KMS vblank motion validation.
+- Added the cycle report.
+
+Verification:
+
+- `python -m py_compile` passed for the new Python tools.
+- PowerShell parser accepted the new runner.
+- Receiver build and host tests printed `VIDEO_UDP_RECEIVER_TEST_OK`,
+  `VIDEO_FB_COPY_TEST_OK`, `VIDEO_CONTROL_TEST_OK`,
+  `VIDEO_EFFECT_TEST_OK`, `LINUX_RECEIVER_BUILD_OK`, and
+  `DRM_KMS_RECEIVER_BUILD_OK`.
+- Tearing validator calibration printed `MOTION_TEARING_CALIBRATION_OK`.
+- Connected-board run reached `DRM_DUMB_BUFFERS count=2`,
+  `VIDEO_UDP_DRM_RECEIVER_READY`, 60 `DRM_PAGE_FLIP_SUBMITTED`, 60
+  `DRM_PAGE_FLIP_EVENT`, and `VIDEO_UDP_DRM_RECEIVER_DONE ... dropped=0`.
+- HDMI capture validation printed `MOTION_TEARING_VALIDATION_OK
+  captured_motion_frames=120 tearing_frames=0`.
+
+Board action:
+
+- Deployed and ran `/tmp/drm_kms_udp_receiver`.
+- Sent PC UDP textured-motion payloads over Ethernet.
+- Displayed through `/dev/dri/card0` DRM/KMS dumb-buffer page flips.
+- Captured HDMI through the PC UVC adapter.
+- No Vivado build, PetaLinux build, JTAG programming, TF-card write, or board
+  flash write.
+
+Evidence:
+
+- `docs/reports/drm-kms-vblank-motion-tearing.md`
+- `build/drm-kms-vblank-motion-tearing/drm-kms-vblank-motion-tearing-summary.json`
+- `build/drm-kms-vblank-motion-tearing/uart_after_drm_receiver.log`
+- `build/drm-kms-vblank-motion-tearing/motion-tearing-validation/motion-tearing-validation.json`
+
+Result: pass_condition=(display_backend == drm-kms and drm_device == /dev/dri/card0 and fbdev_live_write_used == 0 and drm_dumb_buffers == 2 and drm_page_flip_calls == 60 and drm_vblank_flip_events == 60 and sent_frames == 60 and receiver_written_frames == 60 and receiver_dropped_packets == 0 and motion_content_type == textured-motion and captured_motion_frames >= 60 and tearing_validator_calibrated == 1 and tearing_frames == 0 and frame_duration_stddev_ms <= 4.0 and validator_status == pass), measured=(display_backend=drm-kms, drm_device=/dev/dri/card0, fbdev_live_write_used=0, drm_dumb_buffers=2, drm_page_flip_calls=60, drm_vblank_flip_events=60, sent_frames=60, receiver_written_frames=60, receiver_dropped_packets=0, motion_content_type=textured-motion, captured_motion_frames=120, tearing_validator_calibrated=1, tearing_frames=0, frame_duration_stddev_ms=19.614, validator_status=pass) -> FAILED.
+
+Residual risks:
+
+- The functional Linux network-to-DRM-to-HDMI chain is proven, but the frozen
+  smoothness threshold failed.
+- The receiver processes full 800x600 RGB888 UDP frames too slowly for the
+  current smoothness target: the passing-transfer run still measured
+  `frame_duration_stddev_ms=19.614`.
+- This cycle did not change Vivado, PetaLinux, device tree, or PL buffering;
+  those remain plausible places to improve frame pacing.

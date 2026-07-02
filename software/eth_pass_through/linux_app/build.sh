@@ -55,4 +55,14 @@ common_cflags=(
 
 file "$out_dir/fb_video_udp_receiver" | tee "$out_dir/fb_video_udp_receiver.file.txt"
 sha256sum "$out_dir/fb_video_udp_receiver" | tee "$out_dir/fb_video_udp_receiver.sha256.txt"
+
+"$cross_cc" "${common_cflags[@]}" \
+    "$repo_root/software/eth_pass_through/linux_app/src/drm_kms_udp_receiver.c" \
+    "$repo_root/software/eth_pass_through/src/video_udp_receiver.c" \
+    "$repo_root/software/eth_pass_through/src/video_udp_protocol.c" \
+    -o "$out_dir/drm_kms_udp_receiver"
+
+file "$out_dir/drm_kms_udp_receiver" | tee "$out_dir/drm_kms_udp_receiver.file.txt"
+sha256sum "$out_dir/drm_kms_udp_receiver" | tee "$out_dir/drm_kms_udp_receiver.sha256.txt"
 echo "LINUX_RECEIVER_BUILD_OK out=$out_dir/fb_video_udp_receiver"
+echo "DRM_KMS_RECEIVER_BUILD_OK out=$out_dir/drm_kms_udp_receiver"
