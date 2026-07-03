@@ -211,8 +211,8 @@ def make_input_bmp(
     return rgb888_to_bmp(rgb, width, height), frame_sha256(rgb)
 
 
-def make_gstreamer_source_bmp(frame_index: int, width: int = DEFAULT_GST_INPUT_WIDTH, height: int = DEFAULT_GST_INPUT_HEIGHT) -> tuple[bytes, str]:
-    """Render a fallback preview while the real GStreamer source frame is unavailable."""
+def make_gstreamer_source_rgb(frame_index: int, width: int = DEFAULT_GST_INPUT_WIDTH, height: int = DEFAULT_GST_INPUT_HEIGHT) -> tuple[bytes, str]:
+    """Render a fallback RGB preview while the real GStreamer source frame is unavailable."""
     frame = bytearray(width * height * 3)
     ball_radius = max(10, min(width, height) // 12)
     span_x = max(1, width - ball_radius * 2 - 1)
@@ -232,7 +232,13 @@ def make_gstreamer_source_bmp(frame_index: int, width: int = DEFAULT_GST_INPUT_W
                 frame[offset : offset + 3] = b"\xff\xff\xff"
 
     data = bytes(frame)
-    return rgb888_to_bmp(data, width, height), frame_sha256(data)
+    return data, frame_sha256(data)
+
+
+def make_gstreamer_source_bmp(frame_index: int, width: int = DEFAULT_GST_INPUT_WIDTH, height: int = DEFAULT_GST_INPUT_HEIGHT) -> tuple[bytes, str]:
+    """Render a fallback BMP preview while the real GStreamer source frame is unavailable."""
+    data, sha = make_gstreamer_source_rgb(frame_index, width, height)
+    return rgb888_to_bmp(data, width, height), sha
 
 
 def make_output_placeholder_svg(width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT) -> bytes:
@@ -318,7 +324,7 @@ def dashboard_html(actions_enabled: bool = True) -> bytes:
   <main>
     <section data-panel="input">
       <h2>输入到 FPGA</h2>
-      <img class="preview" id="input-preview" src="/api/input-preview.bmp" alt="PC 端实际发送的最新 UDP 帧">
+      <img class="preview" id="input-preview" src="/api/input-stream.mjpeg" alt="PC 端实际发送的 GStreamer 源视频流">
       <div class="meta">来源：PC 端 GStreamer 演示源预览
 摄像头：禁用
 自定义文件：暂缓</div>
@@ -347,9 +353,6 @@ def dashboard_html(actions_enabled: bool = True) -> bytes:
     </section>
   </main>
   <script>
-    let frame = 0;
-    let inputPreviewTimer = null;
-    let inputPreviewIntervalMs = null;
     function zh(value) {{
       const map = {{
         "gstreamer": "GStreamer",
@@ -374,7 +377,6 @@ def dashboard_html(actions_enabled: bool = True) -> bytes:
       return map[value] || value;
     }}
     function applyState(state) {{
-      syncInputPreviewRate(state);
       document.getElementById("log").textContent = state.logs.join("\\n");
       document.getElementById("action-status").textContent =
         "链路=" + zh(state.pipeline.mode) +
@@ -387,23 +389,6 @@ def dashboard_html(actions_enabled: bool = True) -> bytes:
         " 特效=" + zh(state.control_panel.selected_effect) +
         " 已发送帧=" + (state.input_source.latest_sent_frame_id ?? "等待") +
         " HDMI帧=" + (state.input_source.latest_hdmi_frame_id ?? "等待");
-    }}
-    function refreshInputPreview() {{
-      frame = (frame + 1) % 100000;
-      document.getElementById("input-preview").src = "/api/input-preview.bmp?refresh=" + frame;
-    }}
-    function syncInputPreviewRate(state) {{
-      const fps = Math.max(1, state.output_preview.stream_fps || state.input_source.sender_fps || 5);
-      const nextIntervalMs = Math.max(33, Math.round(1000 / fps));
-      if (nextIntervalMs === inputPreviewIntervalMs) {{
-        return;
-      }}
-      inputPreviewIntervalMs = nextIntervalMs;
-      if (inputPreviewTimer !== null) {{
-        clearInterval(inputPreviewTimer);
-      }}
-      inputPreviewTimer = setInterval(refreshInputPreview, inputPreviewIntervalMs);
-      refreshInputPreview();
     }}
     async function refreshState() {{
       const state = await fetch("/api/state").then(r => r.json());
@@ -423,7 +408,6 @@ def dashboard_html(actions_enabled: bool = True) -> bytes:
         document.getElementById("log").textContent += "\\n动作失败 action=" + action + " error=" + result.error;
       }}
     }}
-    refreshInputPreview();
     refreshState();
     setInterval(refreshState, 1000);
   </script>
@@ -629,16 +613,20 @@ class DashboardState:
         return None
 
     def gstreamer_input_preview_bmp(self, frame_id: int) -> tuple[bytes, str]:
+        data, sha = self.gstreamer_input_preview_rgb(frame_id)
+        return rgb888_to_bmp(data, self.gst_input_width, self.gst_input_height), sha
+
+    def gstreamer_input_preview_rgb(self, frame_id: int) -> tuple[bytes, str]:
         with self.lock:
             preview = self._latest_gstreamer_preview_frame_locked()
         if preview is not None:
             try:
                 data = preview.read_bytes()
                 if len(data) == self.gst_input_width * self.gst_input_height * 3:
-                    return rgb888_to_bmp(data, self.gst_input_width, self.gst_input_height), frame_sha256(data)
+                    return data, frame_sha256(data)
             except OSError:
                 pass
-        return make_gstreamer_source_bmp(frame_id, self.gst_input_width, self.gst_input_height)
+        return make_gstreamer_source_rgb(frame_id, self.gst_input_width, self.gst_input_height)
 
     def _record_returned_frame_id(self, frame_id: int) -> None:
         with self.lock:
@@ -1235,6 +1223,7 @@ class DashboardState:
                 "custom_file_enabled": False,
                 "policy": NO_CAMERA_POLICY,
                 "preview_endpoint": "/api/input-preview.bmp",
+                "live_stream_endpoint": "/api/input-stream.mjpeg",
                 "preview_matches_sender_source": True,
                 "preview_mode": descriptor["source"],
                 "sender_kind": "gstreamer" if self.pipeline == "gstreamer" else "unified",
@@ -1306,6 +1295,69 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             try:
                 self.wfile.write(payload)
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                pass
+
+        def stream_input_mjpeg(self) -> None:
+            try:
+                import cv2
+                import numpy as np
+            except Exception as exc:
+                self.send_payload(503, "text/plain; charset=utf-8", f"input stream unavailable: {exc}".encode("utf-8"))
+                return
+
+            self.send_response(200)
+            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+
+            source_fps = state.gst_fps if state.pipeline == "gstreamer" else state.sender_fps
+            delay_s = 1.0 / max(1.0, float(source_fps))
+            next_emit = time.perf_counter()
+            last_sha: str | None = None
+
+            try:
+                while True:
+                    descriptor = state.input_preview_descriptor()
+                    frame_id = int(descriptor["frame_id"])
+                    if state.pipeline == "gstreamer":
+                        rgb, sha = state.gstreamer_input_preview_rgb(frame_id)
+                        width = state.gst_input_width
+                        height = state.gst_input_height
+                    else:
+                        _, color = color_for_frame(
+                            frame_id,
+                            state.sender_content_hold_frames,
+                            state.sender_start_frame_id,
+                        )
+                        rgb = make_color_frame(state.sender_width, state.sender_height, color, frame_id)
+                        sha = frame_sha256(rgb)
+                        width = state.sender_width
+                        height = state.sender_height
+
+                    remaining = next_emit - time.perf_counter()
+                    if remaining > 0:
+                        time.sleep(remaining)
+                    next_emit = max(next_emit + delay_s, time.perf_counter())
+
+                    if sha == last_sha:
+                        continue
+                    last_sha = sha
+
+                    rgb_frame = np.frombuffer(rgb, dtype=np.uint8).reshape((height, width, 3))
+                    bgr_frame = rgb_frame[:, :, ::-1]
+                    ok, encoded = cv2.imencode(".jpg", bgr_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+                    if not ok:
+                        continue
+                    payload = encoded.tobytes()
+                    self.wfile.write(b"--frame\r\n")
+                    self.wfile.write(b"Content-Type: image/jpeg\r\n")
+                    self.wfile.write(f"Content-Length: {len(payload)}\r\n".encode("ascii"))
+                    self.wfile.write(f"X-Frame-ID: {frame_id}\r\n".encode("ascii"))
+                    self.wfile.write(f"X-Preview-Source: {descriptor['source']}\r\n\r\n".encode("ascii"))
+                    self.wfile.write(payload)
+                    self.wfile.write(b"\r\n")
+                    self.wfile.flush()
             except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
                 pass
 
@@ -1403,6 +1455,9 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
                 return
             if parsed.path == "/api/output-stream.mjpeg":
                 self.stream_mjpeg()
+                return
+            if parsed.path == "/api/input-stream.mjpeg":
+                self.stream_input_mjpeg()
                 return
             if parsed.path == "/api/input-preview.bmp":
                 descriptor = state.input_preview_descriptor()
@@ -1626,6 +1681,9 @@ def run_self_test(out_dir: Path) -> int:
         input_response = urllib.request.urlopen(url + "/api/input-preview.bmp", timeout=5)
         input_bytes = input_response.read()
         input_sha = input_response.headers.get("X-Frame-SHA256")
+        input_stream_response = urllib.request.urlopen(url + "/api/input-stream.mjpeg", timeout=5)
+        input_stream_head = input_stream_response.read(2048)
+        input_stream_response.close()
         output_bytes = urllib.request.urlopen(url + "/api/output-preview", timeout=5).read()
 
         start_status, start_result = post_json(url + "/api/action", {"action": "start-stream"})
@@ -1654,6 +1712,7 @@ def run_self_test(out_dir: Path) -> int:
         out_dir.joinpath("action-results.json").write_text(json.dumps(action_results, indent=2), encoding="utf-8")
         out_dir.joinpath("final-state.json").write_bytes(final_state_bytes)
         out_dir.joinpath("input-preview.bmp").write_bytes(input_bytes)
+        out_dir.joinpath("input-stream-head.bin").write_bytes(input_stream_head)
         out_dir.joinpath("output-placeholder.svg").write_bytes(output_bytes)
 
         page = html_bytes.decode("utf-8")
@@ -1679,11 +1738,11 @@ def run_self_test(out_dir: Path) -> int:
         assert 'data-panel="control"' in page
         assert 'data-action="start-stream"' in page
         assert 'data-action="pause-receiver"' in page
-        assert "syncInputPreviewRate(state)" in page
-        assert "state.output_preview.stream_fps" in page
+        assert 'src="/api/input-stream.mjpeg"' in page
         assert "disabled>启动视频流" not in page
         assert data["input_source"]["camera_enabled"] is False
         assert data["input_source"]["custom_file_enabled"] is False
+        assert data["input_source"]["live_stream_endpoint"] == "/api/input-stream.mjpeg"
         assert data["output_preview"]["live_stream_endpoint"] == "/api/output-stream.mjpeg"
         assert data["output_preview"]["semantic"].startswith("manual snapshot fallback")
         assert data["control_panel"]["actions_enabled"] is True
@@ -1708,6 +1767,8 @@ def run_self_test(out_dir: Path) -> int:
         expected_input = make_color_frame(800, 600, color_for_frame(100, 50, 100)[1], 100)
         assert input_bytes[:2] == b"BM"
         assert input_sha == frame_sha256(expected_input)
+        assert b"--frame" in input_stream_head
+        assert b"Content-Type: image/jpeg" in input_stream_head
         assert data["input_source"]["sender_kind"] == "unified"
         assert data["input_source"]["sender_fps"] == 10.0
         assert data["input_source"]["content_dwell_seconds"] == 5.0
