@@ -1102,7 +1102,7 @@ class DashboardState:
                 f"/tmp/pip_effect_ctl --preset {preset}",
                 "/tmp/pip_effect_ctl --status-only",
             ],
-            timeout_s=8,
+            timeout_s=20,
         )
 
     def _run_uart_commands_locked(self, label: str, commands: list[str], timeout_s: float = 12.0) -> tuple[bool, str]:

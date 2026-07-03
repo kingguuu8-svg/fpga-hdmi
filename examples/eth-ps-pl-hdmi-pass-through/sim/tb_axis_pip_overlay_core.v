@@ -155,14 +155,12 @@ module tb_axis_pip_overlay_core;
 
     function [23:0] apply_effect;
         input [23:0] pixel;
-        reg [9:0] gray_sum;
         reg [7:0] gray;
         begin
             if (expected_effect == 1) begin
                 apply_effect = ~pixel;
             end else if (expected_effect == 2) begin
-                gray_sum = {2'b00, pixel[23:16]} + {2'b00, pixel[15:8]} + {2'b00, pixel[7:0]};
-                gray = gray_sum[9:2] + gray_sum[9:3];
+                gray = pixel[15:8];
                 apply_effect = {gray, gray, gray};
             end else begin
                 apply_effect = pixel;
@@ -308,7 +306,7 @@ module tb_axis_pip_overlay_core;
         aresetn = 1'b1;
         repeat (2) @(posedge aclk);
         send_pip_frame();
-        repeat (2) @(posedge aclk);
+        repeat (6) @(posedge aclk);
         if (status_pip_frames != 32'd1) begin
             $display("FAIL status_pip_frames=%0d", status_pip_frames);
             $finish;

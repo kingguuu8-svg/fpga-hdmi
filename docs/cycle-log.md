@@ -20,6 +20,96 @@ Third-party review:
 Residual risks:
 ```
 
+## Cycle: pl-controlled-pip-effect-pipeline
+
+Date: 2026-07-04
+
+Commit: this commit (`cycle: complete controlled pip effects`)
+
+Objective: complete the controllable PL-side PIP effect MVP on the current
+GStreamer loop. The dashboard must trigger PIP enable/bypass, x/y presets,
+1/2 and 1/4 scale, border, and normal/invert/grayscale small-window effects
+through board-side AXI-Lite register writes.
+
+Changed scope:
+
+- Added an AXI4-Lite control interface to `axis_pip_overlay_core`.
+- Added runtime PIP registers for enable, border, scale, effect, x/y position,
+  geometry, frame counters, and overlay pixel counters.
+- Added `pip_effect_ctl`, a Linux `/dev/mem` helper for preset writes and
+  status readback at `0x43c00000`.
+- Added dashboard PIP preset buttons for top-left, bottom-right, large, small,
+  invert, grayscale, and bypass.
+- Increased dashboard PIP preset UART timeout to 20 seconds after the live
+  board path showed the previous 8-second timeout was too short.
+
+Verification performed:
+
+- xsim passed `AXI_FRAMEBUFFER_LINE_READER_OK`,
+  `PL_CONTROLLED_PIP_CORE_SIM_OK`, `PL_DUAL_VDMA_PIP_CORE_SIM_OK`, and
+  `SIM_OK`.
+- Vivado 2018.3 generated the updated VDMA HDMI bitstream with WNS=0.197,
+  TNS=0.000, failing endpoints=0, and routed DRC errors=0.
+- Linux tools build printed `VDMA_MM2S_CONFIG_BUILD_OK` and
+  `PIP_EFFECT_CTL_BUILD_OK`.
+- New `BOOT.BIN` SHA-256
+  `8981abbdb2a1c823c2397cf0eb9a69cb066e8e21f7a969287d8940a5d77c5924`
+  was verified on the board before replacing the TF-card boot image.
+- Board rebooted with `/dev/fb0` and `/dev/dri/card0`; dmesg showed VDMA,
+  PL display, and fixed HDMI probes.
+- VDMA1 was configured to `/dev/fb0` with `halted=0` and `errors=0x000`.
+- Dashboard actions returned `ok=True` and `PIP_EFFECT_STATUS` for top-left,
+  bottom-right, large, invert, grayscale, and bypass presets.
+- GStreamer dashboard stream reached `stream_state=running`.
+- Direct HDMI capture failed the PIP validator after `pip-bypass` because the
+  white border disappeared, then passed after `pip-bottom-right` restored PIP.
+- Dashboard MJPEG return passed `MJPEG_STREAM_PROBE_OK frames=24 unique=21`
+  and `PIP_OVERLAY_FRAMES_OK frames_checked=24 frames_passed=24`.
+
+Board action:
+
+- Replaced TF-card `BOOT.BIN` via running board Linux `wget` over Ethernet
+  after SHA-256 verification.
+- Backed up the previous boot image as
+  `/run/media/mmcblk0p1/BOOT.BIN.prev-controlled-pip-20260704`.
+- Rebooted the board, deployed `vdma_mm2s_config` and `pip_effect_ctl` to
+  `/tmp`, configured VDMA1, started the dashboard GStreamer stream, and
+  captured HDMI through the PC adapter.
+- No `image.ub`/rootfs replacement, QSPI/NAND/eMMC/flash write, or final JTAG
+  programming was performed.
+
+Evidence:
+
+- `docs/reports/pl-controlled-pip-effect-pipeline.md`
+- `build/pl-controlled-pip-effect-pipeline/hdmi-pip-bypass-capture/latest-validation.json`
+- `build/pl-controlled-pip-effect-pipeline/hdmi-pip-restored-capture/latest-validation.json`
+- `build/pl-controlled-pip-effect-pipeline/dashboard-mjpeg-pip/pip-overlay-validation.json`
+- `build/pl-controlled-pip-effect-pipeline/uart_deploy_config_tools.log`
+
+Result:
+
+- PASSED.
+
+Rollback point:
+
+- Board boot rollback:
+  `/run/media/mmcblk0p1/BOOT.BIN.prev-controlled-pip-20260704`.
+- Previous completed fixed-PIP route:
+  `docs/reports/pl-dual-vdma-pip-mvp.md`.
+
+Third-party review:
+
+- None.
+
+Residual risks:
+
+- PIP control is exposed through a userspace `/dev/mem` helper, not a kernel
+  driver.
+- Grayscale is a green-channel luma approximation to keep timing closed.
+- Position and scale are preset-based; arbitrary sliders and rotation remain
+  future work.
+- The transport remains RTP/JPEG at 5fps; no high-fps claim is made.
+
 ## Cycle: pl-dual-vdma-pip-mvp
 
 Date: 2026-07-03

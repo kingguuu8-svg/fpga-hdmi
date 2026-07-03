@@ -133,6 +133,13 @@ module axis_pip_overlay_core #(
     reg [31:0] pip_write_addr_ctr;
     reg [31:0] pip_write_row_base;
     reg        pip_frame_valid;
+    reg        pip_in_valid;
+    reg [23:0] pip_in_data;
+    reg        pip_in_tlast;
+    reg        pip_in_tuser;
+    reg        pip_write_valid;
+    reg [23:0] pip_write_data_r;
+    reg [31:0] pip_write_addr_r;
 
     (* ram_style = "block" *) reg [23:0] pip_mem [0:PIP_PIXELS-1];
 
@@ -144,6 +151,14 @@ module axis_pip_overlay_core #(
     reg        stage_in_pip;
     reg        stage_in_border;
     reg        stage_pip_frame_valid;
+    reg        stage_effect_valid;
+    reg [23:0] stage_effect_main_data;
+    reg [23:0] stage_effect_pip_data;
+    reg        stage_effect_in_pip;
+    reg        stage_effect_in_border;
+    reg        stage_effect_pip_frame_valid;
+    reg        stage_effect_tlast;
+    reg        stage_effect_tuser;
     reg [23:0] m_axis_tdata_r;
     reg        m_axis_tvalid_r;
     reg        m_axis_tlast_r;
@@ -156,13 +171,13 @@ module axis_pip_overlay_core #(
     assign s_axi_rresp = 2'b00;
 
     wire main_fire = s_main_tvalid && s_main_tready;
-    wire pip_fire = s_pip_tvalid && s_pip_tready;
+    wire pip_fire = pip_in_valid;
     wire output_ready = !m_axis_tvalid_r || m_axis_tready;
 
     wire [15:0] main_cur_x = s_main_tuser ? 16'd0 : main_x;
     wire [15:0] main_cur_y = s_main_tuser ? 16'd0 : main_y;
-    wire [15:0] pip_cur_x = s_pip_tuser ? 16'd0 : pip_x;
-    wire [15:0] pip_cur_y = s_pip_tuser ? 16'd0 : pip_y;
+    wire [15:0] pip_cur_x = pip_in_tuser ? 16'd0 : pip_x;
+    wire [15:0] pip_cur_y = pip_in_tuser ? 16'd0 : pip_y;
 
     wire scale_half = (ctrl_scale_mode == SCALE_HALF);
     wire [15:0] active_pip_w = scale_half ? PIP_W_L : {1'b0, PIP_W_L[15:1]};
@@ -182,18 +197,15 @@ module axis_pip_overlay_core #(
          (main_local_y < BORDER_L) ||
          (main_local_x >= border_x_start) ||
          (main_local_y >= border_y_start));
-    wire [9:0] pip_gray_sum = {2'b00, pip_read_data_r[23:16]} +
-                              {2'b00, pip_read_data_r[15:8]} +
-                              {2'b00, pip_read_data_r[7:0]};
-    wire [7:0] pip_gray = pip_gray_sum[9:2] + pip_gray_sum[9:3];
-    wire [23:0] pip_effect_data = (ctrl_effect_mode == EFFECT_INVERT) ? ~pip_read_data_r :
+    wire [7:0] pip_gray = stage_effect_pip_data[15:8];
+    wire [23:0] pip_effect_data = (ctrl_effect_mode == EFFECT_INVERT) ? ~stage_effect_pip_data :
                                   (ctrl_effect_mode == EFFECT_GRAYSCALE) ? {pip_gray, pip_gray, pip_gray} :
-                                  pip_read_data_r;
-    wire [23:0] stage_overlay_data = stage_in_border ? 24'hffffff :
-                                      (stage_in_pip && stage_pip_frame_valid) ? pip_effect_data :
-                                      stage_main_data;
+                                  stage_effect_pip_data;
+    wire [23:0] stage_overlay_data = stage_effect_in_border ? 24'hffffff :
+                                      (stage_effect_in_pip && stage_effect_pip_frame_valid) ? pip_effect_data :
+                                      stage_effect_main_data;
 
-    wire pip_start = s_pip_tuser;
+    wire pip_start = pip_in_tuser;
     wire [15:0] pip_mod_x_cur = pip_start ? 16'd0 : pip_mod_x;
     wire [15:0] pip_mod_y_cur = pip_start ? 16'd0 : pip_mod_y;
     wire [15:0] pip_scaled_x_cur = pip_start ? 16'd0 : pip_scaled_x_ctr;
@@ -226,6 +238,13 @@ module axis_pip_overlay_core #(
             pip_write_addr_ctr <= 32'd0;
             pip_write_row_base <= 32'd0;
             pip_frame_valid <= 1'b0;
+            pip_in_valid <= 1'b0;
+            pip_in_data <= 24'd0;
+            pip_in_tlast <= 1'b0;
+            pip_in_tuser <= 1'b0;
+            pip_write_valid <= 1'b0;
+            pip_write_data_r <= 24'd0;
+            pip_write_addr_r <= 32'd0;
             pip_read_data_r <= 24'd0;
             stage_valid <= 1'b0;
             stage_main_data <= 24'd0;
@@ -234,6 +253,14 @@ module axis_pip_overlay_core #(
             stage_in_pip <= 1'b0;
             stage_in_border <= 1'b0;
             stage_pip_frame_valid <= 1'b0;
+            stage_effect_valid <= 1'b0;
+            stage_effect_main_data <= 24'd0;
+            stage_effect_pip_data <= 24'd0;
+            stage_effect_in_pip <= 1'b0;
+            stage_effect_in_border <= 1'b0;
+            stage_effect_pip_frame_valid <= 1'b0;
+            stage_effect_tlast <= 1'b0;
+            stage_effect_tuser <= 1'b0;
             m_axis_tdata_r <= 24'd0;
             m_axis_tvalid_r <= 1'b0;
             m_axis_tlast_r <= 1'b0;
@@ -257,6 +284,16 @@ module axis_pip_overlay_core #(
             s_axi_awready <= 1'b0;
             s_axi_wready <= 1'b0;
             s_axi_arready <= 1'b0;
+
+            pip_in_valid <= s_pip_tvalid;
+            pip_in_data <= s_pip_tdata;
+            pip_in_tlast <= s_pip_tlast;
+            pip_in_tuser <= s_pip_tuser;
+            pip_write_valid <= 1'b0;
+
+            if (pip_write_valid) begin
+                pip_mem[pip_write_addr_r] <= pip_write_data_r;
+            end
 
             if (axi_write_fire) begin
                 s_axi_awready <= 1'b1;
@@ -304,17 +341,28 @@ module axis_pip_overlay_core #(
             end
 
             if (output_ready) begin
+                m_axis_tvalid_r <= stage_effect_valid;
+                m_axis_tdata_r <= stage_overlay_data;
+                m_axis_tlast_r <= stage_effect_valid ? stage_effect_tlast : 1'b0;
+                m_axis_tuser_r <= stage_effect_valid ? stage_effect_tuser : 1'b0;
+
+                stage_effect_valid <= stage_valid;
                 if (stage_valid) begin
-                    m_axis_tvalid_r <= 1'b1;
-                    m_axis_tdata_r <= stage_overlay_data;
-                    m_axis_tlast_r <= stage_tlast;
-                    m_axis_tuser_r <= stage_tuser;
-                    stage_valid <= 1'b0;
+                    stage_effect_main_data <= stage_main_data;
+                    stage_effect_pip_data <= pip_read_data_r;
+                    stage_effect_in_pip <= stage_in_pip;
+                    stage_effect_in_border <= stage_in_border;
+                    stage_effect_pip_frame_valid <= stage_pip_frame_valid;
+                    stage_effect_tlast <= stage_tlast;
+                    stage_effect_tuser <= stage_tuser;
                 end else begin
-                    m_axis_tvalid_r <= 1'b0;
-                    m_axis_tlast_r <= 1'b0;
-                    m_axis_tuser_r <= 1'b0;
+                    stage_effect_in_pip <= 1'b0;
+                    stage_effect_in_border <= 1'b0;
+                    stage_effect_pip_frame_valid <= 1'b0;
+                    stage_effect_tlast <= 1'b0;
+                    stage_effect_tuser <= 1'b0;
                 end
+                stage_valid <= 1'b0;
             end
 
             if (main_fire) begin
@@ -347,7 +395,7 @@ module axis_pip_overlay_core #(
             end
 
             if (pip_fire) begin
-                if (s_pip_tlast) begin
+                if (pip_in_tlast) begin
                     pip_x <= 16'd0;
                     pip_y <= (pip_cur_y == FRAME_H_LAST) ? 16'd0 : pip_cur_y + 16'd1;
                 end else begin
@@ -355,11 +403,7 @@ module axis_pip_overlay_core #(
                     pip_y <= pip_cur_y;
                 end
 
-                if (pip_sample_in_window) begin
-                    pip_mem[pip_write_addr_cur] <= s_pip_tdata;
-                end
-
-                if (s_pip_tlast && (pip_cur_y == FRAME_H_LAST)) begin
+                if (pip_in_tlast && (pip_cur_y == FRAME_H_LAST)) begin
                     pip_frame_valid <= 1'b1;
                     status_pip_frames <= status_pip_frames + 32'd1;
                     pip_mod_x <= 16'd0;
@@ -368,7 +412,7 @@ module axis_pip_overlay_core #(
                     pip_scaled_y_ctr <= 16'd0;
                     pip_write_addr_ctr <= 32'd0;
                     pip_write_row_base <= 32'd0;
-                end else if (s_pip_tlast) begin
+                end else if (pip_in_tlast) begin
                     pip_mod_x <= 16'd0;
                     pip_scaled_x_ctr <= 16'd0;
                     if (pip_mod_y_cur == scale_last) begin
@@ -395,6 +439,12 @@ module axis_pip_overlay_core #(
                         pip_scaled_x_ctr <= pip_scaled_x_cur;
                         pip_write_addr_ctr <= pip_write_addr_cur;
                     end
+                end
+
+                if (pip_sample_in_window) begin
+                    pip_write_valid <= 1'b1;
+                    pip_write_data_r <= pip_in_data;
+                    pip_write_addr_r <= pip_write_addr_cur;
                 end
             end
         end

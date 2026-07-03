@@ -1,6 +1,6 @@
 # Current Cycle
 
-Status: active work note is open.
+Status: no active work note is open.
 
 ## Rule
 
@@ -37,46 +37,34 @@ that lets a future agent return to the previous known-good point.
 ## Active Cycle
 
 ```text
-Cycle ID: pl-controlled-pip-effect-pipeline
-Intent: Implement the requested controllable PL effect pipeline MVP:
-  PIP enable/bypass, x/y position control, 1/2 and 1/4 scale presets, border
-  enable, small-window normal/invert/grayscale modes, Linux /dev/mem control,
-  and dashboard preset buttons.
-Changed scope: In progress. The AXI4-Stream PIP core now has an inferred
-  AXI4-Lite S_AXI control interface with registers for enable, border, scale,
-  effect, x, y, and readable counters. The PIP memory is sized for the 1/2
-  window; 1/4 uses the same memory with a larger sample stride. The Vivado BD
-  maps the PIP control registers at 0x43c00000. Linux now builds
-  pip_effect_ctl for /dev/mem preset writes. The dashboard exposes PIP preset
-  actions for top-left, bottom-right, large, small, invert, grayscale, and
-  bypass.
-Verification performed: xsim passed with AXI_FRAMEBUFFER_LINE_READER_OK and
-  PL_CONTROLLED_PIP_CORE_SIM_OK. The controlled PIP testbench covers default
-  1/4 overlay, bypass, moved 1/2 invert overlay, and 1/4 grayscale overlay.
-  Linux tool build passed with PIP_EFFECT_CTL_BUILD_OK. Dashboard self-test
-  passed after adding the preset buttons and input MJPEG stream endpoint.
-  Vivado board build passed BD validation and target generation after fixing
-  the PIP S_AXI address segment lookup, then timed out during synth_1 wait
-  before producing a bitstream; no synth error marker was found in the checked
-  run directories.
-Board action: none in this cycle yet. No BOOT.BIN, image.ub, rootfs, JTAG, or
-  board flash update has been performed for the controllable PIP build.
-Evidence: build/eth-ps-pl-hdmi-pass-through/sim/tb_axis_pip_overlay_core-xsim-run.log;
-  build/pl-controlled-pip-effect-pipeline/linux-tools/pip_effect_ctl;
-  build/pl-controlled-pip-effect-pipeline/dashboard-self-test/;
-  build/eth-ps-pl-hdmi-pass-through/vdma-board/reports/vivado.log.
-Rollback point: previous commit before this cycle plus completed fixed PIP
-  cycle commit 037dec8 and dashboard input stream commit 5127fc9.
-Third-party review: none yet.
-Residual risk: The goal is not complete. The updated Vivado bitstream has not
-  completed synthesis/implementation/timing/DRC, no BOOT.BIN has been packaged,
-  pip_effect_ctl has not been deployed to the board, and dashboard preset
-  buttons have not been verified against physical HDMI output.
+None.
 ```
 
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: pl-controlled-pip-effect-pipeline
+Result: PASSED. The same-source PL PIP effect is now runtime-controllable from
+  the dashboard through UART and a board-side /dev/mem helper. The PIP core has
+  AXI-Lite registers for enable/bypass, x/y position, 1/2 vs 1/4 scale, border,
+  and normal/invert/grayscale small-window effect. The updated bitstream met
+  timing with WNS=0.197 and DRC errors=0, was packaged into BOOT.BIN, deployed
+  to the TF-card boot partition after SHA-256 verification, and booted on the
+  board. Dashboard buttons changed real PL registers, GStreamer video ran,
+  HDMI capture failed the PIP validator after bypass as expected, and passed
+  again after restoring bottom-right PIP. The dashboard MJPEG return passed
+  PIP validation for 24/24 frames.
+Evidence: docs/reports/pl-controlled-pip-effect-pipeline.md,
+  build/pl-controlled-pip-effect-pipeline/hdmi-pip-bypass-capture/,
+  build/pl-controlled-pip-effect-pipeline/hdmi-pip-restored-capture/,
+  build/pl-controlled-pip-effect-pipeline/dashboard-mjpeg-pip/,
+  build/pl-controlled-pip-effect-pipeline/uart_deploy_config_tools.log
+Board action: replaced TF-card BOOT.BIN only via running board Linux wget over
+  Ethernet after SHA-256 verification, retained a BOOT.BIN backup, rebooted,
+  deployed vdma_mm2s_config and pip_effect_ctl to /tmp, configured VDMA1, ran
+  the GStreamer dashboard stream, and verified HDMI through the PC capture
+  adapter. image.ub/rootfs and board flash were not rewritten.
+
 Cycle ID: pl-dual-vdma-pip-mvp
 Result: PASSED. The first PL-side effect is now demonstrated on top of the
   known-good 5fps GStreamer closed loop. Linux/GStreamer receives PC RTP/JPEG
