@@ -23,7 +23,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 TOOLS_DIR = Path(__file__).resolve().parents[1]
 if str(TOOLS_DIR) not in sys.path:
@@ -58,57 +58,70 @@ DEFAULT_CAPTURE_FRAMES = 8
 DEFAULT_CAPTURE_PROFILE = "none"
 DEFAULT_CAPTURE_SAVE_SAMPLES = 0
 DEFAULT_STREAM_FPS = 10.0
-NO_CAMERA_POLICY = "Generated PC input only. Camera/webcam and custom file input are disabled for MVP."
+NO_CAMERA_POLICY = "仅使用 PC 生成输入。MVP 阶段禁用摄像头/网络摄像头和自定义文件输入。"
+DEFAULT_PIPELINE = "gstreamer"
+DEFAULT_GST_CONDA_ENV = "build/conda-gstreamer-pc"
+DEFAULT_GST_PORT = 5011
+DEFAULT_GST_INPUT_WIDTH = 320
+DEFAULT_GST_INPUT_HEIGHT = 240
+DEFAULT_GST_OUTPUT_WIDTH = 800
+DEFAULT_GST_OUTPUT_HEIGHT = 600
+DEFAULT_GST_FPS = 5
+DEFAULT_GST_NUM_BUFFERS = -1
+DEFAULT_GST_PAYLOAD_TYPE = 26
+DEFAULT_GST_MTU = 1200
+DEFAULT_GST_BOARD_LOG = "/tmp/gst_dashboard_receiver.log"
+DEFAULT_GST_BOARD_PID = "/tmp/gst_dashboard_receiver.pid"
 
 
 ACTION_DEFINITIONS = [
     {
         "id": "start-stream",
-        "label": "Start stream",
+        "label": "启动视频流",
         "kind": "sender-process",
-        "semantics": "start dashboard-owned unified 15 fps UDP sender; right panel reads HDMI return MJPEG",
+        "semantics": "启动板端 GStreamer receiver 和 PC 端 GStreamer RTP/JPEG sender；右侧面板读取 HDMI 回传 MJPEG",
     },
     {
         "id": "stop-stream",
-        "label": "Stop stream",
+        "label": "停止视频流",
         "kind": "sender-process",
-        "semantics": "stop dashboard-owned unified UDP sender",
+        "semantics": "停止 PC 端 GStreamer sender，并尝试停止板端 GStreamer receiver",
     },
     {
         "id": "capture-output",
-        "label": "Capture output",
+        "label": "捕获输出",
         "kind": "hdmi-capture",
-        "semantics": "manual still capture fallback for FPGA HDMI output",
+        "semantics": "手动捕获 FPGA HDMI 输出的静态图，作为回退验证",
     },
     {
         "id": "pause-receiver",
-        "label": "Pause receiver",
+        "label": "暂停接收端",
         "kind": "uart-fifo-control",
-        "semantics": "send: echo pause > /tmp/video_ctl",
+        "semantics": "旧 UDP receiver 的 FIFO 暂停命令；GStreamer 模式暂未实现",
     },
     {
         "id": "resume-receiver",
-        "label": "Resume receiver",
+        "label": "恢复接收端",
         "kind": "uart-fifo-control",
-        "semantics": "send: echo resume > /tmp/video_ctl",
+        "semantics": "旧 UDP receiver 的 FIFO 恢复命令；GStreamer 模式暂未实现",
     },
     {
         "id": "receiver-status",
-        "label": "Receiver status",
+        "label": "接收端状态",
         "kind": "uart-fifo-control",
-        "semantics": "send: echo status > /tmp/video_ctl; tail receiver log",
+        "semantics": "GStreamer 模式读取板端 gst receiver 日志；旧 UDP 模式读取 FIFO receiver 日志",
     },
     {
         "id": "effect-none",
-        "label": "Effect none",
+        "label": "关闭特效",
         "kind": "receiver-effect",
-        "semantics": "select receiver launch effect argument --effect none",
+        "semantics": "旧 UDP receiver 的 effect 参数；GStreamer 模式暂未实现",
     },
     {
         "id": "effect-invert",
-        "label": "Effect invert",
+        "label": "反色特效",
         "kind": "receiver-effect",
-        "semantics": "select receiver launch effect argument --effect invert",
+        "semantics": "旧 UDP receiver 的 effect 参数；GStreamer 模式暂未实现",
     },
 ]
 
@@ -198,14 +211,38 @@ def make_input_bmp(
     return rgb888_to_bmp(rgb, width, height), frame_sha256(rgb)
 
 
+def make_gstreamer_source_bmp(frame_index: int, width: int = DEFAULT_GST_INPUT_WIDTH, height: int = DEFAULT_GST_INPUT_HEIGHT) -> tuple[bytes, str]:
+    """Render a fallback preview while the real GStreamer source frame is unavailable."""
+    frame = bytearray(width * height * 3)
+    ball_radius = max(10, min(width, height) // 12)
+    span_x = max(1, width - ball_radius * 2 - 1)
+    span_y = max(1, height - ball_radius * 2 - 1)
+    phase = frame_index % 120
+    sweep = phase if phase < 60 else 119 - phase
+    cx = ball_radius + int(span_x * sweep / 59)
+    cy = ball_radius + int(span_y * ((phase * 2) % 60) / 59)
+
+    for y in range(height):
+        for x in range(width):
+            offset = (y * width + x) * 3
+            frame[offset : offset + 3] = b"\x14\x35\x4a"
+            dx = x - cx
+            dy = y - cy
+            if dx * dx + dy * dy <= ball_radius * ball_radius:
+                frame[offset : offset + 3] = b"\xff\xff\xff"
+
+    data = bytes(frame)
+    return rgb888_to_bmp(data, width, height), frame_sha256(data)
+
+
 def make_output_placeholder_svg(width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT) -> bytes:
     """Return a plain output placeholder."""
     svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
   <rect width="100%" height="100%" fill="#fff"/>
   <rect x="1" y="1" width="{width - 2}" height="{height - 2}" fill="none" stroke="#000" stroke-width="2"/>
-  <text x="16" y="32" fill="#000" font-family="Consolas, monospace" font-size="20">FPGA OUTPUT</text>
-  <text x="16" y="64" fill="#000" font-family="Consolas, monospace" font-size="16">No HDMI capture image configured.</text>
-  <text x="16" y="92" fill="#000" font-family="Consolas, monospace" font-size="16">This panel is output verification only.</text>
+  <text x="16" y="32" fill="#000" font-family="Consolas, monospace" font-size="20">FPGA 输出</text>
+  <text x="16" y="64" fill="#000" font-family="Consolas, monospace" font-size="16">尚未配置 HDMI 捕获图像。</text>
+  <text x="16" y="92" fill="#000" font-family="Consolas, monospace" font-size="16">此面板仅用于输出验证。</text>
 </svg>
 """
     return svg.encode("utf-8")
@@ -215,11 +252,11 @@ def dashboard_html(actions_enabled: bool = True) -> bytes:
     policy = html.escape(NO_CAMERA_POLICY)
     disabled_attr = "" if actions_enabled else " disabled"
     page = f"""<!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Zynq video control</title>
+  <title>Zynq 视频控制台</title>
   <style>
     * {{ box-sizing: border-box; }}
     body {{
@@ -275,57 +312,84 @@ def dashboard_html(actions_enabled: bool = True) -> bytes:
 </head>
 <body>
   <header>
-    <h1>Zynq video control</h1>
+    <h1>Zynq 视频控制台</h1>
     <div data-testid="no-camera-policy">{policy}</div>
   </header>
   <main>
     <section data-panel="input">
-      <h2>Input to FPGA</h2>
-      <img class="preview" id="input-preview" src="/api/input-preview.bmp" alt="latest actual sent PC UDP frame">
-      <div class="meta">source: latest frame actually completed by the PC sender
-camera: disabled
-custom file: deferred</div>
+      <h2>输入到 FPGA</h2>
+      <img class="preview" id="input-preview" src="/api/input-preview.bmp" alt="PC 端实际发送的最新 UDP 帧">
+      <div class="meta">来源：PC 端 GStreamer 演示源预览
+摄像头：禁用
+自定义文件：暂缓</div>
     </section>
     <section data-panel="output">
-      <h2>FPGA output</h2>
-      <img class="preview" id="output-preview" src="/api/output-stream.mjpeg" alt="live FPGA HDMI return preview">
-      <div class="meta">source: live HDMI return stream via capture adapter
-role: no-effect pass-through preview
-note: Windows may label the HDMI/UVC adapter as a camera device</div>
+      <h2>FPGA 输出</h2>
+      <img class="preview" id="output-preview" src="/api/output-stream.mjpeg" alt="FPGA HDMI 实时回传预览">
+      <div class="meta">来源：通过采集卡读取的 HDMI 实时回传
+角色：GStreamer RTP/JPEG 到 fbdevsink 的输出回看
+说明：Windows 可能把 HDMI/UVC 采集卡标记为摄像头设备</div>
     </section>
     <section data-panel="control">
-      <h2>Control</h2>
+      <h2>控制</h2>
       <div class="controls">
-        <button{disabled_attr} data-action="start-stream" onclick="postAction('start-stream')">start stream</button>
-        <button{disabled_attr} data-action="stop-stream" onclick="postAction('stop-stream')">stop stream</button>
-        <button{disabled_attr} data-action="capture-output" onclick="postAction('capture-output')">capture output</button>
-        <button{disabled_attr} data-action="pause-receiver" onclick="postAction('pause-receiver')">pause receiver</button>
-        <button{disabled_attr} data-action="resume-receiver" onclick="postAction('resume-receiver')">resume receiver</button>
-        <button{disabled_attr} data-action="receiver-status" onclick="postAction('receiver-status')">receiver status</button>
-        <button{disabled_attr} data-action="effect-none" onclick="postAction('effect-none')">effect none</button>
-        <button{disabled_attr} data-action="effect-invert" onclick="postAction('effect-invert')">effect invert</button>
+        <button{disabled_attr} data-action="start-stream" onclick="postAction('start-stream')">启动视频流</button>
+        <button{disabled_attr} data-action="stop-stream" onclick="postAction('stop-stream')">停止视频流</button>
+        <button{disabled_attr} data-action="capture-output" onclick="postAction('capture-output')">捕获输出</button>
+        <button{disabled_attr} data-action="pause-receiver" onclick="postAction('pause-receiver')">暂停接收端</button>
+        <button{disabled_attr} data-action="resume-receiver" onclick="postAction('resume-receiver')">恢复接收端</button>
+        <button{disabled_attr} data-action="receiver-status" onclick="postAction('receiver-status')">接收端状态</button>
+        <button{disabled_attr} data-action="effect-none" onclick="postAction('effect-none')">关闭特效</button>
+        <button{disabled_attr} data-action="effect-invert" onclick="postAction('effect-invert')">反色特效</button>
       </div>
-      <div class="statusline" id="action-status">loading...</div>
-      <pre class="log" id="log">loading...</pre>
+      <div class="statusline" id="action-status">加载中...</div>
+      <pre class="log" id="log">加载中...</pre>
     </section>
   </main>
   <script>
     let frame = 0;
+    function zh(value) {{
+      const map = {{
+        "gstreamer": "GStreamer",
+        "legacy-udp": "旧UDP",
+        "rtp/raw": "RTP/raw",
+        "rtp/jpeg": "RTP/JPEG",
+        "zvid-udp": "ZVID/UDP",
+        "live": "实时",
+        "dry-run": "演练",
+        "running": "运行",
+        "stopped": "停止",
+        "idle": "空闲",
+        "enabled": "启用",
+        "disabled": "禁用",
+        "streaming": "传输中",
+        "failed": "失败",
+        "ok": "正常",
+        "none": "无",
+        "invert": "反色",
+        "not-configured": "未配置"
+      }};
+      return map[value] || value;
+    }}
     function applyState(state) {{
       document.getElementById("log").textContent = state.logs.join("\\n");
       document.getElementById("action-status").textContent =
-        "mode=" + state.control_panel.action_mode +
-        " stream=" + state.control_panel.stream_state +
-        " sender_pid=" + (state.control_panel.sender_pid || "none") +
-        " hdmi=" + state.output_preview.capture_status +
-        " uart=" + state.control_panel.uart_status +
-        " effect=" + state.control_panel.selected_effect +
-        " sent_id=" + (state.input_source.latest_sent_frame_id ?? "waiting") +
-        " hdmi_id=" + (state.input_source.latest_hdmi_frame_id ?? "waiting");
+        "链路=" + zh(state.pipeline.mode) +
+        " 传输=" + zh(state.pipeline.transport) +
+        " 模式=" + zh(state.control_panel.action_mode) +
+        " 视频流=" + zh(state.control_panel.stream_state) +
+        " 发送进程=" + (state.control_panel.sender_pid || "无") +
+        " HDMI=" + zh(state.output_preview.capture_status) +
+        " UART=" + zh(state.control_panel.uart_status) +
+        " 特效=" + zh(state.control_panel.selected_effect) +
+        " 已发送帧=" + (state.input_source.latest_sent_frame_id ?? "等待") +
+        " HDMI帧=" + (state.input_source.latest_hdmi_frame_id ?? "等待");
     }}
-    async function refreshState() {{
+    function refreshInputPreview() {{
       frame = (frame + 1) % 100000;
       document.getElementById("input-preview").src = "/api/input-preview.bmp?refresh=" + frame;
+    }}
+    async function refreshState() {{
       const state = await fetch("/api/state").then(r => r.json());
       applyState(state);
     }}
@@ -340,10 +404,12 @@ note: Windows may label the HDMI/UVC adapter as a camera device</div>
         applyState(result.state);
       }}
       if (!response.ok) {{
-        document.getElementById("log").textContent += "\\nACTION_ERROR action=" + action + " error=" + result.error;
+        document.getElementById("log").textContent += "\\n动作失败 action=" + action + " error=" + result.error;
       }}
     }}
+    refreshInputPreview();
     refreshState();
+    setInterval(refreshInputPreview, 200);
     setInterval(refreshState, 1000);
   </script>
 </body>
@@ -369,8 +435,23 @@ class DashboardState:
         sender_height: int = DEFAULT_HEIGHT,
         sender_payload: int = DEFAULT_SENDER_PAYLOAD,
         sender_inter_packet_us: float = DEFAULT_SENDER_INTER_PACKET_US,
+        pipeline: str = DEFAULT_PIPELINE,
+        gst_conda_env: Path | str = DEFAULT_GST_CONDA_ENV,
+        gst_port: int = DEFAULT_GST_PORT,
+        gst_input_width: int = DEFAULT_GST_INPUT_WIDTH,
+        gst_input_height: int = DEFAULT_GST_INPUT_HEIGHT,
+        gst_output_width: int = DEFAULT_GST_OUTPUT_WIDTH,
+        gst_output_height: int = DEFAULT_GST_OUTPUT_HEIGHT,
+        gst_fps: int = DEFAULT_GST_FPS,
+        gst_num_buffers: int = DEFAULT_GST_NUM_BUFFERS,
+        gst_payload_type: int = DEFAULT_GST_PAYLOAD_TYPE,
+        gst_mtu: int = DEFAULT_GST_MTU,
+        gst_board_log: str = DEFAULT_GST_BOARD_LOG,
+        gst_board_pid: str = DEFAULT_GST_BOARD_PID,
         uart_port: str = DEFAULT_UART_PORT,
         uart_baud: int = DEFAULT_UART_BAUD,
+        uart_login_root: bool = False,
+        uart_password: str = "",
         control_fifo: str = DEFAULT_CONTROL_FIFO,
         capture_enabled: bool = True,
         capture_device: str = DEFAULT_CAPTURE_DEVICE,
@@ -399,8 +480,23 @@ class DashboardState:
         self.sender_height = sender_height
         self.sender_payload = sender_payload
         self.sender_inter_packet_us = sender_inter_packet_us
+        self.pipeline = pipeline
+        self.gst_conda_env = Path(gst_conda_env)
+        self.gst_port = gst_port
+        self.gst_input_width = gst_input_width
+        self.gst_input_height = gst_input_height
+        self.gst_output_width = gst_output_width
+        self.gst_output_height = gst_output_height
+        self.gst_fps = gst_fps
+        self.gst_num_buffers = gst_num_buffers
+        self.gst_payload_type = gst_payload_type
+        self.gst_mtu = gst_mtu
+        self.gst_board_log = gst_board_log
+        self.gst_board_pid = gst_board_pid
         self.uart_port = uart_port
         self.uart_baud = uart_baud
+        self.uart_login_root = uart_login_root
+        self.uart_password = uart_password
         self.control_fifo = control_fifo
         self.capture_enabled = capture_enabled
         self.capture_device = capture_device
@@ -417,6 +513,7 @@ class DashboardState:
         self.log_dir = log_dir or self.repo_root / "build" / "dashboard-live"
         self.sender_out_dir = self.log_dir / "sender"
         self.sender_live_state_path = self.sender_out_dir / "live-state.json"
+        self.gst_preview_dir = self.sender_out_dir / "gstreamer-preview"
         self.sender_live_state_path.unlink(missing_ok=True)
         self.output_image = output_image or (self.log_dir / "hdmi-capture" / "latest.png")
         self.lock = threading.Lock()
@@ -439,16 +536,16 @@ class DashboardState:
         self.selected_effect = "none"
         self.last_action: dict[str, Any] | None = None
         self.logs = [
-            "dashboard ready",
-            "ui: minimal",
-            f"sender target: {board_host}:{udp_port}",
-            f"sender kind: unified fps={sender_fps:g} content_dwell={sender_content_hold_frames / sender_fps:g}s",
-            f"sender frames: {'continuous' if sender_frames == 0 else sender_frames}",
-            f"hdmi capture: {'enabled' if capture_enabled else 'disabled'}",
-            "hdmi return: live MJPEG preview; Windows may report the HDMI capture adapter as camera access",
-            f"uart: {uart_port or 'not configured'}",
-            "camera/webcam input: disabled",
-            "custom file input: deferred",
+            "控制台就绪",
+            f"视频链路：{pipeline}",
+            f"GStreamer RTP/JPEG 目标：{board_host}:{gst_port}",
+            f"GStreamer 输入：{gst_input_width}x{gst_input_height}@{gst_fps}fps -> 板端缩放到 {gst_output_width}x{gst_output_height}",
+            f"旧 UDP 回退目标：{board_host}:{udp_port}",
+            f"HDMI 采集：{'启用' if capture_enabled else '禁用'}",
+            "HDMI 回传：右侧面板读取实时 MJPEG；Windows 可能把 HDMI/UVC 采集卡标记为摄像头",
+            f"UART：{uart_port or '未配置'}",
+            "摄像头/网络摄像头输入：禁用",
+            "自定义文件输入：暂缓",
         ]
 
     def action_catalog(self) -> list[dict[str, str]]:
@@ -466,23 +563,67 @@ class DashboardState:
 
     def input_preview_descriptor(self) -> dict[str, Any]:
         with self.lock:
-            live = self._read_sender_live_state_locked()
-            hdmi_frame_id = self.last_returned_frame_id
-            if live is None:
-                return {
-                    "frame_id": self.sender_start_frame_id,
-                    "hdmi_frame_id": None,
-                    "latest_sent_frame_id": None,
-                    "source": "waiting-for-actual-sent-frame",
-                }
+            return self._input_preview_descriptor_locked()
 
-            latest_sent = int(live["frame_id"])
+    def _input_preview_descriptor_locked(self) -> dict[str, Any]:
+        if self.pipeline == "gstreamer":
+            preview = self._latest_gstreamer_preview_frame_locked()
+            if preview is not None:
+                return {
+                    "frame_id": int(preview.stem.rsplit("-", 1)[-1]),
+                    "hdmi_frame_id": self.last_returned_frame_id,
+                    "latest_sent_frame_id": int(preview.stem.rsplit("-", 1)[-1]),
+                    "source": "latest-actual-gstreamer-source-frame",
+                }
+            elapsed = max(0.0, time.time() - self.started_at)
+            frame_id = int(elapsed * max(1, self.gst_fps))
             return {
-                "frame_id": latest_sent,
-                "hdmi_frame_id": hdmi_frame_id,
-                "latest_sent_frame_id": latest_sent,
-                "source": "latest-actual-sent-frame",
+                "frame_id": frame_id,
+                "hdmi_frame_id": self.last_returned_frame_id,
+                "latest_sent_frame_id": frame_id if self._sender_alive_locked() else None,
+                "source": "waiting-for-actual-gstreamer-source-frame",
             }
+
+        live = self._read_sender_live_state_locked()
+        hdmi_frame_id = self.last_returned_frame_id
+        if live is None:
+            return {
+                "frame_id": self.sender_start_frame_id,
+                "hdmi_frame_id": None,
+                "latest_sent_frame_id": None,
+                "source": "waiting-for-actual-sent-frame",
+            }
+
+        latest_sent = int(live["frame_id"])
+        return {
+            "frame_id": latest_sent,
+            "hdmi_frame_id": hdmi_frame_id,
+            "latest_sent_frame_id": latest_sent,
+            "source": "latest-actual-sent-frame",
+        }
+
+    def _latest_gstreamer_preview_frame_locked(self) -> Path | None:
+        expected_size = self.gst_input_width * self.gst_input_height * 3
+        candidates = sorted(self.gst_preview_dir.glob("frame-*.rgb"), reverse=True)
+        for path in candidates:
+            try:
+                if path.stat().st_size == expected_size:
+                    return path
+            except OSError:
+                continue
+        return None
+
+    def gstreamer_input_preview_bmp(self, frame_id: int) -> tuple[bytes, str]:
+        with self.lock:
+            preview = self._latest_gstreamer_preview_frame_locked()
+        if preview is not None:
+            try:
+                data = preview.read_bytes()
+                if len(data) == self.gst_input_width * self.gst_input_height * 3:
+                    return rgb888_to_bmp(data, self.gst_input_width, self.gst_input_height), frame_sha256(data)
+            except OSError:
+                pass
+        return make_gstreamer_source_bmp(frame_id, self.gst_input_width, self.gst_input_height)
 
     def _record_returned_frame_id(self, frame_id: int) -> None:
         with self.lock:
@@ -508,6 +649,8 @@ class DashboardState:
         return self.log_dir / "sender.out.log", self.log_dir / "sender.err.log"
 
     def _sender_command_locked(self) -> list[str]:
+        if self.pipeline == "gstreamer":
+            return self._gstreamer_sender_command_locked()
         return [
             sys.executable,
             str(self.repo_root / "tools" / "send_unified_test_video_udp.py"),
@@ -542,6 +685,90 @@ class DashboardState:
             "--out-dir",
             str(self.sender_out_dir),
         ]
+
+    def _gstreamer_sender_command_locked(self) -> list[str]:
+        preview_pattern = (self.gst_preview_dir / "frame-%08d.rgb").resolve().as_posix()
+        return [
+            "conda",
+            "run",
+            "-p",
+            str(self.repo_root / self.gst_conda_env),
+            "gst-launch-1.0",
+            "-v",
+            "videotestsrc",
+            f"num-buffers={self.gst_num_buffers}",
+            "is-live=true",
+            "pattern=ball",
+            "motion=sweep",
+            "animation-mode=wall-time",
+            "flip=false",
+            "background-color=0xff14354a",
+            "foreground-color=0xffffd166",
+            "!",
+            f"video/x-raw,format=RGB,width={self.gst_input_width},height={self.gst_input_height},framerate={self.gst_fps}/1",
+            "!",
+            "tee",
+            "name=source",
+            "source.",
+            "!",
+            "queue",
+            "!",
+            "videoconvert",
+            "!",
+            "video/x-raw,format=I420",
+            "!",
+            "jpegenc",
+            "quality=90",
+            "!",
+            "rtpjpegpay",
+            f"pt={self.gst_payload_type}",
+            f"mtu={self.gst_mtu}",
+            "!",
+            "udpsink",
+            f"host={self.board_host}",
+            f"port={self.gst_port}",
+            "sync=false",
+            "async=false",
+            "source.",
+            "!",
+            "queue",
+            "leaky=downstream",
+            "max-size-buffers=1",
+            "!",
+            "multifilesink",
+            f"location={preview_pattern}",
+            "max-files=3",
+        ]
+
+    def _gstreamer_caps(self) -> str:
+        return (
+            'application/x-rtp, media=(string)video, clock-rate=(int)90000, '
+            f'encoding-name=(string)JPEG, payload=(int){self.gst_payload_type}'
+        )
+
+    def _gstreamer_board_receiver_command(self) -> str:
+        caps = self._gstreamer_caps().replace('"', '\\"')
+        pipeline = (
+            f'gst-launch-1.0 -v udpsrc port={self.gst_port} caps="{caps}" '
+            f'! rtpjitterbuffer latency=100 drop-on-latency=true '
+            f'! rtpjpegdepay ! jpegdec ! videoconvert ! videoscale '
+            f'! video/x-raw,format=BGR,width={self.gst_output_width},height={self.gst_output_height} '
+            f'! fbdevsink device=/dev/fb0 sync=true'
+        )
+        return (
+            "killall gst-launch-1.0 2>/dev/null || true; "
+            "setterm -cursor off > /dev/$(cat /sys/class/tty/tty0/active) 2>/dev/null || true; "
+            f"nohup {pipeline} > {self.gst_board_log} 2>&1 & echo $! > {self.gst_board_pid}; "
+            "sleep 1; "
+            f"echo GSTREAMER_RECEIVER_STARTED pid=$(cat {self.gst_board_pid} 2>/dev/null) log={self.gst_board_log}; "
+            f"tail -n 20 {self.gst_board_log} 2>/dev/null || true"
+        )
+
+    def _gstreamer_board_stop_command(self) -> str:
+        return (
+            "killall gst-launch-1.0 2>/dev/null || true; "
+            f"rm -f {self.gst_board_pid}; echo GSTREAMER_RECEIVER_STOPPED"
+        )
 
     def _capture_command_locked(self) -> tuple[list[str], Path, Path, Path]:
         capture_dir = self.log_dir / "hdmi-capture"
@@ -714,18 +941,31 @@ class DashboardState:
             pid = self.sender_process.pid if self.sender_process else "unknown"
             if self.auto_capture_on_start:
                 capture_ok, capture_detail = self._start_capture_thread_locked()
-                suffix = capture_detail if capture_ok else f"capture warning: {capture_detail}"
+                suffix = capture_detail if capture_ok else f"采集警告：{capture_detail}"
             else:
                 suffix = "HDMI_RETURN_STREAM_READY endpoint=/api/output-stream.mjpeg"
-            return True, f"sender already running pid={pid}; {suffix}"
+            return True, f"发送端已在运行 pid={pid}; {suffix}"
+
+        receiver_detail = ""
+        if self.pipeline == "gstreamer":
+            ok, receiver_detail = self._run_uart_commands_locked(
+                "gstreamer-start",
+                [self._gstreamer_board_receiver_command()],
+                timeout_s=14,
+            )
+            if not ok:
+                return False, f"GSTREAMER_RECEIVER_START_FAILED {receiver_detail}"
 
         stdout_path, stderr_path = self._sender_log_paths()
         cmd = self._sender_command_locked()
         self.sender_live_state_path.unlink(missing_ok=True)
         self.sender_out_dir.mkdir(parents=True, exist_ok=True)
+        self.gst_preview_dir.mkdir(parents=True, exist_ok=True)
+        for path in self.gst_preview_dir.glob("frame-*.rgb"):
+            path.unlink(missing_ok=True)
         self.last_returned_frame_id = None
         self.last_returned_frame_at_s = None
-        with stdout_path.open("ab") as stdout_file, stderr_path.open("ab") as stderr_file:
+        with stdout_path.open("wb") as stdout_file, stderr_path.open("wb") as stderr_file:
             self.sender_process = subprocess.Popen(
                 cmd,
                 cwd=str(self.repo_root),
@@ -736,14 +976,26 @@ class DashboardState:
         time.sleep(0.5)
         if self.auto_capture_on_start:
             capture_ok, capture_detail = self._start_capture_thread_locked()
-            suffix = capture_detail if capture_ok else f"capture warning: {capture_detail}"
+            suffix = capture_detail if capture_ok else f"采集警告：{capture_detail}"
         else:
             suffix = "HDMI_RETURN_STREAM_READY endpoint=/api/output-stream.mjpeg"
-        return True, f"sender started pid={self.sender_process.pid} log={stdout_path}; {suffix}"
+        receiver_prefix = f"{receiver_detail}; " if receiver_detail else ""
+        return True, f"{receiver_prefix}发送端已启动 pid={self.sender_process.pid} log={stdout_path}; {suffix}"
 
     def _stop_sender_locked(self) -> tuple[bool, str]:
+        board_stop_detail = ""
+        if self.pipeline == "gstreamer" and self.uart_port:
+            ok, board_stop_detail = self._run_uart_commands_locked(
+                "gstreamer-stop",
+                [self._gstreamer_board_stop_command()],
+                timeout_s=8,
+            )
+            if not ok:
+                board_stop_detail = f"板端停止警告：{board_stop_detail}"
+
         if not self._sender_alive_locked():
-            return True, "sender not running"
+            suffix = f"; {board_stop_detail}" if board_stop_detail else ""
+            return True, f"发送端未运行{suffix}"
         assert self.sender_process is not None
         pid = self.sender_process.pid
         self.sender_process.terminate()
@@ -753,7 +1005,8 @@ class DashboardState:
             self.sender_process.kill()
             code = self.sender_process.wait(timeout=3)
         self.sender_last_exit_code = code
-        return True, f"sender stopped pid={pid} exit_code={code}"
+        suffix = f"; {board_stop_detail}" if board_stop_detail else ""
+        return True, f"发送端已停止 pid={pid} exit_code={code}{suffix}"
 
     def _uart_commands_for_action(self, action: str) -> list[str]:
         if action == "pause-receiver":
@@ -777,16 +1030,20 @@ class DashboardState:
         raise ValueError(action)
 
     def _run_uart_action_locked(self, action: str) -> tuple[bool, str]:
+        return self._run_uart_commands_locked(action, self._uart_commands_for_action(action), timeout_s=8)
+
+    def _run_uart_commands_locked(self, label: str, commands: list[str], timeout_s: float = 12.0) -> tuple[bool, str]:
         if not self.uart_port:
             return False, "UART_NOT_CONFIGURED"
 
         self.log_dir.mkdir(parents=True, exist_ok=True)
         stamp = int(time.time() * 1000)
-        rel_output = self.log_dir / f"uart-{action}-{stamp}.log"
-        rel_commands = self.log_dir / f"uart-{action}-{stamp}.commands"
+        safe_label = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in label)
+        rel_output = self.log_dir / f"uart-{safe_label}-{stamp}.log"
+        rel_commands = self.log_dir / f"uart-{safe_label}-{stamp}.commands"
         command_path = self.repo_root / rel_commands
         command_path.parent.mkdir(parents=True, exist_ok=True)
-        command_path.write_text("\n".join(self._uart_commands_for_action(action)) + "\n", encoding="ascii")
+        command_path.write_text("\n".join(commands) + "\n", encoding="ascii")
         script = self.repo_root / "tools" / "uart_run_commands.ps1"
         cmd = [
             "powershell.exe",
@@ -810,13 +1067,17 @@ class DashboardState:
             "-OutputPath",
             str(rel_output),
         ]
+        if self.uart_login_root:
+            cmd.append("-LoginRoot")
+        if self.uart_password:
+            cmd.extend(["-Password", self.uart_password])
         try:
             result = subprocess.run(
                 cmd,
                 cwd=str(self.repo_root),
                 capture_output=True,
                 text=True,
-                timeout=8,
+                timeout=timeout_s,
                 check=False,
             )
         except subprocess.TimeoutExpired:
@@ -832,7 +1093,7 @@ class DashboardState:
             log_text = log_path.read_text(encoding="utf-8", errors="replace")
             for line in log_text.splitlines():
                 stripped = line.strip()
-                if any(token in stripped for token in ("CONTROL_", "VIDEO_UDP_", "FB_INFO", "UART_RUN_COMMANDS_OK")):
+                if any(token in stripped for token in ("CONTROL_", "VIDEO_UDP_", "FB_INFO", "GSTREAMER_", "UART_RUN_COMMANDS_OK", "rtpjpegdepay", "jpegdec", "fbdevsink")):
                     markers.append(stripped)
         marker_tail = " | ".join(markers[-6:]) if markers else "no receiver response marker"
         return True, f"uart command sent port={self.uart_port} log={rel_output} response={marker_tail[:600]}"
@@ -857,17 +1118,39 @@ class DashboardState:
             elif action == "capture-output":
                 ok, detail = self._start_capture_thread_locked()
             elif action in {"pause-receiver", "resume-receiver", "receiver-status"}:
-                ok, detail = self._run_uart_action_locked(action)
-                if ok and action == "pause-receiver":
-                    self.receiver_paused = True
-                elif ok and action == "resume-receiver":
-                    self.receiver_paused = False
+                if self.pipeline == "gstreamer":
+                    if action == "receiver-status":
+                        ok, detail = self._run_uart_commands_locked(
+                            "gstreamer-status",
+                            [
+                                f"cat {self.gst_board_pid} 2>/dev/null || true",
+                                f"tail -n 40 {self.gst_board_log} 2>/dev/null || true",
+                            ],
+                            timeout_s=8,
+                        )
+                    else:
+                        ok = False
+                        detail = "GSTREAMER_CONTROL_NOT_IMPLEMENTED pause/resume is not wired for gst-launch pipeline"
+                else:
+                    ok, detail = self._run_uart_action_locked(action)
+                    if ok and action == "pause-receiver":
+                        self.receiver_paused = True
+                    elif ok and action == "resume-receiver":
+                        self.receiver_paused = False
             elif action == "effect-none":
-                self.selected_effect = "none"
-                detail = "selected effect=none; applies on next receiver launch"
+                if self.pipeline == "gstreamer":
+                    ok = False
+                    detail = "GSTREAMER_EFFECT_NOT_IMPLEMENTED"
+                else:
+                    self.selected_effect = "none"
+                    detail = "已选择特效=none；下次启动接收端时生效"
             elif action == "effect-invert":
-                self.selected_effect = "invert"
-                detail = "selected effect=invert; applies on next receiver launch"
+                if self.pipeline == "gstreamer":
+                    ok = False
+                    detail = "GSTREAMER_EFFECT_NOT_IMPLEMENTED"
+                else:
+                    self.selected_effect = "invert"
+                    detail = "已选择特效=invert；下次启动接收端时生效"
 
             status = "OK" if ok else "ERROR"
             self.last_action = {
@@ -918,22 +1201,32 @@ class DashboardState:
         sender_pid = self._sender_pid_locked()
         stream_state = "running" if sender_pid is not None else "stopped"
         live = self._read_sender_live_state_locked()
+        descriptor = self._input_preview_descriptor_locked()
         return {
             "status": "action-ready" if self.actions_enabled else "disabled",
             "panels": ["input-preview", "fpga-output-preview", "function-control-panel"],
+            "pipeline": {
+                "mode": self.pipeline,
+                "transport": "rtp/jpeg" if self.pipeline == "gstreamer" else "zvid-udp",
+                "source": "videotestsrc ball" if self.pipeline == "gstreamer" else "send_unified_test_video_udp.py",
+                "sink": "fbdevsink" if self.pipeline == "gstreamer" else "fbdev receiver",
+                "board_port": self.gst_port if self.pipeline == "gstreamer" else self.udp_port,
+                "pc_gstreamer_env": str(self.gst_conda_env) if self.pipeline == "gstreamer" else None,
+                "gst_num_buffers": self.gst_num_buffers if self.pipeline == "gstreamer" else None,
+            },
             "input_source": {
-                "kind": "unified-actual-sent",
+                "kind": "gstreamer-videotestsrc-ball" if self.pipeline == "gstreamer" else "unified-actual-sent",
                 "camera_enabled": False,
                 "custom_file_enabled": False,
                 "policy": NO_CAMERA_POLICY,
                 "preview_endpoint": "/api/input-preview.bmp",
                 "preview_matches_sender_source": True,
-                "preview_mode": "latest-actual-sent-frame",
-                "sender_kind": "unified",
-                "sender_fps": self.sender_fps,
-                "content_hold_frames": self.sender_content_hold_frames,
-                "content_dwell_seconds": self.sender_content_hold_frames / self.sender_fps,
-                "latest_sent_frame_id": None if live is None else int(live["frame_id"]),
+                "preview_mode": descriptor["source"],
+                "sender_kind": "gstreamer" if self.pipeline == "gstreamer" else "unified",
+                "sender_fps": self.gst_fps if self.pipeline == "gstreamer" else self.sender_fps,
+                "content_hold_frames": None if self.pipeline == "gstreamer" else self.sender_content_hold_frames,
+                "content_dwell_seconds": None if self.pipeline == "gstreamer" else self.sender_content_hold_frames / self.sender_fps,
+                "latest_sent_frame_id": descriptor["latest_sent_frame_id"] if self.pipeline == "gstreamer" else None if live is None else int(live["frame_id"]),
                 "latest_hdmi_frame_id": self.last_returned_frame_id,
                 "latest_hdmi_frame_at_s": self.last_returned_frame_at_s,
             },
@@ -963,6 +1256,7 @@ class DashboardState:
                 "actions_enabled": self.actions_enabled,
                 "action_mode": self.action_mode,
                 "available_actions": [item["id"] for item in ACTION_DEFINITIONS],
+                "pipeline": self.pipeline,
                 "stream_state": stream_state,
                 "sender_pid": sender_pid,
                 "sender_last_exit_code": self.sender_last_exit_code,
@@ -970,6 +1264,9 @@ class DashboardState:
                 "selected_effect": self.selected_effect,
                 "uart_status": self.uart_port or "not-configured",
                 "control_fifo": self.control_fifo,
+                "gstreamer_port": self.gst_port,
+                "gstreamer_sink": "fbdevsink" if self.pipeline == "gstreamer" else None,
+                "gstreamer_board_log": self.gst_board_log if self.pipeline == "gstreamer" else None,
                 "last_action": self.last_action,
                 "live_transport": self.action_mode == "live",
                 "dry_run_only": self.action_mode == "dry-run",
@@ -992,7 +1289,10 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
             self.send_header("Content-Length", str(len(payload)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
-            self.wfile.write(payload)
+            try:
+                self.wfile.write(payload)
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                pass
 
         def stream_mjpeg(self) -> None:
             try:
@@ -1015,6 +1315,7 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
 
             def capture_frames() -> None:
                 last_frame_id: int | None = None
+                synthetic_frame_id = 0
                 while not stop_capture.is_set():
                     ok, frame = cap.read()
                     if not ok or frame is None or not frame.size:
@@ -1024,7 +1325,10 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
                         rgb_bytes = frame[:, :, ::-1].tobytes()
                         frame_id = decode_marker_from_frame(rgb_bytes, width, height)
                     except ValueError:
-                        continue
+                        if state.pipeline != "gstreamer":
+                            continue
+                        synthetic_frame_id += 1
+                        frame_id = synthetic_frame_id
                     if frame_id == last_frame_id:
                         continue
                     last_frame_id = frame_id
@@ -1088,13 +1392,16 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
             if parsed.path == "/api/input-preview.bmp":
                 descriptor = state.input_preview_descriptor()
                 frame_id = int(descriptor["frame_id"])
-                payload, sha = make_input_bmp(
-                    frame_id,
-                    state.sender_width,
-                    state.sender_height,
-                    state.sender_content_hold_frames,
-                    state.sender_start_frame_id,
-                )
+                if state.pipeline == "gstreamer":
+                    payload, sha = state.gstreamer_input_preview_bmp(frame_id)
+                else:
+                    payload, sha = make_input_bmp(
+                        frame_id,
+                        state.sender_width,
+                        state.sender_height,
+                        state.sender_content_hold_frames,
+                        state.sender_start_frame_id,
+                    )
                 self.send_response(200)
                 self.send_header("Content-Type", "image/bmp")
                 self.send_header("Content-Length", str(len(payload)))
@@ -1107,7 +1414,10 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
                 )
                 self.send_header("X-Preview-Source", str(descriptor["source"]))
                 self.end_headers()
-                self.wfile.write(payload)
+                try:
+                    self.wfile.write(payload)
+                except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                    pass
                 return
             if parsed.path == "/api/output-preview":
                 if state.output_image and state.output_image.exists():
@@ -1163,8 +1473,23 @@ def run_server(
     sender_height: int,
     sender_payload: int,
     sender_inter_packet_us: float,
+    pipeline: str,
+    gst_conda_env: Path,
+    gst_port: int,
+    gst_input_width: int,
+    gst_input_height: int,
+    gst_output_width: int,
+    gst_output_height: int,
+    gst_fps: int,
+    gst_num_buffers: int,
+    gst_payload_type: int,
+    gst_mtu: int,
+    gst_board_log: str,
+    gst_board_pid: str,
     uart_port: str,
     uart_baud: int,
+    uart_login_root: bool,
+    uart_password: str,
     control_fifo: str,
     capture_enabled: bool,
     capture_device: str,
@@ -1193,8 +1518,23 @@ def run_server(
         sender_height=sender_height,
         sender_payload=sender_payload,
         sender_inter_packet_us=sender_inter_packet_us,
+        pipeline=pipeline,
+        gst_conda_env=gst_conda_env,
+        gst_port=gst_port,
+        gst_input_width=gst_input_width,
+        gst_input_height=gst_input_height,
+        gst_output_width=gst_output_width,
+        gst_output_height=gst_output_height,
+        gst_fps=gst_fps,
+        gst_num_buffers=gst_num_buffers,
+        gst_payload_type=gst_payload_type,
+        gst_mtu=gst_mtu,
+        gst_board_log=gst_board_log,
+        gst_board_pid=gst_board_pid,
         uart_port=uart_port,
         uart_baud=uart_baud,
+        uart_login_root=uart_login_root,
+        uart_password=uart_password,
         control_fifo=control_fifo,
         capture_enabled=capture_enabled,
         capture_device=capture_device,
@@ -1253,6 +1593,7 @@ def run_self_test(out_dir: Path) -> int:
         sender_height=600,
         sender_payload=480,
         sender_inter_packet_us=0.0,
+        pipeline="legacy-udp",
         uart_port="",
         capture_enabled=False,
         action_mode="live",
@@ -1313,12 +1654,18 @@ def run_self_test(out_dir: Path) -> int:
         assert effect_status == 200
         assert "gradient" not in page
         assert "box-shadow" not in page
+        assert "Zynq 视频控制台" in page
+        assert "输入到 FPGA" in page
+        assert "FPGA 输出" in page
+        assert "启动视频流" in page
+        assert NO_CAMERA_POLICY in page
         assert 'data-panel="input"' in page
         assert 'data-panel="output"' in page
         assert 'data-panel="control"' in page
         assert 'data-action="start-stream"' in page
         assert 'data-action="pause-receiver"' in page
-        assert "disabled>start stream" not in page
+        assert "setInterval(refreshInputPreview, 200)" in page
+        assert "disabled>启动视频流" not in page
         assert data["input_source"]["camera_enabled"] is False
         assert data["input_source"]["custom_file_enabled"] is False
         assert data["output_preview"]["live_stream_endpoint"] == "/api/output-stream.mjpeg"
@@ -1348,7 +1695,40 @@ def run_self_test(out_dir: Path) -> int:
         assert data["input_source"]["sender_kind"] == "unified"
         assert data["input_source"]["sender_fps"] == 10.0
         assert data["input_source"]["content_dwell_seconds"] == 5.0
-        assert b"FPGA OUTPUT" in output_bytes
+        assert "FPGA 输出".encode("utf-8") in output_bytes
+
+        gst_state = DashboardState(
+            board_host="192.168.1.10",
+            udp_port=udp_port,
+            pipeline="gstreamer",
+            uart_port="",
+            capture_enabled=False,
+            action_mode="dry-run",
+            log_dir=out_dir / "gstreamer-runtime",
+        )
+        gst_data = gst_state.as_json()
+        gst_cmd = " ".join(gst_state._gstreamer_sender_command_locked())
+        board_cmd = gst_state._gstreamer_board_receiver_command()
+        gst_preview, gst_sha = make_gstreamer_source_bmp(3)
+        assert gst_data["pipeline"]["mode"] == "gstreamer"
+        assert gst_data["pipeline"]["transport"] == "rtp/jpeg"
+        assert gst_data["pipeline"]["sink"] == "fbdevsink"
+        assert gst_data["input_source"]["sender_kind"] == "gstreamer"
+        assert "gst-launch-1.0" in gst_cmd
+        assert "num-buffers=-1" in gst_cmd
+        assert "jpegenc" in gst_cmd
+        assert "rtpjpegpay" in gst_cmd
+        assert "udpsink" in gst_cmd
+        assert "multifilesink" in gst_cmd
+        assert "rtpjpegdepay" in board_cmd
+        assert "jpegdec" in board_cmd
+        assert "fbdevsink device=/dev/fb0" in board_cmd
+        assert gst_preview[:2] == b"BM"
+        assert gst_sha
+        out_dir.joinpath("gstreamer-state.json").write_text(json.dumps(gst_data, indent=2), encoding="utf-8")
+        out_dir.joinpath("gstreamer-pc-sender-command.txt").write_text(gst_cmd + "\n", encoding="utf-8")
+        out_dir.joinpath("gstreamer-board-receiver-command.txt").write_text(board_cmd + "\n", encoding="utf-8")
+        out_dir.joinpath("gstreamer-input-preview.bmp").write_bytes(gst_preview)
     finally:
         try:
             state.run_action("stop-stream")
@@ -1363,6 +1743,8 @@ def run_self_test(out_dir: Path) -> int:
     print(f"DASHBOARD_CONTROL_INTEGRATION_SELF_TEST_OK out={out_dir} actions={len(action_results)}")
     print(f"DASHBOARD_MINIMAL_UI_SELF_TEST_OK out={out_dir}")
     print(f"DASHBOARD_LIVE_SENDER_CONTROL_SELF_TEST_OK out={out_dir} actions={len(action_results)}")
+    print(f"DASHBOARD_GSTREAMER_CONTROL_SELF_TEST_OK out={out_dir}")
+    print(f"DASHBOARD_CHINESE_UI_SELF_TEST_OK out={out_dir}")
     return 0
 
 
@@ -1381,9 +1763,24 @@ def main() -> int:
     parser.add_argument("--sender-height", type=int, default=DEFAULT_HEIGHT)
     parser.add_argument("--sender-payload", type=int, default=DEFAULT_SENDER_PAYLOAD)
     parser.add_argument("--sender-inter-packet-us", type=float, default=DEFAULT_SENDER_INTER_PACKET_US)
+    parser.add_argument("--pipeline", choices=["gstreamer", "legacy-udp"], default=DEFAULT_PIPELINE)
+    parser.add_argument("--gst-conda-env", default=DEFAULT_GST_CONDA_ENV)
+    parser.add_argument("--gst-port", type=int, default=DEFAULT_GST_PORT)
+    parser.add_argument("--gst-input-width", type=int, default=DEFAULT_GST_INPUT_WIDTH)
+    parser.add_argument("--gst-input-height", type=int, default=DEFAULT_GST_INPUT_HEIGHT)
+    parser.add_argument("--gst-output-width", type=int, default=DEFAULT_GST_OUTPUT_WIDTH)
+    parser.add_argument("--gst-output-height", type=int, default=DEFAULT_GST_OUTPUT_HEIGHT)
+    parser.add_argument("--gst-fps", type=int, default=DEFAULT_GST_FPS)
+    parser.add_argument("--gst-num-buffers", type=int, default=DEFAULT_GST_NUM_BUFFERS)
+    parser.add_argument("--gst-payload-type", type=int, default=DEFAULT_GST_PAYLOAD_TYPE)
+    parser.add_argument("--gst-mtu", type=int, default=DEFAULT_GST_MTU)
+    parser.add_argument("--gst-board-log", default=DEFAULT_GST_BOARD_LOG)
+    parser.add_argument("--gst-board-pid", default=DEFAULT_GST_BOARD_PID)
     parser.add_argument("--uart-port", default=DEFAULT_UART_PORT)
     parser.add_argument("--uart-disabled", action="store_true")
     parser.add_argument("--uart-baud", type=int, default=DEFAULT_UART_BAUD)
+    parser.add_argument("--uart-login-root", action="store_true")
+    parser.add_argument("--uart-password", default="")
     parser.add_argument("--control-fifo", default=DEFAULT_CONTROL_FIFO)
     parser.add_argument("--capture-disabled", action="store_true")
     parser.add_argument("--capture-device", default=DEFAULT_CAPTURE_DEVICE)
@@ -1421,8 +1818,23 @@ def main() -> int:
         sender_height=args.sender_height,
         sender_payload=args.sender_payload,
         sender_inter_packet_us=args.sender_inter_packet_us,
+        pipeline=args.pipeline,
+        gst_conda_env=Path(args.gst_conda_env),
+        gst_port=args.gst_port,
+        gst_input_width=args.gst_input_width,
+        gst_input_height=args.gst_input_height,
+        gst_output_width=args.gst_output_width,
+        gst_output_height=args.gst_output_height,
+        gst_fps=args.gst_fps,
+        gst_num_buffers=args.gst_num_buffers,
+        gst_payload_type=args.gst_payload_type,
+        gst_mtu=args.gst_mtu,
+        gst_board_log=args.gst_board_log,
+        gst_board_pid=args.gst_board_pid,
         uart_port="" if args.uart_disabled else args.uart_port,
         uart_baud=args.uart_baud,
+        uart_login_root=args.uart_login_root,
+        uart_password=args.uart_password,
         control_fifo=args.control_fifo,
         capture_enabled=not args.capture_disabled,
         capture_device=args.capture_device,

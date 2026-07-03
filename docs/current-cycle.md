@@ -43,6 +43,25 @@ No active work note is open.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: dashboard-gstreamer-chinese-control
+Result: PASSED. The visual dashboard now defaults to the standard GStreamer
+  route instead of the retired custom UDP/fbdev route. The browser-visible UI
+  is Chinese-localized and shows `链路=GStreamer 传输=RTP/raw`. `start-stream`
+  starts the board GStreamer receiver over UART, starts the PC GStreamer
+  RTP/raw sender, and exposes HDMI return through `/api/output-stream.mjpeg`.
+  Connected-board validation passed with HDMI_BALL_MOTION_OK samples=12
+  unique_hashes=12 frames_with_ball=12 x_span=144.354 y_span=266.92, and the
+  dashboard MJPEG endpoint passed with MJPEG_STREAM_PROBE_OK frames=24
+  unique=11.
+Evidence: docs/reports/dashboard-gstreamer-chinese-control.md,
+  build/dashboard-gstreamer-chinese-control/,
+  build/dashboard-gstreamer-live/hdmi-motion-check2/, and
+  build/dashboard-gstreamer-live/mjpeg-probe2/
+Board action: ran userspace GStreamer pipelines on the already-booted
+  PetaLinux rootfs, sent RTP/raw over Ethernet, controlled through UART, and
+  captured HDMI through the PC adapter. No Vivado/PetaLinux rebuild, JTAG
+  programming, TF-card image write, or board flash write was performed.
+
 Cycle ID: gstreamer-rtp-raw-kmssink-closed-loop
 Result: PASSED. PC GStreamer 1.28.4 from the local conda environment generated
   a moving-ball RTP/raw RGB stream, sent it over Ethernet, and the board
@@ -750,11 +769,12 @@ the connected board with GStreamer 1.12.2, gst-launch/gst-inspect, base/good/
 bad plugins, kmssink, DRM/KMS tools, and V4L utilities available; fakesink
 pipeline smoke passes and kmssink negotiates 800x600 KMS caps. The final RTP
 raw-video-to-kmssink route is not yet closed.
-GStreamer RTP/raw-to-kmssink closed loop is closed: PC conda GStreamer sends
-moving-ball RTP/raw RGB over Ethernet, board GStreamer receives through
-udpsrc/rtpjitterbuffer/rtpvrawdepay, converts/scales to 800x600 BGR, and
-kmssink force-modesetting=true outputs to HDMI. HDMI return validation passed
-with 24 temporal samples, 23 unique hashes, and moving-ball centroid motion.
+The earlier RTP/raw-to-kmssink result is withdrawn: visual inspection exposed
+black/white cross-frame slicing that the motion-only validator accepted.
+The corrected dashboard route is closed with actual source preview,
+JPEG/RTP over Ethernet, board rtpjpegdepay/jpegdec, and fbdevsink output.
+Twelve HDMI samples produced 11 unique hashes, detected the yellow ball in all
+frames, and preserved the blue background.
 Cycle governance is simplified: cycle records are now audit packages and
 third-party review inlets, not preregistered pass-gate procedures. Current
 rules live in AGENTS.md.
@@ -778,9 +798,7 @@ No active work note is open. The next implementation step can build on four
 verified facts: the Linux direct-copy network-to-HDMI transfer chain passes,
 the board display side can page-flip textured motion through DRM/KMS with
 stable vblank cadence when network receive is removed, the board boots a
-PetaLinux rootfs with GStreamer tools/plugins plus kmssink available, and the
-PC-to-board GStreamer RTP/raw-to-kmssink route now passes dynamic HDMI return
-validation. The next route should either raise this GStreamer path from
-320x240 input to a higher input resolution with the same validation standard,
-or add frame-id/drop accounting around the GStreamer route before layering
-video effects.
+PetaLinux rootfs with GStreamer tools/plugins, and the PC-to-board GStreamer
+JPEG/RTP-to-fbdevsink route passes color-aware dynamic HDMI return validation.
+The next route should add frame/drop accounting or begin the requested video
+effects on this known-good transport and display base.

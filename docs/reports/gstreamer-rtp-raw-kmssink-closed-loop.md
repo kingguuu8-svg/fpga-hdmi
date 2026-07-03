@@ -4,7 +4,14 @@ Date: 2026-07-02
 
 ## Result
 
-PASSED.
+WITHDRAWN on 2026-07-02 after visual review.
+
+The motion-only validator accepted black/white frame slicing as a moving-ball
+result. Direct visual comparison later proved that the source preview was not
+the actual GStreamer source and that `kmssink force-modesetting=true` produced
+cross-frame tearing on this board. This route is negative evidence, not a
+verified workflow. The replacement route is recorded in
+`docs/reports/dashboard-gstreamer-chinese-control.md`.
 
 The connected board displayed a PC-generated GStreamer RTP/raw video stream
 through board-side GStreamer and `kmssink`, and HDMI return capture validated

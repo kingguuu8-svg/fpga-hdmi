@@ -71,44 +71,50 @@ Output: official VDMA-style 800x600 HDMI path
 Status: stage-1 UDP framebuffer HDMI pass-through passed
 Control: UART fallback FIFO pause/resume/status passed
 Effect: first board-side RGB invert effect passed with generated PC input
-Dashboard: PC visual scaffold and fixed generated demo sender passed; custom
-  input files deferred after MVP; minimal live sender control and HDMI capture
-  binding passed; dashboard-driven board live loop passed with truthful input
-  preview, live HDMI MJPEG return preview, color-block source classification,
-  UART pause/resume/status audit, and unified 15 fps image-evidence
-  pass-through validation
+Dashboard: GStreamer visual control console is now the preferred UI route. It
+  starts the board GStreamer receiver over UART, starts the PC GStreamer
+  RTP/raw sender, shows a Chinese control surface, and previews HDMI return
+  through MJPEG. Legacy UDP/fbdev dashboard mode remains available as
+  `--pipeline legacy-udp` recovery context.
 ```
 
 ## PC Dashboard
 
-Run the dashboard scaffold self-test:
+Run the dashboard GStreamer/Chinese UI self-test:
 
 ```powershell
-rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\visual-dashboard-scaffold"
+rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-gstreamer-chinese-control"
 ```
 
-Run the dashboard control-integration self-test:
+Expected markers include:
+
+```text
+DASHBOARD_GSTREAMER_CONTROL_SELF_TEST_OK
+DASHBOARD_CHINESE_UI_SELF_TEST_OK
+```
+
+Run the local GStreamer dashboard:
 
 ```powershell
-rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-live-minimal-controls"
+rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --host 127.0.0.1 --port 8765 --pipeline gstreamer --uart-port COM16 --uart-login-root --uart-password root"
 ```
 
-Run the dashboard HDMI-capture binding self-test:
+`start-stream` uses:
 
-```powershell
-rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-hdmi-capture-binding"
+```text
+PC GStreamer videotestsrc ball -> I420 -> jpegenc -> rtpjpegpay ->
+  udpsink port 5011
+Board GStreamer udpsrc -> rtpjitterbuffer -> rtpjpegdepay -> jpegdec ->
+  videoconvert -> videoscale -> fbdevsink /dev/fb0
+HDMI capture adapter -> /api/output-stream.mjpeg
 ```
 
-Run the displayable dashboard board-live loop:
+The left panel reads raw RGB frames tee'd from the actual GStreamer source.
+
+Run the legacy UDP dashboard board-live loop only for recovery comparison:
 
 ```powershell
 rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_dashboard_board_live_loop.ps1 -OutDir build\dashboard-color-block-loop-and-uart-audit\finite-loop -CaptureDevice 1 -CaptureBackend dshow -StreamFps 10 -MjpegFrames 80 -MjpegMinUnique 2 -MjpegMinColors 3 -Frames 12 -Fps 2 -InterPacketUs 200
-```
-
-Expected marker:
-
-```text
-DASHBOARD_BOARD_LIVE_LOOP_OK mode=finite receiver_frames=12 sender_frames=12 written=12 mjpeg_frames=80 mjpeg_unique=8 mjpeg_colors=8 color_names=black,blue,cyan,green,magenta,red,white,yellow
 ```
 
 Run the board-live loop and leave the dashboard/sender running for inspection:
@@ -129,21 +135,9 @@ Send the fixed generated demo stream to the board receiver:
 rtk powershell.exe -NoProfile -Command "python .\tools\send_demo_video_udp.py 192.168.1.10 --frames 5 --fps 1"
 ```
 
-Run the local dashboard:
-
-```powershell
-rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --host 127.0.0.1 --port 8765"
-```
-
-The MVP dashboard uses generated PC input. It does not use camera/webcam input,
-and user-selectable custom input files are deferred after MVP. The current
-generated source is full-screen sequential color blocks so the HDMI return path
-can be verified by programmatic color classification.
-
-The dashboard UI is intentionally plain. It keeps only the input preview, FPGA
-live HDMI return preview, control buttons, status, and log. The right panel
-uses `/api/output-stream.mjpeg`; still HDMI capture is a manual evidence
-fallback.
+The dashboard does not use camera/webcam input or custom input files as video
+sources. Windows may still report camera access because the HDMI capture
+adapter is exposed as a UVC/DirectShow device.
 
 Dashboard action endpoints:
 
@@ -159,12 +153,11 @@ POST /api/action {"action":"effect-invert"}
 POST /api/action {"action":"stop-stream"}
 ```
 
-`start-stream` and `stop-stream` now control a real local
-`tools/send_demo_video_udp.py` process. `start-stream` exposes the live HDMI
-return stream at `/api/output-stream.mjpeg`; `capture-output` is only a manual
-still-capture fallback. UART/FIFO controls use `tools/uart_run_commands.ps1`
-when `--uart-port` is configured and the board receiver has created
-`/tmp/video_ctl`; otherwise they return an explicit error.
+In GStreamer mode, `pause-receiver`, `resume-receiver`, `effect-none`, and
+`effect-invert` intentionally return not-implemented rather than pretending to
+control the pipeline. `receiver-status` tails the board GStreamer log over
+UART. Use `--pipeline legacy-udp` only when testing the retired UDP/fbdev
+receiver controls.
 
 The previous PL-only video effects demo remains available as a side demo, not
 the current network-video MVP:

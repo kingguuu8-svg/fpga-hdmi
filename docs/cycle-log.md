@@ -20,7 +20,82 @@ Third-party review:
 Residual risks:
 ```
 
+## Cycle: dashboard-gstreamer-chinese-control
+
+Date: 2026-07-02
+
+Commit: this commit (`cycle: add gstreamer dashboard control`)
+
+Objective: make the visual dashboard represent the current mature GStreamer
+route and localize the user-facing console to Chinese.
+
+Changed scope:
+
+- Changed the dashboard default pipeline to `gstreamer`, with legacy UDP/fbdev
+  retained behind `--pipeline legacy-udp`.
+- Added PC JPEG/RTP GStreamer sender generation and board GStreamer receiver
+  start/stop over UART.
+- Added optional UART root login for dashboard-triggered board commands.
+- Localized visible dashboard UI text to Chinese.
+- Changed the HDMI MJPEG path so GStreamer frames without old ZVID markers can
+  stream to the right panel.
+- Updated README, dashboard README, pipeline skill, and this report.
+
+Verification performed:
+
+- `python -m py_compile tools\dashboard\pc_dashboard.py`
+- `python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-gstreamer-chinese-control`
+- Self-test printed `DASHBOARD_GSTREAMER_CONTROL_SELF_TEST_OK` and
+  `DASHBOARD_CHINESE_UI_SELF_TEST_OK`.
+- PC and board probes found the JPEG/RTP encode/decode elements.
+- Live `start-stream` returned `GSTREAMER_RECEIVER_STARTED`, `rtp/jpeg`,
+  `fbdevsink`, and a running unlimited PC sender.
+- Color-aware HDMI validation measured 12 samples, 11 unique hashes,
+  yellow-ball detection in all frames, `x_span=283.98`, `y_span=277.77`, and
+  background RGB mean `(16.0, 59.1, 75.2)`.
+- Visual comparison confirmed the actual PC source and HDMI return share the
+  blue background, yellow moving ball, and source crosshair.
+
+Board action:
+
+- Started board GStreamer receiver over UART.
+- Sent PC GStreamer JPEG/RTP video over Ethernet to port 5011.
+- Captured board HDMI output through the PC HDMI/UVC adapter.
+- No Vivado build, PetaLinux build, JTAG programming, TF-card image write, or
+  board flash write was performed.
+
+Evidence:
+
+- `docs/reports/dashboard-gstreamer-chinese-control.md`
+- `build/dashboard-gstreamer-chinese-control/`
+- `build/dashboard-gstreamer-live/final-color-motion/color-motion-validation.json`
+- `build/dashboard-gstreamer-live/uart-gstreamer-start-1783006010603.log`
+
+Result:
+
+- PASSED.
+
+Rollback point:
+
+- Previous completed cycle commit: `15c459d`.
+- Use `--pipeline legacy-udp` for the old dashboard behavior.
+
+Third-party review:
+
+- None.
+
+Residual risks:
+
+- Pause/resume/effect controls are explicit not-implemented in GStreamer mode.
+- JPEG compression introduces small expected color deviations.
+
 ## Cycle: gstreamer-rtp-raw-kmssink-closed-loop
+
+Correction dated 2026-07-02: this historical result is withdrawn. Visual
+inspection proved that the motion-only validator accepted black/white
+cross-frame slicing, and the left preview was not the actual GStreamer source.
+Keep this entry as negative evidence; use the corrected JPEG/RTP plus
+fbdevsink dashboard cycle above.
 
 Date: 2026-07-02
 
