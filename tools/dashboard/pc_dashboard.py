@@ -348,6 +348,8 @@ def dashboard_html(actions_enabled: bool = True) -> bytes:
   </main>
   <script>
     let frame = 0;
+    let inputPreviewTimer = null;
+    let inputPreviewIntervalMs = null;
     function zh(value) {{
       const map = {{
         "gstreamer": "GStreamer",
@@ -372,6 +374,7 @@ def dashboard_html(actions_enabled: bool = True) -> bytes:
       return map[value] || value;
     }}
     function applyState(state) {{
+      syncInputPreviewRate(state);
       document.getElementById("log").textContent = state.logs.join("\\n");
       document.getElementById("action-status").textContent =
         "链路=" + zh(state.pipeline.mode) +
@@ -388,6 +391,19 @@ def dashboard_html(actions_enabled: bool = True) -> bytes:
     function refreshInputPreview() {{
       frame = (frame + 1) % 100000;
       document.getElementById("input-preview").src = "/api/input-preview.bmp?refresh=" + frame;
+    }}
+    function syncInputPreviewRate(state) {{
+      const fps = Math.max(1, state.output_preview.stream_fps || state.input_source.sender_fps || 5);
+      const nextIntervalMs = Math.max(33, Math.round(1000 / fps));
+      if (nextIntervalMs === inputPreviewIntervalMs) {{
+        return;
+      }}
+      inputPreviewIntervalMs = nextIntervalMs;
+      if (inputPreviewTimer !== null) {{
+        clearInterval(inputPreviewTimer);
+      }}
+      inputPreviewTimer = setInterval(refreshInputPreview, inputPreviewIntervalMs);
+      refreshInputPreview();
     }}
     async function refreshState() {{
       const state = await fetch("/api/state").then(r => r.json());
@@ -409,7 +425,6 @@ def dashboard_html(actions_enabled: bool = True) -> bytes:
     }}
     refreshInputPreview();
     refreshState();
-    setInterval(refreshInputPreview, 200);
     setInterval(refreshState, 1000);
   </script>
 </body>
@@ -1664,7 +1679,8 @@ def run_self_test(out_dir: Path) -> int:
         assert 'data-panel="control"' in page
         assert 'data-action="start-stream"' in page
         assert 'data-action="pause-receiver"' in page
-        assert "setInterval(refreshInputPreview, 200)" in page
+        assert "syncInputPreviewRate(state)" in page
+        assert "state.output_preview.stream_fps" in page
         assert "disabled>启动视频流" not in page
         assert data["input_source"]["camera_enabled"] is False
         assert data["input_source"]["custom_file_enabled"] is False
