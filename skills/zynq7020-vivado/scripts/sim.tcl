@@ -30,7 +30,7 @@ if {$example eq "video-pip"} {
         ] \
         [list \
             tb_axis_pip_overlay_core \
-            PL_DUAL_VDMA_PIP_CORE_SIM_OK \
+            PL_CONTROLLED_PIP_CORE_SIM_OK \
             [list [file join $repo_root examples $example rtl axis_pip_overlay_core.v]] \
             [list [file join $repo_root examples $example sim tb_axis_pip_overlay_core.v]] \
         ] \

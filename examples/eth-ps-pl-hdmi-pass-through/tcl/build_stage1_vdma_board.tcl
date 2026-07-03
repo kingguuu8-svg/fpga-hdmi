@@ -12,6 +12,39 @@ file mkdir $report_root
 
 set_param general.maxThreads 1
 
+proc run_generated_run {build_root run_name} {
+    set project_name eth_ps_vdma_hdmi_stage1_board
+    set run_dir [file join $build_root "${project_name}.runs" $run_name]
+    set run_script [file join $run_dir runme.sh]
+    if {![file exists $run_script]} {
+        error "Generated run script is missing: $run_script"
+    }
+    puts "DIRECT_RUN_START run=$run_name script=$run_script"
+    exec sh $run_script >@ stdout 2>@ stderr
+    if {![file exists [file join $run_dir runme.log]]} {
+        error "Generated run did not create runme.log: $run_name"
+    }
+    set done_files [glob -nocomplain [file join $run_dir ".vivado.end.rst"]]
+    set error_files [glob -nocomplain [file join $run_dir ".vivado.*.error.rst"]]
+    if {[llength $error_files] != 0 || [llength $done_files] == 0} {
+        error "Generated run failed or did not finish: $run_name"
+    }
+    puts "DIRECT_RUN_OK run=$run_name"
+}
+
+proc run_synthesis_direct {build_root} {
+    set project_name eth_ps_vdma_hdmi_stage1_board
+    set runs_root [file join $build_root "${project_name}.runs"]
+    foreach run_dir [lsort [glob -nocomplain -types d [file join $runs_root "*_synth_1"]]] {
+        run_generated_run $build_root [file tail $run_dir]
+    }
+    run_generated_run $build_root synth_1
+}
+
+proc run_implementation_direct {build_root} {
+    run_generated_run $build_root impl_1
+}
+
 create_project eth_ps_vdma_hdmi_stage1_board $build_root -part $part -force
 set_property target_language Verilog [current_project]
 
@@ -39,8 +72,8 @@ set_property PROCESSING_ORDER LATE [get_files $stage1_xdc]
 set_property top eth_ps_vdma_hdmi_board_top [current_fileset]
 update_compile_order -fileset sources_1
 
-launch_runs synth_1 -jobs 1
-wait_on_run synth_1
+launch_runs synth_1 -scripts_only -jobs 1
+run_synthesis_direct $build_root
 if {[get_property PROGRESS [get_runs synth_1]] ne "100%"} {
     error "synth_1 did not complete: [get_property STATUS [get_runs synth_1]]"
 }
@@ -49,8 +82,8 @@ write_checkpoint -force [file join $build_root post_synth.dcp]
 report_utilization -file [file join $report_root post_synth_utilization.rpt]
 report_drc -file [file join $report_root post_synth_drc.rpt]
 
-launch_runs impl_1 -to_step write_bitstream -jobs 1
-wait_on_run impl_1
+launch_runs impl_1 -to_step write_bitstream -scripts_only -jobs 1
+run_implementation_direct $build_root
 if {[get_property PROGRESS [get_runs impl_1]] ne "100%"} {
     error "impl_1 did not complete: [get_property STATUS [get_runs impl_1]]"
 }

@@ -98,8 +98,8 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
         CONFIG.FRAME_H {600} \
         CONFIG.PIP_X {560} \
         CONFIG.PIP_Y {420} \
-        CONFIG.PIP_W {200} \
-        CONFIG.PIP_H {150} \
+        CONFIG.PIP_W {400} \
+        CONFIG.PIP_H {300} \
         CONFIG.SCALE_X {4} \
         CONFIG.SCALE_Y {4} \
         CONFIG.BORDER {2} \
@@ -115,7 +115,7 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
     ] [get_bd_cells axi_vdma_1]
 
     set_property -dict [list CONFIG.NUM_SI {3}] [get_bd_cells axi_smc]
-    set_property -dict [list CONFIG.NUM_MI {2}] [get_bd_cells ps7_0_axi_periph]
+    set_property -dict [list CONFIG.NUM_MI {3}] [get_bd_cells ps7_0_axi_periph]
 
     set old_main_stream [get_bd_intf_nets -quiet axi_vdma_0_M_AXIS_MM2S]
     if {[llength $old_main_stream] != 0} {
@@ -147,6 +147,11 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
             [get_bd_intf_pins axi_vdma_1/S_AXI_LITE] \
             [get_bd_intf_pins ps7_0_axi_periph/M01_AXI]
     }
+    if {[llength [get_bd_intf_nets -quiet ps7_0_axi_periph_M02_AXI]] == 0} {
+        connect_bd_intf_net -intf_net ps7_0_axi_periph_M02_AXI \
+            [get_bd_intf_pins axis_pip_overlay_core_0/S_AXI] \
+            [get_bd_intf_pins ps7_0_axi_periph/M02_AXI]
+    }
 
     connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK0] \
         [get_bd_pins axi_vdma_1/s_axi_lite_aclk] \
@@ -154,9 +159,11 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
     connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK1] \
         [get_bd_pins axi_vdma_1/m_axi_mm2s_aclk] \
         [get_bd_pins axi_vdma_1/m_axis_mm2s_aclk] \
-        [get_bd_pins axis_pip_overlay_core_0/aclk]
+        [get_bd_pins axis_pip_overlay_core_0/aclk] \
+        [get_bd_pins ps7_0_axi_periph/M02_ACLK]
     connect_bd_net [get_bd_pins rst_ps7_0_100M/peripheral_aresetn] \
-        [get_bd_pins axis_pip_overlay_core_0/aresetn]
+        [get_bd_pins axis_pip_overlay_core_0/aresetn] \
+        [get_bd_pins ps7_0_axi_periph/M02_ARESETN]
     connect_bd_net [get_bd_pins rst_ps7_0_50M/peripheral_aresetn] \
         [get_bd_pins axi_vdma_1/axi_resetn] \
         [get_bd_pins ps7_0_axi_periph/M01_ARESETN]
@@ -169,6 +176,14 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
         [get_bd_addr_spaces processing_system7_0/Data] \
         [get_bd_addr_segs axi_vdma_1/S_AXI_LITE/Reg] \
         SEG_axi_vdma_1_Reg
+    set pip_ctrl_addr_segs [get_bd_addr_segs -of_objects [get_bd_intf_pins axis_pip_overlay_core_0/S_AXI]]
+    if {[llength $pip_ctrl_addr_segs] == 0} {
+        error "No address segment inferred for axis_pip_overlay_core_0/S_AXI"
+    }
+    create_bd_addr_seg -range 0x00010000 -offset 0x43c00000 \
+        [get_bd_addr_spaces processing_system7_0/Data] \
+        [lindex $pip_ctrl_addr_segs 0] \
+        SEG_axis_pip_overlay_core_0_Reg
 
     # PetaLinux device-tree generation requires the AXI VDMA interrupt outputs
     # to terminate at the PS interrupt controller. The official HDMI-only

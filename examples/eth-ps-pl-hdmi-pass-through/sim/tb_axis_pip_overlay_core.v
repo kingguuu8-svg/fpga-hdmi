@@ -6,12 +6,21 @@ module tb_axis_pip_overlay_core;
     localparam integer FRAME_H = 12;
     localparam integer PIP_X = 10;
     localparam integer PIP_Y = 7;
-    localparam integer PIP_W = 4;
-    localparam integer PIP_H = 3;
+    localparam integer PIP_W = 8;
+    localparam integer PIP_H = 6;
+    localparam integer PIP_DEFAULT_W = 4;
+    localparam integer PIP_DEFAULT_H = 3;
     localparam integer SCALE_X = 4;
     localparam integer SCALE_Y = 4;
     localparam integer BORDER = 1;
     localparam integer FRAME_PIXELS = FRAME_W * FRAME_H;
+    localparam [31:0] CTRL_ENABLE = 32'h00000001;
+    localparam [31:0] CTRL_BORDER = 32'h00000002;
+    localparam [31:0] CTRL_SCALE_HALF = 32'h00000000;
+    localparam [31:0] CTRL_SCALE_QUARTER = 32'h00000004;
+    localparam [31:0] CTRL_EFFECT_NORMAL = 32'h00000000;
+    localparam [31:0] CTRL_EFFECT_INVERT = 32'h00000010;
+    localparam [31:0] CTRL_EFFECT_GRAYSCALE = 32'h00000020;
 
     reg aclk = 1'b0;
     reg aresetn = 1'b0;
@@ -37,6 +46,24 @@ module tb_axis_pip_overlay_core;
     wire [31:0] status_pip_frames;
     wire [31:0] status_overlay_pixels;
 
+    reg  [5:0]  s_axi_awaddr = 6'd0;
+    reg         s_axi_awvalid = 1'b0;
+    wire        s_axi_awready;
+    reg  [31:0] s_axi_wdata = 32'd0;
+    reg  [3:0]  s_axi_wstrb = 4'hf;
+    reg         s_axi_wvalid = 1'b0;
+    wire        s_axi_wready;
+    wire [1:0]  s_axi_bresp;
+    wire        s_axi_bvalid;
+    reg         s_axi_bready = 1'b1;
+    reg  [5:0]  s_axi_araddr = 6'd0;
+    reg         s_axi_arvalid = 1'b0;
+    wire        s_axi_arready;
+    wire [31:0] s_axi_rdata;
+    wire [1:0]  s_axi_rresp;
+    wire        s_axi_rvalid;
+    reg         s_axi_rready = 1'b1;
+
     integer x;
     integer y;
     integer overlay_pixels = 0;
@@ -45,6 +72,14 @@ module tb_axis_pip_overlay_core;
     integer main_pixels = 0;
     integer expected_count = 0;
     integer checked_count = 0;
+    integer expected_pip_x = PIP_X;
+    integer expected_pip_y = PIP_Y;
+    integer expected_pip_w = PIP_DEFAULT_W;
+    integer expected_pip_h = PIP_DEFAULT_H;
+    integer expected_scale = 4;
+    integer expected_enable = 1;
+    integer expected_border = 1;
+    integer expected_effect = 0;
 
     reg [23:0] expected_data [0:FRAME_PIXELS-1];
     reg        expected_last [0:FRAME_PIXELS-1];
@@ -65,6 +100,23 @@ module tb_axis_pip_overlay_core;
     ) dut (
         .aclk(aclk),
         .aresetn(aresetn),
+        .s_axi_awaddr(s_axi_awaddr),
+        .s_axi_awvalid(s_axi_awvalid),
+        .s_axi_awready(s_axi_awready),
+        .s_axi_wdata(s_axi_wdata),
+        .s_axi_wstrb(s_axi_wstrb),
+        .s_axi_wvalid(s_axi_wvalid),
+        .s_axi_wready(s_axi_wready),
+        .s_axi_bresp(s_axi_bresp),
+        .s_axi_bvalid(s_axi_bvalid),
+        .s_axi_bready(s_axi_bready),
+        .s_axi_araddr(s_axi_araddr),
+        .s_axi_arvalid(s_axi_arvalid),
+        .s_axi_arready(s_axi_arready),
+        .s_axi_rdata(s_axi_rdata),
+        .s_axi_rresp(s_axi_rresp),
+        .s_axi_rvalid(s_axi_rvalid),
+        .s_axi_rready(s_axi_rready),
         .s_main_tdata(s_main_tdata),
         .s_main_tvalid(s_main_tvalid),
         .s_main_tready(s_main_tready),
@@ -101,6 +153,43 @@ module tb_axis_pip_overlay_core;
         end
     endfunction
 
+    function [23:0] apply_effect;
+        input [23:0] pixel;
+        reg [9:0] gray_sum;
+        reg [7:0] gray;
+        begin
+            if (expected_effect == 1) begin
+                apply_effect = ~pixel;
+            end else if (expected_effect == 2) begin
+                gray_sum = {2'b00, pixel[23:16]} + {2'b00, pixel[15:8]} + {2'b00, pixel[7:0]};
+                gray = gray_sum[9:2] + gray_sum[9:3];
+                apply_effect = {gray, gray, gray};
+            end else begin
+                apply_effect = pixel;
+            end
+        end
+    endfunction
+
+    task axi_write;
+        input [5:0] addr;
+        input [31:0] data;
+        begin
+            @(negedge aclk);
+            s_axi_awaddr = addr;
+            s_axi_wdata = data;
+            s_axi_awvalid = 1'b1;
+            s_axi_wvalid = 1'b1;
+            s_axi_wstrb = 4'hf;
+            @(posedge aclk);
+            while (!s_axi_bvalid) begin
+                @(posedge aclk);
+            end
+            @(negedge aclk);
+            s_axi_awvalid = 1'b0;
+            s_axi_wvalid = 1'b0;
+        end
+    endtask
+
     task queue_expected_main_pixel;
         input integer px;
         input integer py;
@@ -109,17 +198,19 @@ module tb_axis_pip_overlay_core;
         integer local_y;
         begin
             expected = main_pixel(px, py);
-            if (px >= PIP_X && px < PIP_X + PIP_W &&
-                py >= PIP_Y && py < PIP_Y + PIP_H) begin
+            if (expected_enable &&
+                px >= expected_pip_x && px < expected_pip_x + expected_pip_w &&
+                py >= expected_pip_y && py < expected_pip_y + expected_pip_h) begin
                 overlay_pixels = overlay_pixels + 1;
-                local_x = px - PIP_X;
-                local_y = py - PIP_Y;
-                if (local_x < BORDER || local_y < BORDER ||
-                    local_x >= PIP_W - BORDER || local_y >= PIP_H - BORDER) begin
+                local_x = px - expected_pip_x;
+                local_y = py - expected_pip_y;
+                if (expected_border &&
+                    (local_x < BORDER || local_y < BORDER ||
+                     local_x >= expected_pip_w - BORDER || local_y >= expected_pip_h - BORDER)) begin
                     expected = 24'hffffff;
                     border_pixels = border_pixels + 1;
                 end else begin
-                    expected = pip_pixel(local_x * SCALE_X, local_y * SCALE_Y);
+                    expected = apply_effect(pip_pixel(local_x * expected_scale, local_y * expected_scale));
                     pip_content_pixels = pip_content_pixels + 1;
                 end
             end else begin
@@ -224,7 +315,7 @@ module tb_axis_pip_overlay_core;
         end
         send_and_check_main_frame();
         repeat (2) @(posedge aclk);
-        if (overlay_pixels != PIP_W * PIP_H) begin
+        if (overlay_pixels != PIP_DEFAULT_W * PIP_DEFAULT_H) begin
             $display("FAIL overlay_pixels=%0d", overlay_pixels);
             $finish;
         end
@@ -236,14 +327,64 @@ module tb_axis_pip_overlay_core;
             $display("FAIL pip_content_pixels=%0d", pip_content_pixels);
             $finish;
         end
-        if (main_pixels != FRAME_W * FRAME_H - PIP_W * PIP_H) begin
+        if (main_pixels != FRAME_W * FRAME_H - PIP_DEFAULT_W * PIP_DEFAULT_H) begin
             $display("FAIL main_pixels=%0d", main_pixels);
             $finish;
         end
-        if (status_overlay_pixels != PIP_W * PIP_H) begin
+        if (status_overlay_pixels != PIP_DEFAULT_W * PIP_DEFAULT_H) begin
             $display("FAIL status_overlay_pixels=%0d", status_overlay_pixels);
             $finish;
         end
+
+        expected_enable = 0;
+        axi_write(6'h00, CTRL_BORDER | CTRL_SCALE_QUARTER | CTRL_EFFECT_NORMAL);
+        send_and_check_main_frame();
+        if (overlay_pixels != 0 || main_pixels != FRAME_PIXELS) begin
+            $display("FAIL bypass overlay=%0d main=%0d", overlay_pixels, main_pixels);
+            $finish;
+        end
+
+        expected_enable = 1;
+        expected_border = 0;
+        expected_effect = 1;
+        expected_scale = 2;
+        expected_pip_x = 2;
+        expected_pip_y = 2;
+        expected_pip_w = PIP_W;
+        expected_pip_h = PIP_H;
+        axi_write(6'h04, 32'd2);
+        axi_write(6'h08, 32'd2);
+        axi_write(6'h00, CTRL_ENABLE | CTRL_SCALE_HALF | CTRL_EFFECT_INVERT);
+        send_pip_frame();
+        send_and_check_main_frame();
+        if (overlay_pixels != PIP_W * PIP_H || border_pixels != 0 ||
+            pip_content_pixels != PIP_W * PIP_H) begin
+            $display("FAIL half invert overlay=%0d border=%0d pip=%0d",
+                     overlay_pixels, border_pixels, pip_content_pixels);
+            $finish;
+        end
+
+        expected_border = 1;
+        expected_effect = 2;
+        expected_scale = 4;
+        expected_pip_x = PIP_X;
+        expected_pip_y = PIP_Y;
+        expected_pip_w = PIP_DEFAULT_W;
+        expected_pip_h = PIP_DEFAULT_H;
+        axi_write(6'h04, PIP_X);
+        axi_write(6'h08, PIP_Y);
+        axi_write(6'h00, CTRL_ENABLE | CTRL_BORDER | CTRL_SCALE_QUARTER | CTRL_EFFECT_GRAYSCALE);
+        send_pip_frame();
+        send_and_check_main_frame();
+        if (overlay_pixels != PIP_DEFAULT_W * PIP_DEFAULT_H ||
+            border_pixels != 10 || pip_content_pixels != 2) begin
+            $display("FAIL grayscale quarter overlay=%0d border=%0d pip=%0d",
+                     overlay_pixels, border_pixels, pip_content_pixels);
+            $finish;
+        end
+
+        $display("PL_CONTROLLED_PIP_CORE_SIM_OK default_overlay=%0d half_overlay=%0d grayscale_overlay=%0d",
+                 PIP_DEFAULT_W * PIP_DEFAULT_H, PIP_W * PIP_H, overlay_pixels);
         $display("PL_DUAL_VDMA_PIP_CORE_SIM_OK overlay_pixels=%0d border_pixels=%0d pip_content_pixels=%0d main_pixels=%0d",
                  overlay_pixels, border_pixels, pip_content_pixels, main_pixels);
         $display("SIM_OK");

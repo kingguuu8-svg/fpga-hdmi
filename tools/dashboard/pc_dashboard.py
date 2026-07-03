@@ -123,7 +123,59 @@ ACTION_DEFINITIONS = [
         "kind": "receiver-effect",
         "semantics": "旧 UDP receiver 的 effect 参数；GStreamer 模式暂未实现",
     },
+    {
+        "id": "pip-top-left",
+        "label": "PIP 左上",
+        "kind": "pl-effect-preset",
+        "semantics": "通过板端 /tmp/pip_effect_ctl 将 PL PIP 小窗移动到左上",
+    },
+    {
+        "id": "pip-bottom-right",
+        "label": "PIP 右下",
+        "kind": "pl-effect-preset",
+        "semantics": "通过板端 /tmp/pip_effect_ctl 将 PL PIP 小窗移动到右下",
+    },
+    {
+        "id": "pip-large",
+        "label": "PIP 放大",
+        "kind": "pl-effect-preset",
+        "semantics": "通过板端 /tmp/pip_effect_ctl 切换 PL PIP 到 1/2 尺寸",
+    },
+    {
+        "id": "pip-small",
+        "label": "PIP 缩小",
+        "kind": "pl-effect-preset",
+        "semantics": "通过板端 /tmp/pip_effect_ctl 切换 PL PIP 到 1/4 尺寸",
+    },
+    {
+        "id": "pip-invert",
+        "label": "PIP 反色",
+        "kind": "pl-effect-preset",
+        "semantics": "通过板端 /tmp/pip_effect_ctl 将小窗切换为反色",
+    },
+    {
+        "id": "pip-grayscale",
+        "label": "PIP 灰度",
+        "kind": "pl-effect-preset",
+        "semantics": "通过板端 /tmp/pip_effect_ctl 将小窗切换为灰度",
+    },
+    {
+        "id": "pip-bypass",
+        "label": "PIP 旁路",
+        "kind": "pl-effect-preset",
+        "semantics": "通过板端 /tmp/pip_effect_ctl 关闭 PL PIP 叠加",
+    },
 ]
+
+PIP_PRESET_ACTIONS = {
+    "pip-top-left": "top-left",
+    "pip-bottom-right": "bottom-right",
+    "pip-large": "large",
+    "pip-small": "small",
+    "pip-invert": "invert",
+    "pip-grayscale": "grayscale",
+    "pip-bypass": "bypass",
+}
 
 
 def rgb888_to_bmp(frame: bytes, width: int, height: int) -> bytes:
@@ -347,6 +399,13 @@ def dashboard_html(actions_enabled: bool = True) -> bytes:
         <button{disabled_attr} data-action="receiver-status" onclick="postAction('receiver-status')">接收端状态</button>
         <button{disabled_attr} data-action="effect-none" onclick="postAction('effect-none')">关闭特效</button>
         <button{disabled_attr} data-action="effect-invert" onclick="postAction('effect-invert')">反色特效</button>
+        <button{disabled_attr} data-action="pip-top-left" onclick="postAction('pip-top-left')">PIP 左上</button>
+        <button{disabled_attr} data-action="pip-bottom-right" onclick="postAction('pip-bottom-right')">PIP 右下</button>
+        <button{disabled_attr} data-action="pip-large" onclick="postAction('pip-large')">PIP 放大</button>
+        <button{disabled_attr} data-action="pip-small" onclick="postAction('pip-small')">PIP 缩小</button>
+        <button{disabled_attr} data-action="pip-invert" onclick="postAction('pip-invert')">PIP 反色</button>
+        <button{disabled_attr} data-action="pip-grayscale" onclick="postAction('pip-grayscale')">PIP 灰度</button>
+        <button{disabled_attr} data-action="pip-bypass" onclick="postAction('pip-bypass')">PIP 旁路</button>
       </div>
       <div class="statusline" id="action-status">加载中...</div>
       <pre class="log" id="log">加载中...</pre>
@@ -1035,6 +1094,17 @@ class DashboardState:
     def _run_uart_action_locked(self, action: str) -> tuple[bool, str]:
         return self._run_uart_commands_locked(action, self._uart_commands_for_action(action), timeout_s=8)
 
+    def _run_pip_preset_locked(self, action: str) -> tuple[bool, str]:
+        preset = PIP_PRESET_ACTIONS[action]
+        return self._run_uart_commands_locked(
+            action,
+            [
+                f"/tmp/pip_effect_ctl --preset {preset}",
+                "/tmp/pip_effect_ctl --status-only",
+            ],
+            timeout_s=8,
+        )
+
     def _run_uart_commands_locked(self, label: str, commands: list[str], timeout_s: float = 12.0) -> tuple[bool, str]:
         if not self.uart_port:
             return False, "UART_NOT_CONFIGURED"
@@ -1096,7 +1166,7 @@ class DashboardState:
             log_text = log_path.read_text(encoding="utf-8", errors="replace")
             for line in log_text.splitlines():
                 stripped = line.strip()
-                if any(token in stripped for token in ("CONTROL_", "VIDEO_UDP_", "FB_INFO", "GSTREAMER_", "UART_RUN_COMMANDS_OK", "rtpjpegdepay", "jpegdec", "fbdevsink")):
+                if any(token in stripped for token in ("CONTROL_", "VIDEO_UDP_", "FB_INFO", "PIP_EFFECT_", "GSTREAMER_", "UART_RUN_COMMANDS_OK", "rtpjpegdepay", "jpegdec", "fbdevsink")):
                     markers.append(stripped)
         marker_tail = " | ".join(markers[-6:]) if markers else "no receiver response marker"
         return True, f"uart command sent port={self.uart_port} log={rel_output} response={marker_tail[:600]}"
@@ -1140,6 +1210,10 @@ class DashboardState:
                         self.receiver_paused = True
                     elif ok and action == "resume-receiver":
                         self.receiver_paused = False
+            elif action in PIP_PRESET_ACTIONS:
+                ok, detail = self._run_pip_preset_locked(action)
+                if ok:
+                    self.selected_effect = PIP_PRESET_ACTIONS[action]
             elif action == "effect-none":
                 if self.pipeline == "gstreamer":
                     ok = False
@@ -1194,6 +1268,9 @@ class DashboardState:
         if action == "effect-invert":
             self.selected_effect = "invert"
             return "dry-run effect=invert"
+        if action in PIP_PRESET_ACTIONS:
+            self.selected_effect = PIP_PRESET_ACTIONS[action]
+            return f"dry-run pip_preset={PIP_PRESET_ACTIONS[action]}"
         return "dry-run"
 
     def as_json(self) -> dict[str, Any]:
@@ -1738,6 +1815,8 @@ def run_self_test(out_dir: Path) -> int:
         assert 'data-panel="control"' in page
         assert 'data-action="start-stream"' in page
         assert 'data-action="pause-receiver"' in page
+        assert 'data-action="pip-top-left"' in page
+        assert 'data-action="pip-grayscale"' in page
         assert 'src="/api/input-stream.mjpeg"' in page
         assert "disabled>启动视频流" not in page
         assert data["input_source"]["camera_enabled"] is False
@@ -1752,6 +1831,13 @@ def run_self_test(out_dir: Path) -> int:
         assert "pause-receiver" in action_ids
         assert "resume-receiver" in action_ids
         assert "effect-invert" in action_ids
+        assert "pip-top-left" in action_ids
+        assert "pip-bottom-right" in action_ids
+        assert "pip-large" in action_ids
+        assert "pip-small" in action_ids
+        assert "pip-invert" in action_ids
+        assert "pip-grayscale" in action_ids
+        assert "pip-bypass" in action_ids
         assert start_result["ok"] is True
         assert stop_result["ok"] is True
         assert capture_result["ok"] is False
