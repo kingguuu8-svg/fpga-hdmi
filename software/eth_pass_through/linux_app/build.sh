@@ -64,5 +64,13 @@ sha256sum "$out_dir/fb_video_udp_receiver" | tee "$out_dir/fb_video_udp_receiver
 
 file "$out_dir/drm_kms_udp_receiver" | tee "$out_dir/drm_kms_udp_receiver.file.txt"
 sha256sum "$out_dir/drm_kms_udp_receiver" | tee "$out_dir/drm_kms_udp_receiver.sha256.txt"
+
+"$cross_cc" "${common_cflags[@]}" \
+    "$repo_root/software/eth_pass_through/linux_app/src/vdma_mm2s_config.c" \
+    -o "$out_dir/vdma_mm2s_config"
+
+file "$out_dir/vdma_mm2s_config" | tee "$out_dir/vdma_mm2s_config.file.txt"
+sha256sum "$out_dir/vdma_mm2s_config" | tee "$out_dir/vdma_mm2s_config.sha256.txt"
 echo "LINUX_RECEIVER_BUILD_OK out=$out_dir/fb_video_udp_receiver"
 echo "DRM_KMS_RECEIVER_BUILD_OK out=$out_dir/drm_kms_udp_receiver"
+echo "VDMA_MM2S_CONFIG_BUILD_OK out=$out_dir/vdma_mm2s_config"

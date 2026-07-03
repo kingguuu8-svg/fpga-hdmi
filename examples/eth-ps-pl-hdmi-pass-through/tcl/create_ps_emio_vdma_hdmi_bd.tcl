@@ -87,6 +87,89 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
         connect_bd_net [get_bd_ports IDELAY_REF_CLK] [get_bd_pins clk_wiz_0/clk_out2]
     }
 
+    # Route B PIP MVP: keep axi_vdma_0 as the Linux-controlled main display
+    # reader, add axi_vdma_1 as a second MM2S reader for the same framebuffer,
+    # and place the PL PIP overlay core before v_axi4s_vid_out_0.
+    if {[llength [get_bd_cells -quiet axis_pip_overlay_core_0]] == 0} {
+        create_bd_cell -type module -reference axis_pip_overlay_core axis_pip_overlay_core_0
+    }
+    set_property -dict [list \
+        CONFIG.FRAME_W {800} \
+        CONFIG.FRAME_H {600} \
+        CONFIG.PIP_X {560} \
+        CONFIG.PIP_Y {420} \
+        CONFIG.PIP_W {200} \
+        CONFIG.PIP_H {150} \
+        CONFIG.SCALE_X {4} \
+        CONFIG.SCALE_Y {4} \
+        CONFIG.BORDER {2} \
+    ] [get_bd_cells axis_pip_overlay_core_0]
+
+    if {[llength [get_bd_cells -quiet axi_vdma_1]] == 0} {
+        create_bd_cell -type ip -vlnv xilinx.com:ip:axi_vdma:6.3 axi_vdma_1
+    }
+    set_property -dict [list \
+        CONFIG.c_include_s2mm {0} \
+        CONFIG.c_m_axis_mm2s_tdata_width {24} \
+        CONFIG.c_mm2s_max_burst_length {64} \
+    ] [get_bd_cells axi_vdma_1]
+
+    set_property -dict [list CONFIG.NUM_SI {3}] [get_bd_cells axi_smc]
+    set_property -dict [list CONFIG.NUM_MI {2}] [get_bd_cells ps7_0_axi_periph]
+
+    set old_main_stream [get_bd_intf_nets -quiet axi_vdma_0_M_AXIS_MM2S]
+    if {[llength $old_main_stream] != 0} {
+        delete_bd_objs $old_main_stream
+    }
+
+    if {[llength [get_bd_intf_nets -quiet pip_main_axis]] == 0} {
+        connect_bd_intf_net -intf_net pip_main_axis \
+            [get_bd_intf_pins axi_vdma_0/M_AXIS_MM2S] \
+            [get_bd_intf_pins axis_pip_overlay_core_0/S_MAIN]
+    }
+    if {[llength [get_bd_intf_nets -quiet pip_aux_axis]] == 0} {
+        connect_bd_intf_net -intf_net pip_aux_axis \
+            [get_bd_intf_pins axi_vdma_1/M_AXIS_MM2S] \
+            [get_bd_intf_pins axis_pip_overlay_core_0/S_PIP]
+    }
+    if {[llength [get_bd_intf_nets -quiet pip_to_video_out_axis]] == 0} {
+        connect_bd_intf_net -intf_net pip_to_video_out_axis \
+            [get_bd_intf_pins axis_pip_overlay_core_0/M_AXIS] \
+            [get_bd_intf_pins v_axi4s_vid_out_0/video_in]
+    }
+    if {[llength [get_bd_intf_nets -quiet axi_vdma_1_M_AXI_MM2S]] == 0} {
+        connect_bd_intf_net -intf_net axi_vdma_1_M_AXI_MM2S \
+            [get_bd_intf_pins axi_smc/S02_AXI] \
+            [get_bd_intf_pins axi_vdma_1/M_AXI_MM2S]
+    }
+    if {[llength [get_bd_intf_nets -quiet ps7_0_axi_periph_M01_AXI]] == 0} {
+        connect_bd_intf_net -intf_net ps7_0_axi_periph_M01_AXI \
+            [get_bd_intf_pins axi_vdma_1/S_AXI_LITE] \
+            [get_bd_intf_pins ps7_0_axi_periph/M01_AXI]
+    }
+
+    connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK0] \
+        [get_bd_pins axi_vdma_1/s_axi_lite_aclk] \
+        [get_bd_pins ps7_0_axi_periph/M01_ACLK]
+    connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK1] \
+        [get_bd_pins axi_vdma_1/m_axi_mm2s_aclk] \
+        [get_bd_pins axi_vdma_1/m_axis_mm2s_aclk] \
+        [get_bd_pins axis_pip_overlay_core_0/aclk]
+    connect_bd_net [get_bd_pins rst_ps7_0_100M/peripheral_aresetn] \
+        [get_bd_pins axis_pip_overlay_core_0/aresetn]
+    connect_bd_net [get_bd_pins rst_ps7_0_50M/peripheral_aresetn] \
+        [get_bd_pins axi_vdma_1/axi_resetn] \
+        [get_bd_pins ps7_0_axi_periph/M01_ARESETN]
+
+    create_bd_addr_seg -range 0x10000000 -offset 0x00000000 \
+        [get_bd_addr_spaces axi_vdma_1/Data_MM2S] \
+        [get_bd_addr_segs processing_system7_0/S_AXI_HP0/HP0_DDR_LOWOCM] \
+        SEG_processing_system7_0_HP0_DDR_LOWOCM_1
+    create_bd_addr_seg -range 0x00010000 -offset 0x43010000 \
+        [get_bd_addr_spaces processing_system7_0/Data] \
+        [get_bd_addr_segs axi_vdma_1/S_AXI_LITE/Reg] \
+        SEG_axi_vdma_1_Reg
+
     # PetaLinux device-tree generation requires the AXI VDMA interrupt outputs
     # to terminate at the PS interrupt controller. The official HDMI-only
     # project can run without these connections, but Linux cannot describe the
@@ -111,9 +194,14 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
             [get_bd_pins axi_vdma_0/s2mm_introut] \
             [get_bd_pins vdma_irq_concat/In1]
     }
+    if {[llength [get_bd_nets -quiet pip_vdma_mm2s_irq]] == 0} {
+        connect_bd_net -net pip_vdma_mm2s_irq \
+            [get_bd_pins axi_vdma_1/mm2s_introut] \
+            [get_bd_pins vdma_irq_concat/In2]
+    }
     if {[llength [get_bd_nets -quiet vdma_irq_zero_net]] == 0} {
         set zero_sinks {}
-        for {set irq_idx 2} {$irq_idx < 16} {incr irq_idx} {
+        for {set irq_idx 3} {$irq_idx < 16} {incr irq_idx} {
             lappend zero_sinks [get_bd_pins vdma_irq_concat/In$irq_idx]
         }
         connect_bd_net -net vdma_irq_zero_net \

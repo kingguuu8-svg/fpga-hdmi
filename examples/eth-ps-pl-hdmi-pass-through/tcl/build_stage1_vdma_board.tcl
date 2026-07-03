@@ -15,6 +15,11 @@ set_param general.maxThreads 1
 create_project eth_ps_vdma_hdmi_stage1_board $build_root -part $part -force
 set_property target_language Verilog [current_project]
 
+add_files -norecurse [list \
+    [file join $repo_root examples eth-ps-pl-hdmi-pass-through rtl axis_pip_overlay_core.v] \
+]
+update_compile_order -fileset sources_1
+
 source [file join $repo_root examples eth-ps-pl-hdmi-pass-through tcl create_ps_emio_vdma_hdmi_bd.tcl]
 create_ps_emio_vdma_hdmi_bd $repo_root
 

@@ -43,6 +43,22 @@ No active work note is open.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: pl-dual-vdma-pip-mvp
+Result: PASSED. The first PL-side effect is now demonstrated on top of the
+  known-good 5fps GStreamer closed loop. Linux/GStreamer receives PC RTP/JPEG
+  video and writes the DDR framebuffer through fbdevsink. PL reads that same
+  framebuffer through two MM2S VDMA streams, overlays a fixed same-source PIP
+  window in AXI4-Stream logic, and drives HDMI. The PC dashboard right-panel
+  MJPEG endpoint returned dynamic HDMI frames with the PIP present.
+Evidence: docs/reports/pl-dual-vdma-pip-mvp.md,
+  build/pl-dual-vdma-pip-mvp/hdmi-pip-overlay-capture/,
+  build/pl-dual-vdma-pip-mvp/dashboard-mjpeg-pip/,
+  build/pl-dual-vdma-pip-mvp/uart_deploy_config_vdma1.log
+Board action: replaced TF-card BOOT.BIN only via running board Linux wget over
+  Ethernet after SHA-256 verification, retained the previous BOOT.BIN backup,
+  rebooted, configured axi_vdma_1 from userspace, and validated HDMI through
+  the PC capture adapter. image.ub/rootfs and board flash were not rewritten.
+
 Cycle ID: dashboard-gstreamer-chinese-control
 Result: PASSED. The visual dashboard now defaults to the standard GStreamer
   route instead of the retired custom UDP/fbdev route. The browser-visible UI

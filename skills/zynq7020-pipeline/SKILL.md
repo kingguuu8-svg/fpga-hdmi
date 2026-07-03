@@ -778,5 +778,58 @@ Connected-board validation measured 12 HDMI samples, 11 unique hashes,
 yellow-ball detection in all frames, x_span=283.98, y_span=277.77, and blue
 background RGB mean (16.0, 59.1, 75.2).
 
+Verified PL dual-VDMA PIP effect path (preferred for the first PL-side effect,
+2026-07-03):
+
+```text
+1. Run xsim for examples/eth-ps-pl-hdmi-pass-through:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\skills\zynq7020-vivado\scripts\sim-wsl.ps1 -Example eth-ps-pl-hdmi-pass-through
+2. Require:
+   AXI_FRAMEBUFFER_LINE_READER_OK
+   PL_DUAL_VDMA_PIP_CORE_SIM_OK
+   SIM_OK
+3. Build the VDMA HDMI board bitstream:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\examples\eth-ps-pl-hdmi-pass-through\tcl\build-stage1-vdma-board-wsl.ps1
+4. Require:
+   STAGE1_VDMA_BOARD_BUILD_OK
+   non-negative WNS
+   routed DRC errors=0
+5. Build the Linux receiver/helper package:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\software\eth_pass_through\scripts\build-linux-receiver-wsl.ps1
+6. Require:
+   VDMA_MM2S_CONFIG_BUILD_OK
+7. Package a new BOOT.BIN with the updated bitstream and the existing verified
+   PetaLinux FSBL/U-Boot. If the board is already booted from TF card, update
+   BOOT.BIN over Ethernet only after SHA-256 verification, and retain a
+   BOOT.BIN backup on the TF-card boot partition.
+8. Reboot and require:
+   /dev/fb0 exists
+   /dev/dri/card0 exists
+   dmesg shows xilinx-vdma, xlnx-pl-disp, and fixed HDMI probes
+9. Deploy and run vdma_mm2s_config on the board. It must read FBIOGET_* data
+   from /dev/fb0 and program axi_vdma_1 to the same smem_start, stride, hsize,
+   and vsize. Require:
+   VDMA_MM2S_CONFIGURED
+   VDMA_MM2S_STATUS ... halted=0 ... errors=0x000
+10. Start the dashboard in GStreamer mode, press or POST start-stream, and
+    require a running RTP/JPEG fbdevsink stream.
+11. Validate physical HDMI with:
+    tools/capture_hdmi.py --validation-profile pip-overlay
+    Require HDMI_CAPTURE_OK.
+12. Validate the dashboard right-panel return:
+    tools/probe_mjpeg_stream.py http://127.0.0.1:8765/api/output-stream.mjpeg
+    tools/validate_pip_overlay_frames.py <saved-frame-dir>
+    Require MJPEG_STREAM_PROBE_OK and PIP_OVERLAY_FRAMES_OK.
+```
+
+Verified outcome:
+The first PL-side effect is closed. Linux/GStreamer receives RTP/JPEG and
+writes `/dev/fb0`; VDMA0 and VDMA1 read the same DDR framebuffer; PL scales the
+second stream into a fixed same-source PIP window and overlays it before HDMI.
+Direct HDMI capture passed the PIP validator, and the dashboard-returned MJPEG
+stream passed 24/24 saved-frame PIP validation. This path proves PL-side effect
+placement, not runtime movement, rotation, arbitrary scaling, or high-fps
+transport quality.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

@@ -137,6 +137,103 @@ def validate_pip_frame(frame: np.ndarray) -> tuple[bool, list[dict]]:
     return all(item["pass"] for item in results), results
 
 
+def scale_rect(frame: np.ndarray, rect: tuple[int, int, int, int], nominal_w: int = 800, nominal_h: int = 600) -> tuple[int, int, int, int]:
+    h, w = frame.shape[:2]
+    x, y, rw, rh = rect
+    sx0 = int(round(x * w / nominal_w))
+    sy0 = int(round(y * h / nominal_h))
+    sx1 = int(round((x + rw) * w / nominal_w))
+    sy1 = int(round((y + rh) * h / nominal_h))
+    return sx0, sy0, max(sx0 + 1, sx1), max(sy0 + 1, sy1)
+
+
+def white_mask(frame_bgr: np.ndarray) -> np.ndarray:
+    b = frame_bgr[:, :, 0].astype(np.float32)
+    g = frame_bgr[:, :, 1].astype(np.float32)
+    r = frame_bgr[:, :, 2].astype(np.float32)
+    return (r > 150) & (g > 150) & (b > 150) & ((np.maximum.reduce([r, g, b]) - np.minimum.reduce([r, g, b])) < 90)
+
+
+def yellow_mask(frame_bgr: np.ndarray) -> np.ndarray:
+    b = frame_bgr[:, :, 0].astype(np.float32)
+    g = frame_bgr[:, :, 1].astype(np.float32)
+    r = frame_bgr[:, :, 2].astype(np.float32)
+    return (r > 130) & (g > 110) & (b < 120) & (r > b * 1.4) & (g > b * 1.3)
+
+
+def validate_pip_overlay_frame(frame: np.ndarray) -> tuple[bool, list[dict]]:
+    x0, y0, x1, y1 = scale_rect(frame, (560, 420, 200, 150))
+    border = max(1, int(round(2 * frame.shape[1] / 800)))
+    pip = frame[y0:y1, x0:x1]
+    if pip.size == 0:
+        return False, [{
+            "name": "pip_roi_present",
+            "expected": "roi_inside_captured_frame",
+            "roi": [x0, y0, x1, y1],
+            "pass": False,
+        }]
+
+    top = pip[:border, :, :]
+    bottom = pip[-border:, :, :]
+    left = pip[:, :border, :]
+    right = pip[:, -border:, :]
+    border_pixels = int(white_mask(np.concatenate([
+        top.reshape((-1, 1, 3)),
+        bottom.reshape((-1, 1, 3)),
+        left.reshape((-1, 1, 3)),
+        right.reshape((-1, 1, 3)),
+    ], axis=0)).sum())
+    interior = pip[border:-border, border:-border, :]
+    if interior.size == 0:
+        interior = pip
+    interior_yellow = int(yellow_mask(interior).sum())
+    interior_white = int(white_mask(interior).sum())
+    interior_luma = float(interior.mean()) if interior.size else 0.0
+    full_yellow = int(yellow_mask(frame).sum())
+    full_uniqueish = int(np.std(interior.astype(np.float32))) if interior.size else 0
+
+    results = [
+        {
+            "name": "pip_overlay_roi",
+            "expected": "fixed_pip_window_560_420_200_150",
+            "roi": [x0, y0, x1, y1],
+            "pass": True,
+        },
+        {
+            "name": "pip_white_border",
+            "expected": "white_border_pixels_gt_250",
+            "pixels": border_pixels,
+            "pass": bool(border_pixels > 250),
+        },
+        {
+            "name": "pip_interior_not_black",
+            "expected": "interior_mean_luma_gt_15",
+            "mean_luma": round(interior_luma, 2),
+            "pass": bool(interior_luma > 15.0),
+        },
+        {
+            "name": "pip_interior_has_source_highlight",
+            "expected": "yellow_or_white_pixels_gt_10",
+            "yellow_pixels": interior_yellow,
+            "white_pixels": interior_white,
+            "pass": bool(interior_yellow + interior_white > 10),
+        },
+        {
+            "name": "frame_has_dynamic_source_highlight",
+            "expected": "yellow_pixels_gt_50",
+            "yellow_pixels": full_yellow,
+            "pass": bool(full_yellow > 50),
+        },
+        {
+            "name": "pip_interior_has_texture",
+            "expected": "interior_stddev_gt_10",
+            "stddev_int": full_uniqueish,
+            "pass": bool(full_uniqueish > 10),
+        },
+    ]
+    return all(item["pass"] for item in results), results
+
+
 def validate_rgb_stripes(frame: np.ndarray) -> tuple[bool, list[dict]]:
     h, w = frame.shape[:2]
     x0 = w // 8
@@ -222,7 +319,7 @@ def main() -> int:
     parser.add_argument("--frames", type=int, default=45)
     parser.add_argument("--read-interval-ms", type=int, default=0, help="delay between capture reads for temporal sampling")
     parser.add_argument("--save-samples", type=int, default=0, help="save N evenly spaced captured frames")
-    parser.add_argument("--validation-profile", default="pip", choices=["none", "non-black", "pip", "rgb-stripes", "inverted-rgb-stripes"])
+    parser.add_argument("--validation-profile", default="pip", choices=["none", "non-black", "pip", "pip-overlay", "rgb-stripes", "inverted-rgb-stripes"])
     parser.add_argument("--out-dir", default="build/reports/hdmi-capture")
     args = parser.parse_args()
 
@@ -239,6 +336,8 @@ def main() -> int:
         validator = validate_non_black
     elif args.validation_profile == "pip":
         validator = validate_pip_frame
+    elif args.validation_profile == "pip-overlay":
+        validator = validate_pip_overlay_frame
     elif args.validation_profile == "rgb-stripes":
         validator = validate_rgb_stripes
     else:

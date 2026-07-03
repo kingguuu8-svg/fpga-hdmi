@@ -169,6 +169,13 @@ Phase C:
   framebuffer-native 24bpp payloads, the Linux receiver uses direct row memcpy
   into /dev/fb0, HDMI saved-image validation matches 30/30 marker-backed
   frames, and receiver dropped=0.
+  PL dual-VDMA PIP effect gate: PASSED. The first PL-side effect keeps
+  Linux/GStreamer responsible only for video receive and DDR framebuffer
+  writes, then performs same-source picture-in-picture in PL by adding a second
+  VDMA MM2S source, fixed PL-side downsample, and AXI4-Stream overlay before
+  HDMI output. Direct HDMI capture passed the PIP validator, and the dashboard
+  right-panel MJPEG return passed 24/24 saved-frame PIP validation. Software
+  GStreamer/compositor effects were not used as completion evidence.
   Later: carry the same command semantics over TCP/UDP.
 
 Phase D:

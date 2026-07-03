@@ -20,6 +20,89 @@ Third-party review:
 Residual risks:
 ```
 
+## Cycle: pl-dual-vdma-pip-mvp
+
+Date: 2026-07-03
+
+Commit: this commit (`cycle: add pl dual-vdma pip effect`)
+
+Objective: implement the first PL-side video effect on the known-good 5fps
+GStreamer loop. Linux/GStreamer must receive video and write the DDR
+framebuffer only; PL must read that framebuffer through a second VDMA stream,
+scale it, overlay it as same-source PIP, and output through HDMI.
+
+Changed scope:
+
+- Added an AXI4-Stream PIP overlay core and testbench.
+- Added a second MM2S-only VDMA to the VDMA HDMI block design.
+- Routed VDMA0 as the main stream and VDMA1 as the PIP stream into the PL
+  overlay core before HDMI output.
+- Added a Linux userspace VDMA1 configuration helper for the same `/dev/fb0`
+  framebuffer address, stride, hsize, and vsize.
+- Added direct HDMI and dashboard MJPEG PIP validators.
+- Packaged and deployed a new BOOT.BIN only; `image.ub` and rootfs were not
+  rebuilt or replaced.
+
+Verification performed:
+
+- xsim passed the existing framebuffer reader and new PIP overlay core:
+  `AXI_FRAMEBUFFER_LINE_READER_OK` and `PL_DUAL_VDMA_PIP_CORE_SIM_OK`.
+- Vivado 2018.3 generated the updated VDMA HDMI bitstream with WNS=0.066,
+  TNS=0.000, failing endpoints=0, and routed DRC errors=0.
+- Linux tools build printed `VDMA_MM2S_CONFIG_BUILD_OK`.
+- Board rebooted with the new BOOT.BIN and exposed `/dev/fb0` plus
+  `/dev/dri/card0`; dmesg showed VDMA, PL display, and fixed HDMI probes.
+- VDMA1 was configured to `/dev/fb0` physical address `0x0e100000` with
+  `hsize=2400`, `stride=2400`, `vsize=600`, and status
+  `halted=0 idle=0 errors=0x000`.
+- Direct HDMI capture passed `HDMI_CAPTURE_OK` with the `pip-overlay`
+  validation profile.
+- Dashboard right-panel MJPEG return passed `MJPEG_STREAM_PROBE_OK frames=24
+  unique=23` and `PIP_OVERLAY_FRAMES_OK frames_checked=24 frames_passed=24`.
+
+Board action:
+
+- Replaced TF-card `BOOT.BIN` via running board Linux `wget` over Ethernet
+  after SHA-256 verification.
+- Backed up the previous boot image as
+  `/run/media/mmcblk0p1/BOOT.BIN.prev-pl-pip-20260703`.
+- Rebooted the board, deployed `vdma_mm2s_config` to `/tmp`, configured
+  VDMA1, started the dashboard GStreamer stream, and captured HDMI through the
+  PC adapter.
+- No `image.ub`/rootfs replacement, QSPI/NAND/eMMC/flash write, or final JTAG
+  programming was performed.
+
+Evidence:
+
+- `docs/reports/pl-dual-vdma-pip-mvp.md`
+- `build/pl-dual-vdma-pip-mvp/hdmi-pip-overlay-capture/validation.json`
+- `build/pl-dual-vdma-pip-mvp/dashboard-mjpeg-pip/mjpeg-stream-probe.json`
+- `build/pl-dual-vdma-pip-mvp/dashboard-mjpeg-pip/pip-overlay-validation.json`
+- `build/pl-dual-vdma-pip-mvp/uart_deploy_config_vdma1.log`
+
+Result:
+
+- PASSED.
+
+Rollback point:
+
+- Board boot rollback:
+  `/run/media/mmcblk0p1/BOOT.BIN.prev-pl-pip-20260703`.
+- Previous completed dashboard route:
+  `docs/reports/dashboard-gstreamer-chinese-control.md`.
+
+Third-party review:
+
+- None.
+
+Residual risks:
+
+- PIP geometry is fixed at build time.
+- VDMA1 is controlled by a `/dev/mem` helper, not a formal Linux driver.
+- Runtime movement, rotation, arbitrary scaling, and physical button/UART
+  effect controls are not implemented in this cycle.
+- The transport remains RTP/JPEG at 5fps; no high-fps claim is made.
+
 ## Cycle: dashboard-gstreamer-chinese-control
 
 Date: 2026-07-02
