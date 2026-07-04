@@ -20,6 +20,84 @@ Third-party review:
 Residual risks:
 ```
 
+## Cycle: jpegpldec-plugin-skeleton
+
+Date: 2026-07-04
+
+Commit: this commit (`cycle: add jpegpldec plugin skeleton`)
+
+Objective: create and verify a project-owned GStreamer decoder element named
+`jpegpldec` that can replace `jpegdec` in the current RTP/JPEG-to-HDMI
+pipeline. This cycle establishes the controlled plugin entry point for later
+PL acceleration work; it does not claim PL codec acceleration.
+
+Changed scope:
+
+- Added `software/gstreamer/jpegpldec/`.
+- Implemented `jpegpldec` as a GStreamer plugin registering an `image/jpeg` to
+  `video/x-raw` decoder element.
+- The first implementation is a `GstBin` wrapper around the system `jpegdec`
+  child named `software-reference-decoder`.
+- Added a WSL/PetaLinux cross-build wrapper and documentation.
+
+Verification performed:
+
+- Cross-built `libgstjpegpldec.so` for ARM with the PetaLinux 2018.3 toolchain:
+  `JPEGPLDEC_PLUGIN_BUILD_OK`.
+- Deployed the plugin to `/tmp/gst-plugins/` over board Ethernet and verified
+  SHA-256 `e84560077e6c7d4a2dc46b303c3df65f6b97cd450ea9392e7cffcd5716a23711`.
+- `GST_PLUGIN_PATH=/tmp/gst-plugins gst-inspect-1.0 jpegpldec` loaded the
+  plugin from `/tmp/gst-plugins/libgstjpegpldec.so` and reported the
+  `software-reference-decoder` child.
+- Restarted the board receiver as:
+  `rtpjpegdepay ! jpegpldec ! videoconvert ! videoscale ! ... ! fbdevsink`.
+- Board pipeline logs showed caps through `GstJpegPlDec`, internal
+  `GstJpegDec`, `videoconvert`, `videoscale`, and `fbdevsink`.
+- Dashboard output MJPEG probe passed with `frames=90 unique=31`.
+- Dashboard input MJPEG probe passed with `frames=60 unique=60`.
+
+Board action:
+
+- Deployed `/tmp/gst-plugins/libgstjpegpldec.so` with board `wget`.
+- Loaded the plugin through `GST_PLUGIN_PATH` and a temporary GStreamer
+  registry under `/tmp`.
+- Replaced the running board GStreamer receiver process with a `jpegpldec`
+  receiver while reusing the already-running PC sender and dashboard return.
+- No BOOT.BIN, image.ub, rootfs, FPGA bitstream, TF-card image, JTAG
+  programming, or board flash write was performed.
+
+Evidence:
+
+- `docs/reports/jpegpldec-plugin-skeleton.md`
+- `build/jpegpldec-plugin-skeleton/plugin/libgstjpegpldec.file.txt`
+- `build/jpegpldec-plugin-skeleton/plugin/libgstjpegpldec.sha256.txt`
+- `build/jpegpldec-plugin-skeleton/uart_deploy_inspect.log`
+- `build/jpegpldec-plugin-skeleton/uart_start_jpegpldec_pipeline.log`
+- `build/jpegpldec-plugin-skeleton/mjpeg-probe/mjpeg-stream-probe.json`
+- `build/jpegpldec-plugin-skeleton/input-mjpeg-probe/mjpeg-stream-probe.json`
+
+Result:
+
+- PASSED.
+
+Rollback point:
+
+- Stop the temporary receiver with `killall gst-launch-1.0`, then use the
+  dashboard `start-stream` action to restart the previous `jpegdec` receiver.
+- No persistent board image changed.
+
+Third-party review:
+
+- None.
+
+Residual risks:
+
+- This is a plugin skeleton and pipeline-control milestone, not a measured
+  latency or PL-codec acceleration milestone.
+- The current implementation delegates decoding to the system `jpegdec` child.
+- The dashboard state still describes the generic GStreamer path because the
+  board receiver was manually replaced outside the dashboard start action.
+
 ## Cycle: dashboard-console-copy-trim
 
 Date: 2026-07-04

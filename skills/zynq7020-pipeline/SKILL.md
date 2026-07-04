@@ -973,5 +973,49 @@ accepted 42 frames / 50400 packets with dropped=0, while its HDMI/MJPEG return
 trace failed in that rerun. Before committing to PL-side decode, run the next
 probe at higher input resolution or with stricter HDMI-return validation.
 
+Verified `jpegpldec` plugin-skeleton path (preferred entry point for later
+GStreamer decoder offload work, 2026-07-04):
+
+```text
+1. Build the project-owned GStreamer plugin:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\software\gstreamer\jpegpldec\build-wsl.ps1 -OutDir build\jpegpldec-plugin-skeleton\plugin
+2. Require:
+   JPEGPLDEC_PLUGIN_BUILD_OK
+   libgstjpegpldec.so is an ARM 32-bit shared object
+3. Deploy to the board:
+   mkdir -p /tmp/gst-plugins
+   wget -O /tmp/gst-plugins/libgstjpegpldec.so http://192.168.1.2:<port>/libgstjpegpldec.so
+   sha256sum /tmp/gst-plugins/libgstjpegpldec.so
+4. Inspect the plugin:
+   GST_PLUGIN_PATH=/tmp/gst-plugins GST_REGISTRY=/tmp/gst-registry-jpegpldec.bin gst-inspect-1.0 jpegpldec
+5. Require the inspect output to show:
+   Filename /tmp/gst-plugins/libgstjpegpldec.so
+   Long-name JPEG PL decoder skeleton
+   sink caps image/jpeg
+   src caps video/x-raw
+   Children: software-reference-decoder
+6. Replace the board receiver with:
+   GST_PLUGIN_PATH=/tmp/gst-plugins GST_REGISTRY=/tmp/gst-registry-jpegpldec.bin \
+   gst-launch-1.0 -v udpsrc port=5011 caps=... \
+     ! rtpjitterbuffer latency=100 drop-on-latency=true \
+     ! rtpjpegdepay ! jpegpldec ! videoconvert ! videoscale \
+     ! video/x-raw,format=BGR,width=800,height=600 \
+     ! fbdevsink device=/dev/fb0 sync=true
+7. Require board log caps through:
+   GstRtpJPEGDepay -> GstJpegPlDec -> GstJpegDec:software-reference-decoder
+   -> GstVideoConvert -> GstVideoScale -> GstFBDEVSink
+8. Validate dashboard HDMI return:
+   rtk powershell.exe -NoProfile -Command "python .\tools\probe_mjpeg_stream.py 'http://127.0.0.1:8765/api/output-stream.mjpeg' --out-dir build\jpegpldec-plugin-skeleton\mjpeg-probe --frames 90 --min-unique 10 --timeout-sec 20"
+9. Require:
+   MJPEG_STREAM_PROBE_OK
+```
+
+Verified outcome:
+The board can load a project-owned GStreamer decoder plugin from `/tmp` and
+run the existing RTP/JPEG-to-HDMI path with `jpegpldec` replacing `jpegdec`.
+The first `jpegpldec` implementation is a `GstBin` wrapper around the system
+`jpegdec` child named `software-reference-decoder`; it proves the replacement
+entry point, not PL codec acceleration or latency improvement.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

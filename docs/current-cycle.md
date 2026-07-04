@@ -43,6 +43,21 @@ None.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: jpegpldec-plugin-skeleton
+Result: PASSED. Added a project-owned GStreamer `jpegpldec` plugin skeleton
+  and verified it on the board as a drop-in replacement for `jpegdec` in the
+  RTP/JPEG receiver path. The first implementation wraps the system `jpegdec`
+  as a software reference child named `software-reference-decoder`; it is not
+  a PL acceleration claim yet.
+Evidence: docs/reports/jpegpldec-plugin-skeleton.md,
+  build/jpegpldec-plugin-skeleton/uart_deploy_inspect.log,
+  build/jpegpldec-plugin-skeleton/uart_start_jpegpldec_pipeline.log,
+  build/jpegpldec-plugin-skeleton/mjpeg-probe/mjpeg-stream-probe.json
+Board action: deployed /tmp/gst-plugins/libgstjpegpldec.so over Ethernet,
+  loaded it with GST_PLUGIN_PATH, restarted the board GStreamer receiver with
+  jpegpldec, and verified dynamic HDMI return. No BOOT.BIN, image.ub, rootfs,
+  bitstream, TF-card image, JTAG, or board flash was changed.
+
 Cycle ID: dashboard-console-copy-trim
 Result: PASSED. Removed redundant explanatory text from the visible dashboard
   panels while keeping machine-readable status/debug fields in /api/state and
