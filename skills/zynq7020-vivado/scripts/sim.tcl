@@ -34,6 +34,12 @@ if {$example eq "video-pip"} {
             [list [file join $repo_root examples $example rtl axis_pip_overlay_core.v]] \
             [list [file join $repo_root examples $example sim tb_axis_pip_overlay_core.v]] \
         ] \
+        [list \
+            tb_axis_dma_probe_core \
+            AXIS_DMA_PROBE_CORE_SIM_OK \
+            [list [file join $repo_root examples $example rtl axis_dma_probe_core.v]] \
+            [list [file join $repo_root examples $example sim tb_axis_dma_probe_core.v]] \
+        ] \
     ]
 } else {
     error "Unsupported simulation example '$example'."

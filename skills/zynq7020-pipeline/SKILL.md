@@ -1090,5 +1090,30 @@ flush/invalidate correctness for a shared buffer, PL writeback, or returning a
 PL-modified buffer to GStreamer. Those require a new or exposed DMA-safe buffer
 path such as AXI DMA/VDMA endpoint plus CMA/dma-buf/driver support.
 
+Verified AXI-Stream DMA probe core simulation path (preferred first hardware
+source step before adding an AXI DMA BD endpoint, 2026-07-04):
+
+```text
+1. Run xsim for examples/eth-ps-pl-hdmi-pass-through:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\skills\zynq7020-vivado\scripts\sim-wsl.ps1 -Example eth-ps-pl-hdmi-pass-through
+2. Require existing regression markers:
+   AXI_FRAMEBUFFER_LINE_READER_OK
+   PL_CONTROLLED_PIP_CORE_SIM_OK
+   PL_DUAL_VDMA_PIP_CORE_SIM_OK
+3. Require the new probe marker:
+   AXIS_DMA_PROBE_CORE_SIM_OK
+4. The new source/testbench pair is:
+   examples/eth-ps-pl-hdmi-pass-through/rtl/axis_dma_probe_core.v
+   examples/eth-ps-pl-hdmi-pass-through/sim/tb_axis_dma_probe_core.v
+```
+
+Verified outcome:
+The PL data-plane probe core accepts 32-bit AXI4-Stream input, passes packets
+through by default, can apply a 32-bit XOR marker to prove payload modification,
+and reports frames, beats, bytes, input checksum, and output checksum through
+AXI-Lite-visible counters. This is only a simulated PL core. It is not yet a
+board DMA endpoint, a Linux coherent/CMA buffer client, a cache-coherency proof,
+or a `jpegpldec` GStreamer writeback path.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

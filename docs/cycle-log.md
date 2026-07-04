@@ -20,6 +20,64 @@ Third-party review:
 Residual risks:
 ```
 
+## Cycle: jpegpldec-pl-dma-probe-core-sim
+
+Date: 2026-07-04
+
+Commit: this commit (`cycle: simulate jpegpldec pl dma probe core`)
+
+Objective: add and verify the PL-side AXI4-Stream data probe core required for
+the larger `jpegpldec` PS-to-PL buffer loopback path.
+
+Changed scope:
+
+- Added `axis_dma_probe_core.v`, a 32-bit AXI4-Stream pass-through/marker core
+  with AXI-Lite control/status registers and checksum counters.
+- Added `tb_axis_dma_probe_core.v`.
+- Added the testbench to the existing `eth-ps-pl-hdmi-pass-through` xsim flow.
+
+Verification performed:
+
+- Ran:
+  `rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\skills\zynq7020-vivado\scripts\sim-wsl.ps1 -Example eth-ps-pl-hdmi-pass-through`.
+- Existing tests still passed:
+  `AXI_FRAMEBUFFER_LINE_READER_OK`,
+  `PL_CONTROLLED_PIP_CORE_SIM_OK`,
+  `PL_DUAL_VDMA_PIP_CORE_SIM_OK`.
+- New test passed:
+  `AXIS_DMA_PROBE_CORE_SIM_OK frames=1 beats=2 bytes=8 input_checksum=bcf0235d output_checksum=bd1022b1`.
+
+Evidence:
+
+- `docs/reports/jpegpldec-pl-dma-probe-core-sim.md`
+- `examples/eth-ps-pl-hdmi-pass-through/rtl/axis_dma_probe_core.v`
+- `examples/eth-ps-pl-hdmi-pass-through/sim/tb_axis_dma_probe_core.v`
+- `build/eth-ps-pl-hdmi-pass-through/sim/tb_axis_dma_probe_core-xsim-run.log`
+
+Result:
+
+- PASSED for PL data-plane core simulation.
+- The larger active goal is not complete: no AXI DMA BD integration, Linux
+  coherent/CMA buffer client, `jpegpldec` DMA handoff, cache-coherency proof,
+  or GStreamer PL-writeback path exists yet.
+
+Board action:
+
+- None. Simulation-only cycle.
+
+Rollback point:
+
+- Remove the new RTL/testbench and the `sim.tcl` test entry.
+
+Third-party review:
+
+- None.
+
+Residual risks:
+
+- The core is not yet instantiated in the board BD.
+- User-space still lacks a DMA-safe buffer interface for `jpegpldec`.
+
 ## Cycle: jpegpldec-dma-capability-route-gate
 
 Date: 2026-07-04

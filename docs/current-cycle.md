@@ -43,6 +43,20 @@ None.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: jpegpldec-pl-dma-probe-core-sim
+Result: PASSED for PL data-plane core simulation. Added a 32-bit AXI4-Stream
+  pass-through/marker/checksum core intended to sit between AXI DMA MM2S and
+  AXI DMA S2MM, plus a testbench in the eth-ps-pl-hdmi-pass-through xsim flow.
+  Existing framebuffer/PIP simulations still pass, and the new test reports
+  AXIS_DMA_PROBE_CORE_SIM_OK. This does not complete the larger jpegpldec
+  PS-to-PL buffer goal because there is still no AXI DMA BD endpoint, Linux
+  coherent/CMA buffer client, cache-coherency board proof, or GStreamer
+  writeback path.
+Evidence: docs/reports/jpegpldec-pl-dma-probe-core-sim.md,
+  build/eth-ps-pl-hdmi-pass-through/sim/tb_axis_dma_probe_core-xsim-run.log
+Board action: none. Simulation-only cycle; no BOOT.BIN, image.ub, rootfs,
+  bitstream, TF-card image, JTAG, or board flash was changed.
+
 Cycle ID: jpegpldec-dma-capability-route-gate
 Result: PASSED as a negative route gate. Board probe confirmed the running
   image has CMA, DMA shared buffer, Xilinx DMA, and VDMA support, but exposes
