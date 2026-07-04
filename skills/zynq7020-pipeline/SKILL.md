@@ -945,5 +945,33 @@ end-to-end latency, and PL register readback. The passing run measured seven
 dashboard PIP actions over TCP with p50=2.184 ms and max=24.1 ms. This path
 does not change video transport, HDMI quality, PL logic, or boot persistence.
 
+Verified video bottleneck probe path (preferred before deciding that PL-side
+decode is required, 2026-07-04):
+
+```text
+1. Run the diagnostic matrix:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_video_bottleneck_probe.ps1 -DurationSec 6 -OutDir build\video-bottleneck-probe
+2. Require:
+   VIDEO_BOTTLENECK_PROBE_OK
+   build\video-bottleneck-probe\video-bottleneck-summary.json
+3. Inspect the JPEG matrix:
+   - rtp-jpeg-to-fakesink at 5/10/15/30fps
+   - rtp-jpeg-to-fbdevsink at 5/10/15/30fps
+   - rendered frames, drops, average fps, and /proc-derived gst-launch CPU %
+4. For raw/direct-copy contrast, either use the summary's raw reference or run:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_video_bottleneck_probe.ps1 -RunRawDirectCopy -OutDir build\video-bottleneck-probe
+5. Treat raw receiver throughput separately from HDMI/MJPEG return validation.
+   A raw receiver pass with a return-trace failure is not a full HDMI loop pass.
+```
+
+Verified outcome:
+The current 320x240 RTP/JPEG path is not proven to be PS-limited at the
+dashboard's conservative 5fps setting. The passing measurement reached about
+30.50fps into fakesink and about 27.69fps into fbdevsink with no
+fpsdisplaysink drops. A live raw 800x600 framebuffer-native receiver contrast
+accepted 42 frames / 50400 packets with dropped=0, while its HDMI/MJPEG return
+trace failed in that rerun. Before committing to PL-side decode, run the next
+probe at higher input resolution or with stricter HDMI-return validation.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

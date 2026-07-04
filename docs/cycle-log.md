@@ -20,6 +20,69 @@ Third-party review:
 Residual risks:
 ```
 
+## Cycle: video-bottleneck-probe
+
+Date: 2026-07-04
+
+Commit: this commit (`cycle: measure video bottlenecks`)
+
+Objective: measure whether the current low video quality/frame rate is already
+caused by PS-side JPEG decode, or whether the present 5fps setting is mainly a
+conservative configuration.
+
+Changed scope:
+
+- Added `tools/run_video_bottleneck_probe.ps1`, a repeatable benchmark helper
+  for RTP/JPEG to `fakesink`, RTP/JPEG to `fbdevsink`, and optional raw
+  direct-copy contrast.
+- Added `docs/reports/video-bottleneck-probe.md`.
+
+Verification performed:
+
+- Ran 320x240 RTP/JPEG input at 5, 10, 15, and 30fps through board GStreamer
+  decode, convert, and scale to 800x600 BGR.
+- `fakesink` path measured 5.30, 10.24, 15.55, and 30.50 average fps with
+  no fpsdisplaysink drops.
+- `fbdevsink` path measured 5.30, 10.24, 15.56, and 27.69 average fps with
+  no fpsdisplaysink drops.
+- Live raw/direct-copy contrast received 42 framebuffer-native 800x600 frames
+  / 50400 UDP packets with receiver dropped=0.
+- The raw/direct-copy HDMI/MJPEG return trace failed in this rerun with
+  unique_colors=1 and matched_frames=0, so the raw result is receiver
+  throughput evidence only.
+
+Board action:
+
+- Ran temporary GStreamer benchmark receivers from UART.
+- Ran the existing raw/direct-copy receiver probe from UART.
+- No boot image, rootfs, FPGA bitstream, or flash storage was changed.
+
+Evidence:
+
+- `docs/reports/video-bottleneck-probe.md`
+- `build/video-bottleneck-probe/video-bottleneck-summary.json`
+- `build/video-bottleneck-probe/video-bottleneck.marker.txt`
+- `build/video-bottleneck-probe/raw-direct-copy/uart_after_direct_copy.log`
+
+Result:
+
+- PASSED for bottleneck measurement.
+
+Rollback point:
+
+- No persistent board image or bitstream change was made. Stop temporary
+  receivers with `killall gst-launch-1.0` or `killall fb_video_udp_receiver`.
+
+Third-party review:
+
+- None.
+
+Residual risks:
+
+- The JPEG matrix used 320x240 input scaled to 800x600, not 800x600 JPEG input.
+- CPU percentages are `/proc`-derived approximations.
+- HDMI/UVC return may still be a separate bottleneck.
+
 ## Cycle: pip-tcp-control-service
 
 Date: 2026-07-04

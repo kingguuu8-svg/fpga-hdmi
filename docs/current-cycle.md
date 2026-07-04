@@ -43,6 +43,21 @@ None.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: video-bottleneck-probe
+Result: PASSED for measurement. The bottleneck probe measured the current
+  320x240 RTP/JPEG input path at 5/10/15/30fps into both fakesink and fbdevsink.
+  At 320x240 input, board software JPEG decode plus convert/scale reached
+  about 30.50fps into fakesink and about 27.69fps into fbdevsink, with no
+  fpsdisplaysink drops. A live raw 800x600 framebuffer-native direct-copy run
+  also received 42 frames / 50400 packets with dropped=0, but its HDMI/MJPEG
+  return trace failed in this rerun, so it is receiver-throughput evidence only.
+Evidence: docs/reports/video-bottleneck-probe.md,
+  build/video-bottleneck-probe/video-bottleneck-summary.json,
+  build/video-bottleneck-probe/raw-direct-copy/uart_after_direct_copy.log
+Board action: ran temporary GStreamer benchmark receivers and one raw
+  direct-copy receiver from UART. No BOOT.BIN, image.ub, rootfs, bitstream, or
+  board flash was changed.
+
 Cycle ID: pip-tcp-control-service
 Result: PASSED. Runtime PIP preset control now has a low-latency TCP path.
   The board runs /tmp/pip_effect_server as a resident POSIX TCP daemon on
