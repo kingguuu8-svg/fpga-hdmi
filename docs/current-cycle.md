@@ -43,6 +43,23 @@ None.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: jpegpldec-pl-buffer-datapath-probe
+Result: PARTIAL PASS toward the larger PS-to-PL buffer objective. Added
+  `probe-mode=pl-buffer-probe`, which maps decoded I420 buffers inside
+  jpegpldec, stamps a top-left luma checker, logs checksum before/after, and
+  verifies the marker in HDMI-return frames. This proves data produced inside
+  jpegpldec reaches the existing framebuffer -> VDMA -> PL PIP -> HDMI path,
+  but does not prove a private DMA-safe buffer or PL writeback to GStreamer.
+Evidence: docs/reports/jpegpldec-pl-buffer-datapath-probe.md,
+  build/jpegpldec-pl-buffer-datapath-probe/summary.json,
+  build/jpegpldec-pl-buffer-datapath-probe/uart-start-profile.log,
+  build/jpegpldec-pl-buffer-datapath-probe/buffer-marker-validation.json
+Board action: deployed /tmp/gst-plugins/libgstjpegpldec.so over Ethernet,
+  moved PIP to bottom-right, restarted the board GStreamer receiver with
+  `jpegpldec probe-mode=pl-buffer-probe`, and verified dynamic HDMI return plus
+  visible buffer marker. No BOOT.BIN, image.ub, rootfs, bitstream, TF-card
+  image, JTAG, or board flash was changed.
+
 Cycle ID: jpegpldec-pl-probe-and-profile
 Result: PASSED. Upgraded the project-owned GStreamer `jpegpldec` element with
   pad-level profiling and a `probe-mode=pl-probe` hardware status probe. The

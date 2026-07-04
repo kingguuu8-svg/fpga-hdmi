@@ -18,6 +18,7 @@
 #define REG_PIP_FRAMES 0x14u
 #define REG_OVERLAY_PIXELS 0x18u
 #define RECENT_WINDOW 256u
+#define BUFFER_PROBE_MARKER_SIZE 24
 
 typedef struct _GstJpegPlDecSample {
   GstClockTime entered_at;
@@ -38,9 +39,12 @@ typedef struct _GstJpegPlDec {
   guint64 frames;
   guint64 in_frames;
   guint64 total_decode_ns;
+  guint64 total_buffer_probe_ns;
   guint64 max_decode_ns;
+  guint64 max_buffer_probe_ns;
   guint64 total_in_bytes;
   guint64 total_out_bytes;
+  guint64 buffer_probe_frames;
   guint64 recent_decode_ns[RECENT_WINDOW];
   guint recent_count;
   guint recent_index;
@@ -120,7 +124,168 @@ pl_reg_read(volatile guint8 *base, guint32 offset)
 static gboolean
 gst_jpeg_pl_dec_pl_probe_enabled(GstJpegPlDec *self)
 {
-  return g_strcmp0(self->probe_mode, "pl-probe") == 0;
+  return g_strcmp0(self->probe_mode, "pl-probe") == 0 ||
+         g_strcmp0(self->probe_mode, "pl-buffer-probe") == 0;
+}
+
+static gboolean
+gst_jpeg_pl_dec_buffer_probe_enabled(GstJpegPlDec *self)
+{
+  return g_strcmp0(self->probe_mode, "buffer-probe") == 0 ||
+         g_strcmp0(self->probe_mode, "pl-buffer-probe") == 0;
+}
+
+static guint32
+fnv1a32(const guint8 *data, gsize size)
+{
+  guint32 hash = 2166136261u;
+  gsize i;
+
+  for (i = 0; i < size; i++) {
+    hash ^= data[i];
+    hash *= 16777619u;
+  }
+  return hash;
+}
+
+static gboolean
+gst_jpeg_pl_dec_get_raw_caps(GstPad *pad, gchar *format, gsize format_size,
+                             gint *width, gint *height)
+{
+  GstCaps *caps = gst_pad_get_current_caps(pad);
+  GstStructure *structure;
+  const gchar *fmt;
+  gboolean ok = FALSE;
+
+  if (caps == NULL || gst_caps_is_empty(caps)) {
+    if (caps != NULL) {
+      gst_caps_unref(caps);
+    }
+    return FALSE;
+  }
+
+  structure = gst_caps_get_structure(caps, 0);
+  fmt = gst_structure_get_string(structure, "format");
+  if (fmt != NULL &&
+      gst_structure_get_int(structure, "width", width) &&
+      gst_structure_get_int(structure, "height", height)) {
+    g_strlcpy(format, fmt, format_size);
+    ok = TRUE;
+  }
+  gst_caps_unref(caps);
+  return ok;
+}
+
+static gboolean
+gst_jpeg_pl_dec_stamp_i420_marker(GstBuffer *buffer, gint width, gint height,
+                                  guint32 *checksum_before,
+                                  guint32 *checksum_after)
+{
+  GstMapInfo map;
+  gint marker_w = MIN(BUFFER_PROBE_MARKER_SIZE, width);
+  gint marker_h = MIN(BUFFER_PROBE_MARKER_SIZE, height);
+  gint x;
+  gint y;
+  gsize expected_size;
+
+  if (width <= 0 || height <= 0) {
+    return FALSE;
+  }
+
+  expected_size = (gsize)width * (gsize)height * 3u / 2u;
+  if (!gst_buffer_map(buffer, &map, GST_MAP_READWRITE)) {
+    return FALSE;
+  }
+  if (map.size < expected_size) {
+    gst_buffer_unmap(buffer, &map);
+    return FALSE;
+  }
+
+  *checksum_before = fnv1a32(map.data, map.size);
+
+  for (y = 0; y < marker_h; y++) {
+    for (x = 0; x < marker_w; x++) {
+      guint8 value = (((x / 4) + (y / 4)) & 1) ? 0xffu : 0x10u;
+      map.data[(gsize)y * (gsize)width + (gsize)x] = value;
+    }
+  }
+
+  /* Keep the marker neutral in chroma so only luma carries the probe pattern. */
+  if (width >= 2 && height >= 2) {
+    gsize u_base = (gsize)width * (gsize)height;
+    gsize v_base = u_base + ((gsize)width * (gsize)height / 4u);
+    gint chroma_w = width / 2;
+    gint chroma_marker_w = marker_w / 2;
+    gint chroma_marker_h = marker_h / 2;
+
+    for (y = 0; y < chroma_marker_h; y++) {
+      for (x = 0; x < chroma_marker_w; x++) {
+        map.data[u_base + (gsize)y * (gsize)chroma_w + (gsize)x] = 0x80u;
+        map.data[v_base + (gsize)y * (gsize)chroma_w + (gsize)x] = 0x80u;
+      }
+    }
+  }
+
+  *checksum_after = fnv1a32(map.data, map.size);
+  gst_buffer_unmap(buffer, &map);
+  return TRUE;
+}
+
+static void
+gst_jpeg_pl_dec_log_buffer_probe(GstJpegPlDec *self, GstPadProbeInfo *info,
+                                 GstPad *pad, guint64 frame_id)
+{
+  GstBuffer *buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+  GstBuffer *writable;
+  GstClockTime started;
+  guint64 elapsed_ns;
+  guint32 checksum_before = 0u;
+  guint32 checksum_after = 0u;
+  gchar format[16] = "";
+  gint width = 0;
+  gint height = 0;
+  gboolean caps_ok;
+  gboolean stamp_ok = FALSE;
+
+  if (!gst_jpeg_pl_dec_buffer_probe_enabled(self) || buffer == NULL) {
+    return;
+  }
+
+  started = gst_util_get_timestamp();
+  caps_ok = gst_jpeg_pl_dec_get_raw_caps(pad, format, sizeof(format), &width, &height);
+  if (caps_ok && g_strcmp0(format, "I420") == 0) {
+    writable = gst_buffer_make_writable(buffer);
+    if (writable != buffer) {
+      GST_PAD_PROBE_INFO_DATA(info) = writable;
+      buffer = writable;
+    }
+    stamp_ok = gst_jpeg_pl_dec_stamp_i420_marker(buffer, width, height,
+                                                 &checksum_before,
+                                                 &checksum_after);
+  }
+
+  elapsed_ns = gst_util_get_timestamp() - started;
+  self->buffer_probe_frames++;
+  self->total_buffer_probe_ns += elapsed_ns;
+  self->max_buffer_probe_ns = MAX(self->max_buffer_probe_ns, elapsed_ns);
+
+  g_print("JPEGPLDEC_BUFFER_PROBE frame=%" G_GUINT64_FORMAT
+          " mode=%s format=%s width=%d height=%d bytes=%" G_GSIZE_FORMAT
+          " checksum_before=0x%08x checksum_after=0x%08x"
+          " stamp=%s result=%s elapsed_ms=%.3f avg_ms=%.3f max_ms=%.3f\n",
+          frame_id,
+          self->probe_mode,
+          caps_ok ? format : "unknown",
+          width,
+          height,
+          gst_buffer_get_size(buffer),
+          checksum_before,
+          checksum_after,
+          stamp_ok ? "top-left-i420-luma-checker" : "none",
+          stamp_ok ? "pass" : "unsupported-caps-or-map-failed",
+          ns_to_ms(elapsed_ns),
+          ns_to_ms(self->total_buffer_probe_ns / MAX(self->buffer_probe_frames, 1u)),
+          ns_to_ms(self->max_buffer_probe_ns));
 }
 
 static gboolean
@@ -283,6 +448,8 @@ gst_jpeg_pl_dec_src_probe(GstPad *pad, GstPadProbeInfo *info,
   }
 
   now = gst_util_get_timestamp();
+  gst_jpeg_pl_dec_log_buffer_probe(self, info, pad, self->frames + 1u);
+  buffer = GST_PAD_PROBE_INFO_BUFFER(info);
   out_bytes = gst_buffer_get_size(buffer);
 
   g_mutex_lock(&self->lock);
@@ -353,8 +520,10 @@ gst_jpeg_pl_dec_set_property(GObject *object, guint prop_id,
   switch (prop_id) {
     case PROP_PROBE_MODE: {
       const gchar *mode = g_value_get_string(value);
-      if (g_strcmp0(mode, "software") != 0 &&
-          g_strcmp0(mode, "pl-probe") != 0) {
+  if (g_strcmp0(mode, "software") != 0 &&
+          g_strcmp0(mode, "pl-probe") != 0 &&
+          g_strcmp0(mode, "buffer-probe") != 0 &&
+          g_strcmp0(mode, "pl-buffer-probe") != 0) {
         GST_WARNING_OBJECT(self, "unknown probe-mode '%s', using software",
                            mode == NULL ? "" : mode);
         mode = "software";
@@ -465,7 +634,7 @@ gst_jpeg_pl_dec_class_init(GstJpegPlDecClass *klass)
       g_param_spec_string(
           "probe-mode",
           "Probe mode",
-          "software keeps the reference jpegdec path; pl-probe also samples PL PIP AXI-Lite status registers",
+          "software keeps the reference jpegdec path; pl-probe samples PL status; buffer-probe stamps decoded I420; pl-buffer-probe does both",
           "software",
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property(

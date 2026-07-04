@@ -64,6 +64,9 @@ measurement hooks:
 - `probe-mode=software`: software reference path only.
 - `probe-mode=pl-probe`: software reference path plus PL PIP AXI-Lite status
   sampling through `/dev/mem`.
+- `probe-mode=buffer-probe`: software reference path plus decoded I420 buffer
+  checksum and top-left luma marker stamping.
+- `probe-mode=pl-buffer-probe`: combines `pl-probe` and `buffer-probe`.
 - `summary-interval=N`: emit one `JPEGPLDEC_PROFILE` marker every `N` decoded
   frames.
 - `pl-base=1136656384`: PL PIP AXI-Lite base address; default is
@@ -75,11 +78,18 @@ Markers:
 ```text
 JPEGPLDEC_PROFILE frames=... mode=... avg_ms=... p50_ms=... p95_ms=...
 JPEGPLDEC_PL_PROBE frame=... main_frames=... pip_frames=... overlay_pixels=...
+JPEGPLDEC_BUFFER_PROBE frame=... checksum_before=... checksum_after=... result=pass
 ```
 
 The PL probe reads the existing PIP status registers. It proves that the
 plugin can access the live PL control/status plane while the video pipeline is
 running. It does not yet move compressed JPEG data through a PL decoder.
+
+The buffer probe modifies the decoded I420 buffer before downstream
+`videoconvert`, `videoscale`, `fbdevsink`, VDMA, PL PIP, and HDMI. It proves
+that data produced inside `jpegpldec` can be marked and later observed through
+the existing PL display data path. It does not prove an independent DMA-safe
+private buffer, PL writeback, or a GStreamer buffer returned from PL.
 
 ## Integrated Probe
 
@@ -91,3 +101,9 @@ The probe builds the plugin, deploys it to `/tmp/gst-plugins/`, starts a board
 receiver with `probe-mode=pl-probe`, requires profiling and PL status markers,
 and checks the dashboard HDMI-return MJPEG stream when the dashboard is
 running.
+
+For the decoded-buffer data-path marker probe:
+
+```powershell
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_jpegpldec_pl_probe.ps1 -ProbeMode pl-buffer-probe -OutDir build\jpegpldec-pl-buffer-datapath-probe
+```

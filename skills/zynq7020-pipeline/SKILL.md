@@ -1053,5 +1053,42 @@ PL, PL JPEG decode, or latency improvement. Before writing a full PL JPEG
 decoder, run this probe at the target source resolution or add a real
 PS-to-PL buffer/data probe behind `jpegpldec`.
 
+Verified `jpegpldec` decoded-buffer marker path (preferred quick check before
+adding a private DMA-safe PL return path, 2026-07-04):
+
+```text
+1. Keep the dashboard PC GStreamer sender running, or start an equivalent
+   RTP/JPEG sender to 192.168.1.10:5011.
+2. Run:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_jpegpldec_pl_probe.ps1 -ProbeMode pl-buffer-probe -OutDir build\jpegpldec-pl-buffer-datapath-probe
+3. The helper builds and deploys libgstjpegpldec.so, moves PL PIP to
+   bottom-right, and starts:
+   rtpjpegdepay ! jpegpldec probe-mode=pl-buffer-probe summary-interval=30
+   ! videoconvert ! videoscale ! ... ! fbdevsink
+4. Require:
+   JPEGPLDEC_PLUGIN_BUILD_OK
+   JPEGPLDEC_DEPLOY_INSPECT_DONE
+   JPEGPLDEC_PROFILE_RECEIVER_STARTED
+   JPEGPLDEC_BUFFER_PROBE ... result=pass
+   JPEGPLDEC_PL_PROBE frame=...
+   MJPEG_STREAM_PROBE_OK
+   JPEGPLDEC_BUFFER_MARKER_OK
+   JPEGPLDEC_PL_PROBE_OK
+```
+
+Verified outcome:
+The plugin can map decoded I420 buffers, stamp a top-left luma checker, and
+the marker is visible in the HDMI-return frames after downstream GStreamer,
+framebuffer write, VDMA, PL PIP, and HDMI. The passing run measured
+`JPEGPLDEC_BUFFER_MARKER_OK frames=60 pass_frames=60`.
+
+Boundary:
+This is not a private `jpegpldec` DMA-safe buffer loopback. It proves marked
+data from `jpegpldec` reaches the existing framebuffer -> VDMA -> PL display
+path. It does not prove PL direct access to `GstBuffer` memory, cache
+flush/invalidate correctness for a shared buffer, PL writeback, or returning a
+PL-modified buffer to GStreamer. Those require a new or exposed DMA-safe buffer
+path such as AXI DMA/VDMA endpoint plus CMA/dma-buf/driver support.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

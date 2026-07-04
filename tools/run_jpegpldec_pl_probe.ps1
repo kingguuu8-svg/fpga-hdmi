@@ -8,6 +8,7 @@ param(
     [int]$OutputWidth = 800,
     [int]$OutputHeight = 600,
     [int]$SummaryInterval = 30,
+    [string]$ProbeMode = "pl-probe",
     [string]$OutDir = "build\jpegpldec-pl-probe-and-profile",
     [string]$DashboardUrl = "http://127.0.0.1:8765"
 )
@@ -94,11 +95,13 @@ try {
     Require-Text -Path $deployLog -Pattern "JPEGPLDEC_DEPLOY_INSPECT_DONE" -Label "deploy marker"
 
     $caps = "application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string)JPEG, payload=(int)26"
-    $pipeline = "GST_PLUGIN_PATH=/tmp/gst-plugins GST_REGISTRY=/tmp/gst-registry-jpegpldec-profile.bin nohup gst-launch-1.0 -v udpsrc port=$GstPort caps=`"$caps`" ! rtpjitterbuffer latency=100 drop-on-latency=true ! rtpjpegdepay ! jpegpldec probe-mode=pl-probe summary-interval=$SummaryInterval ! videoconvert ! videoscale ! video/x-raw,format=BGR,width=$OutputWidth,height=$OutputHeight ! fbdevsink device=/dev/fb0 sync=false > /tmp/gst_jpegpldec_profile.log 2>&1 & echo `$! > /tmp/gst_jpegpldec_profile.pid"
+    $pipeline = "GST_PLUGIN_PATH=/tmp/gst-plugins GST_REGISTRY=/tmp/gst-registry-jpegpldec-profile.bin nohup gst-launch-1.0 -v udpsrc port=$GstPort caps=`"$caps`" ! rtpjitterbuffer latency=100 drop-on-latency=true ! rtpjpegdepay ! jpegpldec probe-mode=$ProbeMode summary-interval=$SummaryInterval ! videoconvert ! videoscale ! video/x-raw,format=BGR,width=$OutputWidth,height=$OutputHeight ! fbdevsink device=/dev/fb0 sync=false > /tmp/gst_jpegpldec_profile.log 2>&1 & echo `$! > /tmp/gst_jpegpldec_profile.pid"
 
     $startLog = Invoke-UartCommands -Label "start-profile" -FinalReadSeconds 3 -Commands @(
         "killall gst-launch-1.0 2>/dev/null || true",
         "rm -f /tmp/gst_jpegpldec_profile.log /tmp/gst_jpegpldec_profile.pid",
+        "/tmp/pip_effect_ctl --preset bottom-right >/tmp/jpegpldec_pip_position.log 2>&1 || true",
+        "cat /tmp/jpegpldec_pip_position.log 2>/dev/null || true",
         "setterm -cursor off > /dev/`$(cat /sys/class/tty/tty0/active) 2>/dev/null || true",
         $pipeline,
         "sleep 8",
@@ -109,7 +112,12 @@ try {
     )
     Require-Text -Path $startLog -Pattern "JPEGPLDEC_PROFILE_RECEIVER_STARTED" -Label "receiver start marker"
     Require-Text -Path $startLog -Pattern "JPEGPLDEC_PROFILE frames=" -Label "profile marker"
-    Require-Text -Path $startLog -Pattern "JPEGPLDEC_PL_PROBE" -Label "PL probe marker"
+    if ($ProbeMode -match "pl") {
+        Require-Text -Path $startLog -Pattern "JPEGPLDEC_PL_PROBE" -Label "PL probe marker"
+    }
+    if ($ProbeMode -match "buffer") {
+        Require-Text -Path $startLog -Pattern "JPEGPLDEC_BUFFER_PROBE.*result=pass" -Label "buffer probe marker"
+    }
 
     $probeOut = Join-Path $outPath "dashboard-output-mjpeg-probe"
     try {
@@ -127,14 +135,30 @@ try {
         $mjpegStatus = "skipped_or_failed: $($_.Exception.Message)"
     }
 
+    if ($ProbeMode -match "buffer" -and $mjpegStatus -eq "pass") {
+        & python (Join-Path $repoRoot "tools\validate_jpegpldec_buffer_marker.py") `
+            $probeOut `
+            --out (Join-Path $outPath "buffer-marker-validation.json") `
+            --min-frames 60 `
+            --min-pass-frames 50
+        if ($LASTEXITCODE -ne 0) {
+            throw "buffer marker validation failed"
+        }
+        $bufferMarkerStatus = "pass"
+    } else {
+        $bufferMarkerStatus = "not-run"
+    }
+
     $summary = [PSCustomObject]@{
-        cycle = "jpegpldec-pl-probe-and-profile"
+        cycle = if ($ProbeMode -match "buffer") { "jpegpldec-pl-buffer-datapath-probe" } else { "jpegpldec-pl-probe-and-profile" }
         plugin_sha256 = $hash
+        probe_mode = $ProbeMode
         deployed_plugin = "/tmp/gst-plugins/libgstjpegpldec.so"
         receiver_log = "/tmp/gst_jpegpldec_profile.log"
         deploy_log = $deployLog
         start_log = $startLog
         dashboard_output_probe = $mjpegStatus
+        buffer_marker_validation = $bufferMarkerStatus
         result = "pass"
     }
     $summary | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $outPath "summary.json") -Encoding UTF8

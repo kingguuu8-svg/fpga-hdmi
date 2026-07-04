@@ -20,6 +20,114 @@ Third-party review:
 Residual risks:
 ```
 
+## Cycle: jpegpldec-pl-buffer-datapath-probe
+
+Date: 2026-07-04
+
+Commit: this commit (`cycle: probe jpegpldec buffer datapath`)
+
+Objective: move from `jpegpldec` control/status probing toward a real video
+data probe without changing the external GStreamer pipeline. This cycle checks
+whether real decoded frames inside `jpegpldec` can be marked and observed
+through the existing framebuffer -> VDMA -> PL PIP -> HDMI path.
+
+Changed scope:
+
+- Added `probe-mode=buffer-probe` and `probe-mode=pl-buffer-probe` to
+  `software/gstreamer/jpegpldec`.
+- In buffer probe mode, `jpegpldec` maps decoded I420 buffers, computes
+  checksum before/after, stamps a 24x24 top-left luma checker marker, and logs
+  `JPEGPLDEC_BUFFER_PROBE`.
+- Extended `tools/run_jpegpldec_pl_probe.ps1` with `-ProbeMode`.
+- Added `tools/validate_jpegpldec_buffer_marker.py` for HDMI-return marker
+  validation.
+- Updated `software/gstreamer/jpegpldec/README.md`.
+
+Verification performed:
+
+- Ran:
+  `rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_jpegpldec_pl_probe.ps1 -ProbeMode pl-buffer-probe -HttpPort 8095 -OutDir build\jpegpldec-pl-buffer-datapath-probe`.
+- Cross-built `libgstjpegpldec.so`: `JPEGPLDEC_PLUGIN_BUILD_OK`.
+- Deployed the plugin to `/tmp/gst-plugins/` over board Ethernet and verified
+  SHA-256 `e70c99131ae07753afb79241571f8174fcc82454fd99dc086661c009380bdd36`.
+- `gst-inspect-1.0 jpegpldec` showed the expanded `probe-mode` description.
+- Started the board receiver as:
+  `rtpjpegdepay ! jpegpldec probe-mode=pl-buffer-probe summary-interval=30 ! ... ! fbdevsink`.
+- Board log showed continuous `JPEGPLDEC_BUFFER_PROBE ... result=pass` markers
+  through at least frame 120, plus `JPEGPLDEC_PROFILE` and
+  `JPEGPLDEC_PL_PROBE`.
+- Dashboard output MJPEG probe passed with `frames=60 unique=40`.
+- HDMI-return marker validator passed with `frames=60 pass_frames=60`.
+
+Measured values:
+
+- Buffer marker probe near frame 120:
+  `format=I420`, `width=320`, `height=240`, `bytes=115200`,
+  `checksum_before=0xbccef774`, `checksum_after=0xb73e61f4`,
+  `elapsed_ms=2.072`, `avg_ms=2.286`, `max_ms=3.059`.
+- Profile marker near frame 120:
+  `avg_ms=1.961`, `p50_ms=1.765`, `p95_ms=2.059`,
+  `avg_in_bytes=6115.7`, `avg_out_bytes=115200.0`, `pending=0`.
+- PL status marker near frame 120:
+  `control=0x00000007`, `enable=1`, `scale=4`, `x=560`, `y=420`,
+  `active_w=200`, `active_h=150`, `main_frames=3249526`,
+  `pip_frames=7161806`, `overlay_pixels=3342653783`.
+
+Board action:
+
+- Deployed `/tmp/gst-plugins/libgstjpegpldec.so` with board `wget`.
+- Moved PL PIP to bottom-right with `/tmp/pip_effect_ctl --preset bottom-right`
+  so it would not cover the top-left marker.
+- Replaced the running board GStreamer receiver process with a
+  `jpegpldec probe-mode=pl-buffer-probe` receiver while reusing the
+  already-running PC sender and dashboard return.
+- No BOOT.BIN, image.ub, rootfs, FPGA bitstream, TF-card image, JTAG
+  programming, or board flash write was performed.
+
+Decision:
+
+- This is a useful data-path marker probe, but it is not the full
+  PS-to-PL private buffer objective.
+- The current bitstream exposes framebuffer -> VDMA -> PL PIP -> HDMI as the
+  mature video data path; it does not expose a generic `jpegpldec` private
+  buffer -> PL -> `jpegpldec` return path.
+- Next work should add or expose a DMA-safe buffer path, AXI DMA/VDMA endpoint,
+  or PL checksum/passthrough endpoint before attempting PL JPEG decode.
+
+Evidence:
+
+- `docs/reports/jpegpldec-pl-buffer-datapath-probe.md`
+- `tools/run_jpegpldec_pl_probe.ps1`
+- `tools/validate_jpegpldec_buffer_marker.py`
+- `build/jpegpldec-pl-buffer-datapath-probe/summary.json`
+- `build/jpegpldec-pl-buffer-datapath-probe/plugin/libgstjpegpldec.file.txt`
+- `build/jpegpldec-pl-buffer-datapath-probe/plugin/libgstjpegpldec.sha256.txt`
+- `build/jpegpldec-pl-buffer-datapath-probe/uart-deploy-inspect.log`
+- `build/jpegpldec-pl-buffer-datapath-probe/uart-start-profile.log`
+- `build/jpegpldec-pl-buffer-datapath-probe/dashboard-output-mjpeg-probe/mjpeg-stream-probe.json`
+- `build/jpegpldec-pl-buffer-datapath-probe/buffer-marker-validation.json`
+
+Result:
+
+- PARTIAL PASS toward the larger active goal.
+
+Rollback point:
+
+- Stop the temporary receiver with `killall gst-launch-1.0`, then use the
+  dashboard `start-stream` action to restart the dashboard-managed receiver.
+- No persistent board image changed.
+
+Third-party review:
+
+- None.
+
+Residual risks:
+
+- No private DMA-safe `jpegpldec` buffer was allocated.
+- PL did not read or write a `jpegpldec`-owned buffer directly.
+- Cache coherency for a directly shared PS/PL buffer is still unproven.
+- No PL-modified buffer was returned to downstream GStreamer.
+
 ## Cycle: jpegpldec-pl-probe-and-profile
 
 Date: 2026-07-04
