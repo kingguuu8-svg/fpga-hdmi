@@ -20,6 +20,79 @@ Third-party review:
 Residual risks:
 ```
 
+## Cycle: jpegpldec-dma-capability-route-gate
+
+Date: 2026-07-04
+
+Commit: this commit (`cycle: gate jpegpldec dma capability`)
+
+Objective: determine whether the currently booted board image already exposes
+a user-space DMA-safe buffer path that `jpegpldec` can use for a private
+PS-to-PL buffer probe without changing the external GStreamer pipeline.
+
+Changed scope:
+
+- Added `tools/run_board_dma_capability_probe.ps1`.
+- The probe checks board `/dev`, `/sys`, kernel config, VDMA presence, and
+  framebuffer properties over UART.
+
+Verification performed:
+
+- Ran:
+  `rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_board_dma_capability_probe.ps1 -OutDir build\jpegpldec-dma-capability-route-gate`.
+- Board reported:
+  `JPEGPLDEC_DMA_CAPABILITY_PROBE_OK result=missing-userspace-dma-buffer-interface cma=1 dma_shared_buffer=1 xilinx_dma=1 dma_heap=0 udmabuf=0 uio_dev=0 fb0=1 vdma=1`.
+- Positive capabilities:
+  `CONFIG_CMA=y`, `CONFIG_DMA_SHARED_BUFFER=y`, `CONFIG_DMA_ENGINE=y`,
+  `CONFIG_XILINX_DMA=y`, `CONFIG_UIO=y`, `/sys/devices/soc0/amba_pl/43000000.dma`,
+  `/sys/bus/platform/drivers/xilinx-vdma`, `/dev/fb0`.
+- Missing direct user-space buffer interfaces:
+  `DEV_DMA_HEAP_ABSENT`, `DEV_UIO_ABSENT`, `DEV_UDMABUF_ABSENT`,
+  `DEV_ION_ABSENT`, `SYS_UIO_ABSENT`, `SYS_UDMABUF_ABSENT`.
+
+Decision:
+
+- Do not attempt PL writeback or GStreamer reconnect from `jpegpldec` on the
+  current image/bitstream as-is.
+- The next implementation step needs one explicit data endpoint:
+  an AXI DMA loopback/checksum path plus a Linux coherent/CMA buffer client
+  interface, or an equivalent `udmabuf`/reserved-memory path.
+- Avoid `/dev/mem` against normal `malloc` or `GstBuffer` virtual memory
+  because that cannot prove physical-address validity or cache coherency.
+
+Evidence:
+
+- `docs/reports/jpegpldec-dma-capability-route-gate.md`
+- `tools/run_board_dma_capability_probe.ps1`
+- `build/jpegpldec-dma-capability-route-gate/summary.json`
+- `build/jpegpldec-dma-capability-route-gate/uart-dma-capability.log`
+
+Result:
+
+- PASSED as a negative route gate.
+
+Board action:
+
+- UART read-only capability probe.
+- No BOOT.BIN, image.ub, rootfs, FPGA bitstream, TF-card image, JTAG
+  programming, or board flash write was performed.
+
+Rollback point:
+
+- No rollback required.
+
+Third-party review:
+
+- None.
+
+Residual risks:
+
+- This did not test a rebuilt image with `udmabuf`, a custom DMA proxy driver,
+  or a new AXI DMA endpoint.
+- The larger active goal remains incomplete because private DMA-safe
+  `jpegpldec` buffer access by PL and cache-coherency validation are not yet
+  implemented.
+
 ## Cycle: jpegpldec-pl-buffer-datapath-probe
 
 Date: 2026-07-04

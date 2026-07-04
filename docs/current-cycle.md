@@ -43,6 +43,17 @@ None.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: jpegpldec-dma-capability-route-gate
+Result: PASSED as a negative route gate. Board probe confirmed the running
+  image has CMA, DMA shared buffer, Xilinx DMA, and VDMA support, but exposes
+  no /dev/dma_heap, udmabuf, ion, or /dev/uio* user-space DMA buffer interface
+  that jpegpldec can use for a private PS-to-PL buffer loopback.
+Evidence: docs/reports/jpegpldec-dma-capability-route-gate.md,
+  build/jpegpldec-dma-capability-route-gate/summary.json,
+  build/jpegpldec-dma-capability-route-gate/uart-dma-capability.log
+Board action: UART read-only capability probe. No BOOT.BIN, image.ub, rootfs,
+  bitstream, TF-card image, JTAG, or board flash was changed.
+
 Cycle ID: jpegpldec-pl-buffer-datapath-probe
 Result: PARTIAL PASS toward the larger PS-to-PL buffer objective. Added
   `probe-mode=pl-buffer-probe`, which maps decoded I420 buffers inside
