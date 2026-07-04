@@ -1017,5 +1017,41 @@ The first `jpegpldec` implementation is a `GstBin` wrapper around the system
 `jpegdec` child named `software-reference-decoder`; it proves the replacement
 entry point, not PL codec acceleration or latency improvement.
 
+Verified `jpegpldec` PL-probe/profile path (preferred before choosing a PL
+decoder offload target, 2026-07-04):
+
+```text
+1. Keep the dashboard PC GStreamer sender running, or start an equivalent
+   RTP/JPEG sender to 192.168.1.10:5011.
+2. Run the integrated probe:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_jpegpldec_pl_probe.ps1 -OutDir build\jpegpldec-pl-probe-and-profile
+3. The helper builds libgstjpegpldec.so, serves it over the PC direct-link
+   interface, deploys it to /tmp/gst-plugins on the board, and starts:
+   rtpjpegdepay ! jpegpldec probe-mode=pl-probe summary-interval=30
+   ! videoconvert ! videoscale ! ... ! fbdevsink
+4. Require:
+   JPEGPLDEC_PLUGIN_BUILD_OK
+   JPEGPLDEC_DEPLOY_INSPECT_DONE
+   gst-inspect shows probe-mode, summary-interval, pl-base, and pl-map-size
+   JPEGPLDEC_PROFILE_RECEIVER_STARTED
+   JPEGPLDEC_PROFILE frames=...
+   JPEGPLDEC_PL_PROBE_READY base=0x43c00000
+   JPEGPLDEC_PL_PROBE frame=...
+   JPEGPLDEC_PL_PROBE_OK
+5. When the dashboard is running, also require:
+   MJPEG_STREAM_PROBE_OK from /api/output-stream.mjpeg
+```
+
+Verified outcome:
+`jpegpldec` now provides a stable measurement and PL status-probe point without
+changing the external GStreamer caps. The passing run measured steady-state
+wrapper timing near 2 ms at the current 320x240 RTP/JPEG input, read live PL
+PIP status registers through `/dev/mem`, and kept HDMI return dynamic
+(`frames=60 unique=46`). This path proves plugin profiling plus PL
+control/status access; it does not prove compressed JPEG data movement through
+PL, PL JPEG decode, or latency improvement. Before writing a full PL JPEG
+decoder, run this probe at the target source resolution or add a real
+PS-to-PL buffer/data probe behind `jpegpldec`.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

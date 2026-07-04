@@ -1,8 +1,49 @@
 #include <gst/gst.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
+
+#define DEFAULT_PL_BASE 0x43c00000u
+#define DEFAULT_PL_MAP_SIZE 0x10000u
+#define REG_CONTROL 0x00u
+#define REG_X 0x04u
+#define REG_Y 0x08u
+#define REG_STATUS 0x0cu
+#define REG_MAIN_FRAMES 0x10u
+#define REG_PIP_FRAMES 0x14u
+#define REG_OVERLAY_PIXELS 0x18u
+#define RECENT_WINDOW 256u
+
+typedef struct _GstJpegPlDecSample {
+  GstClockTime entered_at;
+  gsize in_bytes;
+} GstJpegPlDecSample;
 
 typedef struct _GstJpegPlDec {
   GstBin parent;
   GstElement *decoder;
+  GQueue *pending;
+  GMutex lock;
+  gchar *probe_mode;
+  guint summary_interval;
+  guint32 pl_base;
+  guint32 pl_map_size;
+  volatile guint8 *pl_regs;
+  gboolean pl_probe_failed;
+  guint64 frames;
+  guint64 in_frames;
+  guint64 total_decode_ns;
+  guint64 max_decode_ns;
+  guint64 total_in_bytes;
+  guint64 total_out_bytes;
+  guint64 recent_decode_ns[RECENT_WINDOW];
+  guint recent_count;
+  guint recent_index;
 } GstJpegPlDec;
 
 typedef struct _GstJpegPlDecClass {
@@ -10,9 +51,18 @@ typedef struct _GstJpegPlDecClass {
 } GstJpegPlDecClass;
 
 #define GST_TYPE_JPEG_PL_DEC (gst_jpeg_pl_dec_get_type())
+#define GST_JPEG_PL_DEC(obj) ((GstJpegPlDec *)(obj))
 GType gst_jpeg_pl_dec_get_type(void);
 
 G_DEFINE_TYPE(GstJpegPlDec, gst_jpeg_pl_dec, GST_TYPE_BIN)
+
+enum {
+  PROP_0,
+  PROP_PROBE_MODE,
+  PROP_SUMMARY_INTERVAL,
+  PROP_PL_BASE,
+  PROP_PL_MAP_SIZE
+};
 
 static GstStaticPadTemplate sink_template = GST_STATIC_PAD_TEMPLATE(
     "sink",
@@ -25,6 +75,229 @@ static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE(
     GST_PAD_SRC,
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS("video/x-raw"));
+
+static gint
+compare_u64(const void *left, const void *right)
+{
+  const guint64 a = *(const guint64 *)left;
+  const guint64 b = *(const guint64 *)right;
+
+  return (a > b) - (a < b);
+}
+
+static gdouble
+ns_to_ms(guint64 ns)
+{
+  return (gdouble)ns / 1000000.0;
+}
+
+static guint64
+percentile_recent(GstJpegPlDec *self, gdouble percentile)
+{
+  guint64 values[RECENT_WINDOW];
+  guint index;
+
+  if (self->recent_count == 0u) {
+    return 0u;
+  }
+
+  memcpy(values, self->recent_decode_ns, self->recent_count * sizeof(values[0]));
+  qsort(values, self->recent_count, sizeof(values[0]), compare_u64);
+  index = (guint)((percentile * (gdouble)(self->recent_count - 1u)) + 0.5);
+  if (index >= self->recent_count) {
+    index = self->recent_count - 1u;
+  }
+  return values[index];
+}
+
+static guint32
+pl_reg_read(volatile guint8 *base, guint32 offset)
+{
+  volatile guint32 *reg = (volatile guint32 *)(base + offset);
+  return *reg;
+}
+
+static gboolean
+gst_jpeg_pl_dec_pl_probe_enabled(GstJpegPlDec *self)
+{
+  return g_strcmp0(self->probe_mode, "pl-probe") == 0;
+}
+
+static gboolean
+gst_jpeg_pl_dec_map_pl_regs(GstJpegPlDec *self)
+{
+  int fd;
+  void *mapped;
+
+  if (self->pl_regs != NULL) {
+    return TRUE;
+  }
+  if (self->pl_probe_failed) {
+    return FALSE;
+  }
+
+  fd = open("/dev/mem", O_RDONLY | O_SYNC);
+  if (fd < 0) {
+    g_print("JPEGPLDEC_PL_PROBE_ERROR detail=open_dev_mem errno=%d\n", errno);
+    self->pl_probe_failed = TRUE;
+    return FALSE;
+  }
+
+  mapped = mmap(NULL, self->pl_map_size, PROT_READ, MAP_SHARED, fd,
+                (off_t)self->pl_base);
+  close(fd);
+  if (mapped == MAP_FAILED) {
+    g_print("JPEGPLDEC_PL_PROBE_ERROR detail=mmap base=0x%08x errno=%d\n",
+            self->pl_base, errno);
+    self->pl_probe_failed = TRUE;
+    return FALSE;
+  }
+
+  self->pl_regs = (volatile guint8 *)mapped;
+  g_print("JPEGPLDEC_PL_PROBE_READY base=0x%08x map_size=0x%08x\n",
+          self->pl_base, self->pl_map_size);
+  return TRUE;
+}
+
+static void
+gst_jpeg_pl_dec_log_pl_probe(GstJpegPlDec *self)
+{
+  guint32 control;
+  guint32 status;
+
+  if (!gst_jpeg_pl_dec_pl_probe_enabled(self)) {
+    return;
+  }
+  if (!gst_jpeg_pl_dec_map_pl_regs(self)) {
+    return;
+  }
+
+  control = pl_reg_read(self->pl_regs, REG_CONTROL);
+  status = pl_reg_read(self->pl_regs, REG_STATUS);
+  g_print("JPEGPLDEC_PL_PROBE frame=%" G_GUINT64_FORMAT
+          " control=0x%08x enable=%u scale=%u effect=%u x=%u y=%u"
+          " active_w=%u active_h=%u main_frames=%u pip_frames=%u"
+          " overlay_pixels=%u\n",
+          self->frames,
+          control,
+          (control & 0x1u) ? 1u : 0u,
+          (control & 0x4u) ? 4u : 2u,
+          (control >> 4) & 0x3u,
+          pl_reg_read(self->pl_regs, REG_X),
+          pl_reg_read(self->pl_regs, REG_Y),
+          status & 0xffffu,
+          (status >> 16) & 0xffffu,
+          pl_reg_read(self->pl_regs, REG_MAIN_FRAMES),
+          pl_reg_read(self->pl_regs, REG_PIP_FRAMES),
+          pl_reg_read(self->pl_regs, REG_OVERLAY_PIXELS));
+}
+
+static void
+gst_jpeg_pl_dec_log_profile(GstJpegPlDec *self, guint64 decode_ns,
+                            gsize in_bytes, gsize out_bytes)
+{
+  guint64 p50;
+  guint64 p95;
+  gdouble avg_ms;
+  gdouble avg_in_bytes;
+  gdouble avg_out_bytes;
+
+  self->frames++;
+  self->total_decode_ns += decode_ns;
+  self->max_decode_ns = MAX(self->max_decode_ns, decode_ns);
+  self->total_in_bytes += in_bytes;
+  self->total_out_bytes += out_bytes;
+  self->recent_decode_ns[self->recent_index] = decode_ns;
+  self->recent_index = (self->recent_index + 1u) % RECENT_WINDOW;
+  if (self->recent_count < RECENT_WINDOW) {
+    self->recent_count++;
+  }
+
+  if (self->summary_interval == 0u ||
+      (self->frames % self->summary_interval) != 0u) {
+    return;
+  }
+
+  p50 = percentile_recent(self, 0.50);
+  p95 = percentile_recent(self, 0.95);
+  avg_ms = ns_to_ms(self->total_decode_ns / MAX(self->frames, 1u));
+  avg_in_bytes = (gdouble)self->total_in_bytes / (gdouble)self->frames;
+  avg_out_bytes = (gdouble)self->total_out_bytes / (gdouble)self->frames;
+
+  g_print("JPEGPLDEC_PROFILE frames=%" G_GUINT64_FORMAT
+          " mode=%s last_ms=%.3f avg_ms=%.3f p50_ms=%.3f p95_ms=%.3f"
+          " max_ms=%.3f avg_in_bytes=%.1f avg_out_bytes=%.1f"
+          " pending=%u\n",
+          self->frames,
+          self->probe_mode,
+          ns_to_ms(decode_ns),
+          avg_ms,
+          ns_to_ms(p50),
+          ns_to_ms(p95),
+          ns_to_ms(self->max_decode_ns),
+          avg_in_bytes,
+          avg_out_bytes,
+          g_queue_get_length(self->pending));
+  gst_jpeg_pl_dec_log_pl_probe(self);
+}
+
+static GstPadProbeReturn
+gst_jpeg_pl_dec_sink_probe(GstPad *pad, GstPadProbeInfo *info,
+                           gpointer user_data)
+{
+  GstJpegPlDec *self = GST_JPEG_PL_DEC(user_data);
+  GstBuffer *buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+  GstJpegPlDecSample *sample;
+
+  (void)pad;
+  if (buffer == NULL) {
+    return GST_PAD_PROBE_OK;
+  }
+
+  sample = g_new0(GstJpegPlDecSample, 1);
+  sample->entered_at = gst_util_get_timestamp();
+  sample->in_bytes = gst_buffer_get_size(buffer);
+
+  g_mutex_lock(&self->lock);
+  self->in_frames++;
+  g_queue_push_tail(self->pending, sample);
+  g_mutex_unlock(&self->lock);
+  return GST_PAD_PROBE_OK;
+}
+
+static GstPadProbeReturn
+gst_jpeg_pl_dec_src_probe(GstPad *pad, GstPadProbeInfo *info,
+                          gpointer user_data)
+{
+  GstJpegPlDec *self = GST_JPEG_PL_DEC(user_data);
+  GstBuffer *buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+  GstJpegPlDecSample *sample = NULL;
+  GstClockTime now;
+  guint64 decode_ns = 0u;
+  gsize in_bytes = 0u;
+  gsize out_bytes = 0u;
+
+  (void)pad;
+  if (buffer == NULL) {
+    return GST_PAD_PROBE_OK;
+  }
+
+  now = gst_util_get_timestamp();
+  out_bytes = gst_buffer_get_size(buffer);
+
+  g_mutex_lock(&self->lock);
+  if (!g_queue_is_empty(self->pending)) {
+    sample = g_queue_pop_head(self->pending);
+  }
+  if (sample != NULL) {
+    decode_ns = now > sample->entered_at ? now - sample->entered_at : 0u;
+    in_bytes = sample->in_bytes;
+    g_free(sample);
+  }
+  gst_jpeg_pl_dec_log_profile(self, decode_ns, in_bytes, out_bytes);
+  g_mutex_unlock(&self->lock);
+  return GST_PAD_PROBE_OK;
+}
 
 static gboolean
 gst_jpeg_pl_dec_create_ghost_pad(GstJpegPlDec *self, const gchar *target_name,
@@ -54,8 +327,110 @@ gst_jpeg_pl_dec_create_ghost_pad(GstJpegPlDec *self, const gchar *target_name,
 }
 
 static void
+gst_jpeg_pl_dec_install_probes(GstJpegPlDec *self)
+{
+  GstPad *sink = gst_element_get_static_pad(self->decoder, "sink");
+  GstPad *src = gst_element_get_static_pad(self->decoder, "src");
+
+  if (sink != NULL) {
+    gst_pad_add_probe(sink, GST_PAD_PROBE_TYPE_BUFFER,
+                      gst_jpeg_pl_dec_sink_probe, self, NULL);
+    gst_object_unref(sink);
+  }
+  if (src != NULL) {
+    gst_pad_add_probe(src, GST_PAD_PROBE_TYPE_BUFFER,
+                      gst_jpeg_pl_dec_src_probe, self, NULL);
+    gst_object_unref(src);
+  }
+}
+
+static void
+gst_jpeg_pl_dec_set_property(GObject *object, guint prop_id,
+                             const GValue *value, GParamSpec *pspec)
+{
+  GstJpegPlDec *self = GST_JPEG_PL_DEC(object);
+
+  switch (prop_id) {
+    case PROP_PROBE_MODE: {
+      const gchar *mode = g_value_get_string(value);
+      if (g_strcmp0(mode, "software") != 0 &&
+          g_strcmp0(mode, "pl-probe") != 0) {
+        GST_WARNING_OBJECT(self, "unknown probe-mode '%s', using software",
+                           mode == NULL ? "" : mode);
+        mode = "software";
+      }
+      g_free(self->probe_mode);
+      self->probe_mode = g_strdup(mode);
+      break;
+    }
+    case PROP_SUMMARY_INTERVAL:
+      self->summary_interval = g_value_get_uint(value);
+      break;
+    case PROP_PL_BASE:
+      self->pl_base = g_value_get_uint(value);
+      break;
+    case PROP_PL_MAP_SIZE:
+      self->pl_map_size = g_value_get_uint(value);
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
+      break;
+  }
+}
+
+static void
+gst_jpeg_pl_dec_get_property(GObject *object, guint prop_id, GValue *value,
+                             GParamSpec *pspec)
+{
+  GstJpegPlDec *self = GST_JPEG_PL_DEC(object);
+
+  switch (prop_id) {
+    case PROP_PROBE_MODE:
+      g_value_set_string(value, self->probe_mode);
+      break;
+    case PROP_SUMMARY_INTERVAL:
+      g_value_set_uint(value, self->summary_interval);
+      break;
+    case PROP_PL_BASE:
+      g_value_set_uint(value, self->pl_base);
+      break;
+    case PROP_PL_MAP_SIZE:
+      g_value_set_uint(value, self->pl_map_size);
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
+      break;
+  }
+}
+
+static void
+gst_jpeg_pl_dec_finalize(GObject *object)
+{
+  GstJpegPlDec *self = GST_JPEG_PL_DEC(object);
+
+  if (self->pl_regs != NULL) {
+    munmap((void *)self->pl_regs, self->pl_map_size);
+    self->pl_regs = NULL;
+  }
+  if (self->pending != NULL) {
+    g_queue_free_full(self->pending, g_free);
+    self->pending = NULL;
+  }
+  g_clear_pointer(&self->probe_mode, g_free);
+  g_mutex_clear(&self->lock);
+  G_OBJECT_CLASS(gst_jpeg_pl_dec_parent_class)->finalize(object);
+}
+
+static void
 gst_jpeg_pl_dec_init(GstJpegPlDec *self)
 {
+  self->pending = g_queue_new();
+  self->probe_mode = g_strdup("software");
+  self->summary_interval = 30u;
+  self->pl_base = DEFAULT_PL_BASE;
+  self->pl_map_size = DEFAULT_PL_MAP_SIZE;
+  g_mutex_init(&self->lock);
+
   self->decoder = gst_element_factory_make("jpegdec", "software-reference-decoder");
   if (self->decoder == NULL) {
     GST_ELEMENT_ERROR(self, CORE, MISSING_PLUGIN,
@@ -71,12 +446,55 @@ gst_jpeg_pl_dec_init(GstJpegPlDec *self)
                       ("failed to expose jpegpldec pads"),
                       ("could not create ghost pads"));
   }
+  gst_jpeg_pl_dec_install_probes(self);
 }
 
 static void
 gst_jpeg_pl_dec_class_init(GstJpegPlDecClass *klass)
 {
+  GObjectClass *object_class = G_OBJECT_CLASS(klass);
   GstElementClass *element_class = GST_ELEMENT_CLASS(klass);
+
+  object_class->set_property = gst_jpeg_pl_dec_set_property;
+  object_class->get_property = gst_jpeg_pl_dec_get_property;
+  object_class->finalize = gst_jpeg_pl_dec_finalize;
+
+  g_object_class_install_property(
+      object_class,
+      PROP_PROBE_MODE,
+      g_param_spec_string(
+          "probe-mode",
+          "Probe mode",
+          "software keeps the reference jpegdec path; pl-probe also samples PL PIP AXI-Lite status registers",
+          "software",
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property(
+      object_class,
+      PROP_SUMMARY_INTERVAL,
+      g_param_spec_uint(
+          "summary-interval",
+          "Summary interval",
+          "Number of decoded frames between JPEGPLDEC_PROFILE markers; 0 disables markers",
+          0u, 100000u, 30u,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property(
+      object_class,
+      PROP_PL_BASE,
+      g_param_spec_uint(
+          "pl-base",
+          "PL AXI-Lite base",
+          "Physical base address for the PL PIP status probe",
+          0x40000000u, 0x7fffffffu, DEFAULT_PL_BASE,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property(
+      object_class,
+      PROP_PL_MAP_SIZE,
+      g_param_spec_uint(
+          "pl-map-size",
+          "PL AXI-Lite map size",
+          "Mapping size for the PL PIP status probe",
+          0x1000u, 0x100000u, DEFAULT_PL_MAP_SIZE,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   gst_element_class_set_static_metadata(
       element_class,

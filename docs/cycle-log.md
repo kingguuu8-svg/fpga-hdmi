@@ -20,6 +20,109 @@ Third-party review:
 Residual risks:
 ```
 
+## Cycle: jpegpldec-pl-probe-and-profile
+
+Date: 2026-07-04
+
+Commit: this commit (`cycle: profile jpegpldec PL probe`)
+
+Objective: keep the external GStreamer chain stable while turning `jpegpldec`
+into a measurable hardware-acceleration entry point. This cycle adds per-frame
+software-reference timing and a PL status probe, but does not implement PL JPEG
+decode.
+
+Changed scope:
+
+- Added pad-level timing probes inside `software/gstreamer/jpegpldec`.
+- Added `probe-mode`, `summary-interval`, `pl-base`, and `pl-map-size`
+  properties to `jpegpldec`.
+- Added `probe-mode=pl-probe`, which samples the existing PL PIP AXI-Lite
+  status registers at `0x43c00000` through `/dev/mem`.
+- Added `tools/run_jpegpldec_pl_probe.ps1` as a repeatable build/deploy/run
+  probe.
+- Updated the `jpegpldec` README.
+
+Verification performed:
+
+- Ran:
+  `rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_jpegpldec_pl_probe.ps1 -HttpPort 8092 -OutDir build\jpegpldec-pl-probe-and-profile`.
+- Cross-built `libgstjpegpldec.so` for ARM with the PetaLinux 2018.3 toolchain:
+  `JPEGPLDEC_PLUGIN_BUILD_OK`.
+- Deployed the plugin to `/tmp/gst-plugins/` over board Ethernet and verified
+  SHA-256 `1a5072ab049f460ecb5c9a733831ec60798d5111f9fb8ea4e31bf0226883d42c`.
+- `gst-inspect-1.0 jpegpldec` showed `probe-mode`, `summary-interval`,
+  `pl-base`, `pl-map-size`, and the `software-reference-decoder` child.
+- Restarted the board receiver as:
+  `rtpjpegdepay ! jpegpldec probe-mode=pl-probe summary-interval=30 ! ... ! fbdevsink`.
+- Board log showed `JPEGPLDEC_PROFILE` markers through frame 210 and
+  `JPEGPLDEC_PL_PROBE` markers reading live PL PIP register state.
+- Dashboard output MJPEG probe passed with `frames=60 unique=46`.
+
+Measured values:
+
+- Steady-state `jpegpldec` wrapper timing near frame 210:
+  `avg_ms=1.856`, `p50_ms=1.716`, `p95_ms=1.935`,
+  `avg_in_bytes=6106.7`, `avg_out_bytes=115200.0`, `pending=0`.
+- PL probe at frame 210:
+  `control=0x00000007`, `enable=1`, `scale=4`, `effect=0`, `x=16`,
+  `y=16`, `active_w=200`, `active_h=150`, `main_frames=2828539`,
+  `pip_frames=4981084`, `overlay_pixels=3597915671`.
+
+Board action:
+
+- Deployed `/tmp/gst-plugins/libgstjpegpldec.so` with board `wget`.
+- Loaded the plugin through `GST_PLUGIN_PATH` and a temporary GStreamer
+  registry under `/tmp`.
+- Replaced the running board GStreamer receiver process with a
+  `jpegpldec probe-mode=pl-probe` receiver while reusing the already-running
+  PC sender and dashboard return.
+- No BOOT.BIN, image.ub, rootfs, FPGA bitstream, TF-card image, JTAG
+  programming, or board flash write was performed.
+
+Decision:
+
+- Do not start the next implementation by writing a full PL JPEG decoder.
+- The current 320x240 MJPEG wrapper timing is around 2 ms steady-state, so this
+  measurement does not justify treating JPEG decode as the only confirmed
+  bottleneck at the present setting.
+- Next work should add a real PS-to-PL buffer/data probe behind `jpegpldec` or
+  repeat profiling at higher source resolution before choosing JPEG decode,
+  colorspace, scaling, or sink/display write as the first hardening target.
+
+Evidence:
+
+- `docs/reports/jpegpldec-pl-probe-and-profile.md`
+- `tools/run_jpegpldec_pl_probe.ps1`
+- `build/jpegpldec-pl-probe-and-profile/summary.json`
+- `build/jpegpldec-pl-probe-and-profile/plugin/libgstjpegpldec.file.txt`
+- `build/jpegpldec-pl-probe-and-profile/plugin/libgstjpegpldec.sha256.txt`
+- `build/jpegpldec-pl-probe-and-profile/uart-deploy-inspect.log`
+- `build/jpegpldec-pl-probe-and-profile/uart-start-profile.log`
+- `build/jpegpldec-pl-probe-and-profile/dashboard-output-mjpeg-probe/mjpeg-stream-probe.json`
+
+Result:
+
+- PASSED.
+
+Rollback point:
+
+- Stop the temporary receiver with `killall gst-launch-1.0`, then use the
+  dashboard `start-stream` action to restart the dashboard-managed receiver.
+- No persistent board image changed.
+
+Third-party review:
+
+- None.
+
+Residual risks:
+
+- The PL probe is a control/status-plane probe, not compressed JPEG data
+  movement through PL.
+- The timing covers `jpegpldec` input-to-output around the internal `jpegdec`
+  child, not downstream `videoconvert`, `videoscale`, or `fbdevsink`.
+- The measurement used the current 320x240 RTP/JPEG sender; higher-resolution
+  profiling is still needed before committing to a PL JPEG decoder.
+
 ## Cycle: jpegpldec-plugin-skeleton
 
 Date: 2026-07-04

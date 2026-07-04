@@ -43,6 +43,22 @@ None.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: jpegpldec-pl-probe-and-profile
+Result: PASSED. Upgraded the project-owned GStreamer `jpegpldec` element with
+  pad-level profiling and a `probe-mode=pl-probe` hardware status probe. The
+  plugin now emits `JPEGPLDEC_PROFILE` timing markers and reads the existing PL
+  PIP AXI-Lite status registers while the live RTP/JPEG-to-HDMI path runs.
+Evidence: docs/reports/jpegpldec-pl-probe-and-profile.md,
+  build/jpegpldec-pl-probe-and-profile/summary.json,
+  build/jpegpldec-pl-probe-and-profile/uart-deploy-inspect.log,
+  build/jpegpldec-pl-probe-and-profile/uart-start-profile.log,
+  build/jpegpldec-pl-probe-and-profile/dashboard-output-mjpeg-probe/mjpeg-stream-probe.json
+Board action: deployed /tmp/gst-plugins/libgstjpegpldec.so over Ethernet,
+  loaded it with GST_PLUGIN_PATH, restarted the board GStreamer receiver with
+  `jpegpldec probe-mode=pl-probe`, and verified dynamic HDMI return. No
+  BOOT.BIN, image.ub, rootfs, bitstream, TF-card image, JTAG, or board flash
+  was changed.
+
 Cycle ID: jpegpldec-plugin-skeleton
 Result: PASSED. Added a project-owned GStreamer `jpegpldec` plugin skeleton
   and verified it on the board as a drop-in replacement for `jpegdec` in the
