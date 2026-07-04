@@ -72,6 +72,8 @@ DEFAULT_GST_PAYLOAD_TYPE = 26
 DEFAULT_GST_MTU = 1200
 DEFAULT_GST_BOARD_LOG = "/tmp/gst_dashboard_receiver.log"
 DEFAULT_GST_BOARD_PID = "/tmp/gst_dashboard_receiver.pid"
+DEFAULT_PIP_CONTROL_PORT = 5012
+DEFAULT_PIP_CONTROL_TIMEOUT_S = 1.5
 
 
 ACTION_DEFINITIONS = [
@@ -176,6 +178,27 @@ PIP_PRESET_ACTIONS = {
     "pip-grayscale": "grayscale",
     "pip-bypass": "bypass",
 }
+
+
+def parse_key_value_marker(text: str, marker: str) -> dict[str, Any] | None:
+    for line in reversed(text.splitlines()):
+        stripped = line.strip()
+        if not stripped.startswith(marker):
+            continue
+        parsed: dict[str, Any] = {"raw": stripped}
+        for part in stripped.split()[1:]:
+            if "=" not in part:
+                continue
+            key, value = part.split("=", 1)
+            if value.startswith("0x"):
+                parsed[key] = value
+                continue
+            try:
+                parsed[key] = int(value)
+            except ValueError:
+                parsed[key] = value
+        return parsed
+    return None
 
 
 def rgb888_to_bmp(frame: bytes, width: int, height: int) -> bytes:
@@ -436,6 +459,11 @@ def dashboard_html(actions_enabled: bool = True) -> bytes:
       return map[value] || value;
     }}
     function applyState(state) {{
+      const pipStatus = state.control_panel.last_pip_register_status;
+      const pipLatency = state.control_panel.last_pip_control_latency_ms;
+      const pipSummary = pipStatus
+        ? " PIP_REG=enable:" + pipStatus.enable + ",x:" + pipStatus.x + ",y:" + pipStatus.y + ",scale:" + pipStatus.scale + ",effect:" + pipStatus.effect
+        : " PIP_REG=waiting";
       document.getElementById("log").textContent = state.logs.join("\\n");
       document.getElementById("action-status").textContent =
         "链路=" + zh(state.pipeline.mode) +
@@ -448,6 +476,10 @@ def dashboard_html(actions_enabled: bool = True) -> bytes:
         " 特效=" + zh(state.control_panel.selected_effect) +
         " 已发送帧=" + (state.input_source.latest_sent_frame_id ?? "等待") +
         " HDMI帧=" + (state.input_source.latest_hdmi_frame_id ?? "等待");
+      document.getElementById("action-status").textContent +=
+        " PIP_CTRL=" + (state.control_panel.last_pip_control_transport || "waiting") +
+        " PIP_LATENCY_MS=" + (pipLatency ?? "waiting") +
+        pipSummary;
     }}
     async function refreshState() {{
       const state = await fetch("/api/state").then(r => r.json());
@@ -511,6 +543,10 @@ class DashboardState:
         uart_login_root: bool = False,
         uart_password: str = "",
         control_fifo: str = DEFAULT_CONTROL_FIFO,
+        pip_control_host: str | None = None,
+        pip_control_port: int = DEFAULT_PIP_CONTROL_PORT,
+        pip_control_timeout_s: float = DEFAULT_PIP_CONTROL_TIMEOUT_S,
+        pip_control_fallback_uart: bool = True,
         capture_enabled: bool = True,
         capture_device: str = DEFAULT_CAPTURE_DEVICE,
         capture_backend: str = DEFAULT_CAPTURE_BACKEND,
@@ -556,6 +592,10 @@ class DashboardState:
         self.uart_login_root = uart_login_root
         self.uart_password = uart_password
         self.control_fifo = control_fifo
+        self.pip_control_host = pip_control_host or board_host
+        self.pip_control_port = pip_control_port
+        self.pip_control_timeout_s = pip_control_timeout_s
+        self.pip_control_fallback_uart = pip_control_fallback_uart
         self.capture_enabled = capture_enabled
         self.capture_device = capture_device
         self.capture_backend = capture_backend
@@ -593,6 +633,9 @@ class DashboardState:
         self.receiver_paused = False
         self.selected_effect = "none"
         self.last_action: dict[str, Any] | None = None
+        self.last_pip_control_latency_ms: float | None = None
+        self.last_pip_control_transport: str | None = None
+        self.last_pip_register_status: dict[str, Any] | None = None
         self.logs = [
             "控制台就绪",
             f"视频链路：{pipeline}",
@@ -1094,9 +1137,55 @@ class DashboardState:
     def _run_uart_action_locked(self, action: str) -> tuple[bool, str]:
         return self._run_uart_commands_locked(action, self._uart_commands_for_action(action), timeout_s=8)
 
+    def _run_pip_preset_tcp_locked(self, preset: str) -> tuple[bool, str, str, float]:
+        started = time.perf_counter()
+        try:
+            with socket.create_connection(
+                (self.pip_control_host, self.pip_control_port),
+                timeout=self.pip_control_timeout_s,
+            ) as sock:
+                sock.settimeout(self.pip_control_timeout_s)
+                sock.sendall(f"preset {preset}\n".encode("ascii"))
+                chunks: list[bytes] = []
+                while True:
+                    chunk = sock.recv(4096)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+        except OSError as exc:
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            return False, f"TCP_PIP_CONTROL_FAILED host={self.pip_control_host} port={self.pip_control_port} latency_ms={elapsed_ms:.3f} detail={exc}", "", elapsed_ms
+
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        text = b"".join(chunks).decode("utf-8", errors="replace")
+        compact = " | ".join(line.strip() for line in text.splitlines() if line.strip())
+        if "PIP_CONTROL_OK" not in text:
+            return False, f"TCP_PIP_CONTROL_ERROR host={self.pip_control_host} port={self.pip_control_port} latency_ms={elapsed_ms:.3f} response={compact[:600]}", text, elapsed_ms
+        return True, f"tcp pip control host={self.pip_control_host} port={self.pip_control_port} latency_ms={elapsed_ms:.3f} response={compact[:600]}", text, elapsed_ms
+
+    def _record_pip_control_result_locked(self, transport: str, elapsed_ms: float, text: str) -> None:
+        status = parse_key_value_marker(text, "PIP_EFFECT_STATUS")
+        control = parse_key_value_marker(text, "PIP_CONTROL_OK")
+        if status is not None and control is not None and "latency_us" in control:
+            status["server_latency_us"] = control["latency_us"]
+        self.last_pip_control_transport = transport
+        self.last_pip_control_latency_ms = round(elapsed_ms, 3)
+        self.last_pip_register_status = status
+
     def _run_pip_preset_locked(self, action: str) -> tuple[bool, str]:
         preset = PIP_PRESET_ACTIONS[action]
-        return self._run_uart_commands_locked(
+        ok, detail, text, elapsed_ms = self._run_pip_preset_tcp_locked(preset)
+        if ok:
+            self._record_pip_control_result_locked("tcp", elapsed_ms, text)
+            return ok, detail
+
+        tcp_detail = detail
+        if not self.pip_control_fallback_uart:
+            self._record_pip_control_result_locked("tcp-failed", elapsed_ms, text)
+            return False, tcp_detail
+
+        uart_started = time.perf_counter()
+        ok, uart_detail = self._run_uart_commands_locked(
             action,
             [
                 f"/tmp/pip_effect_ctl --preset {preset}",
@@ -1104,6 +1193,10 @@ class DashboardState:
             ],
             timeout_s=20,
         )
+        uart_elapsed_ms = (time.perf_counter() - uart_started) * 1000.0
+        self._record_pip_control_result_locked("uart-fallback" if ok else "uart-fallback-failed", uart_elapsed_ms, uart_detail)
+        fallback_detail = f"{tcp_detail}; fallback=uart; {uart_detail}; latency_ms={uart_elapsed_ms:.3f}"
+        return ok, fallback_detail
 
     def _run_uart_commands_locked(self, label: str, commands: list[str], timeout_s: float = 12.0) -> tuple[bool, str]:
         if not self.uart_port:
@@ -1245,6 +1338,10 @@ class DashboardState:
                 "detail": detail,
                 "state": self._as_json_locked(),
             }
+            if action in PIP_PRESET_ACTIONS:
+                response["pip_control_transport"] = self.last_pip_control_transport
+                response["pip_control_latency_ms"] = self.last_pip_control_latency_ms
+                response["pip_register_status"] = self.last_pip_register_status
             if not ok:
                 response["error"] = detail
             return response
@@ -1348,6 +1445,13 @@ class DashboardState:
                 "gstreamer_port": self.gst_port,
                 "gstreamer_sink": "fbdevsink" if self.pipeline == "gstreamer" else None,
                 "gstreamer_board_log": self.gst_board_log if self.pipeline == "gstreamer" else None,
+                "pip_control_host": self.pip_control_host,
+                "pip_control_port": self.pip_control_port,
+                "pip_control_timeout_s": self.pip_control_timeout_s,
+                "pip_control_fallback_uart": self.pip_control_fallback_uart,
+                "last_pip_control_transport": self.last_pip_control_transport,
+                "last_pip_control_latency_ms": self.last_pip_control_latency_ms,
+                "last_pip_register_status": self.last_pip_register_status,
                 "last_action": self.last_action,
                 "live_transport": self.action_mode == "live",
                 "dry_run_only": self.action_mode == "dry-run",
@@ -1638,6 +1742,10 @@ def run_server(
     uart_login_root: bool,
     uart_password: str,
     control_fifo: str,
+    pip_control_host: str | None,
+    pip_control_port: int,
+    pip_control_timeout_s: float,
+    pip_control_fallback_uart: bool,
     capture_enabled: bool,
     capture_device: str,
     capture_backend: str,
@@ -1683,6 +1791,10 @@ def run_server(
         uart_login_root=uart_login_root,
         uart_password=uart_password,
         control_fifo=control_fifo,
+        pip_control_host=pip_control_host,
+        pip_control_port=pip_control_port,
+        pip_control_timeout_s=pip_control_timeout_s,
+        pip_control_fallback_uart=pip_control_fallback_uart,
         capture_enabled=capture_enabled,
         capture_device=capture_device,
         capture_backend=capture_backend,
@@ -1945,6 +2057,10 @@ def main() -> int:
     parser.add_argument("--uart-login-root", action="store_true")
     parser.add_argument("--uart-password", default="")
     parser.add_argument("--control-fifo", default=DEFAULT_CONTROL_FIFO)
+    parser.add_argument("--pip-control-host", default="")
+    parser.add_argument("--pip-control-port", type=int, default=DEFAULT_PIP_CONTROL_PORT)
+    parser.add_argument("--pip-control-timeout-s", type=float, default=DEFAULT_PIP_CONTROL_TIMEOUT_S)
+    parser.add_argument("--pip-control-no-fallback", action="store_true")
     parser.add_argument("--capture-disabled", action="store_true")
     parser.add_argument("--capture-device", default=DEFAULT_CAPTURE_DEVICE)
     parser.add_argument("--capture-backend", default=DEFAULT_CAPTURE_BACKEND)
@@ -1999,6 +2115,10 @@ def main() -> int:
         uart_login_root=args.uart_login_root,
         uart_password=args.uart_password,
         control_fifo=args.control_fifo,
+        pip_control_host=args.pip_control_host or None,
+        pip_control_port=args.pip_control_port,
+        pip_control_timeout_s=args.pip_control_timeout_s,
+        pip_control_fallback_uart=not args.pip_control_no_fallback,
         capture_enabled=not args.capture_disabled,
         capture_device=args.capture_device,
         capture_backend=args.capture_backend,

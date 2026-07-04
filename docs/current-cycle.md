@@ -43,6 +43,20 @@ None.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: pip-tcp-control-service
+Result: PASSED. Runtime PIP preset control now has a low-latency TCP path.
+  The board runs /tmp/pip_effect_server as a resident POSIX TCP daemon on
+  port 5012, maps the PL PIP AXI-Lite register block once through /dev/mem,
+  and accepts short preset/status commands. The dashboard prefers TCP for PIP
+  buttons and keeps UART as fallback. The dashboard action response and state
+  now expose transport, latency, and parsed PIP register readback.
+Evidence: docs/reports/pip-tcp-control-service.md,
+  build/pip-tcp-control-service/uart_deploy_start_pip_server.log,
+  build/pip-tcp-control-service/dashboard-probe/pip-control-latency-report.json
+Board action: deployed /tmp/pip_effect_server over Ethernet with board wget,
+  started it from UART, and verified direct PC TCP plus dashboard API control.
+  No BOOT.BIN, image.ub, rootfs, FPGA bitstream, or board flash was changed.
+
 Cycle ID: pl-controlled-pip-effect-pipeline
 Result: PASSED. The same-source PL PIP effect is now runtime-controllable from
   the dashboard through UART and a board-side /dev/mem helper. The PIP core has

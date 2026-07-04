@@ -20,6 +20,79 @@ Third-party review:
 Residual risks:
 ```
 
+## Cycle: pip-tcp-control-service
+
+Date: 2026-07-04
+
+Commit: this commit (`cycle: add pip tcp control service`)
+
+Objective: implement方案 B for PIP control latency: a board-side resident TCP
+control service updates PL PIP registers directly, dashboard PIP buttons use it
+by default, and UART remains a fallback.
+
+Changed scope:
+
+- Added `pip_effect_server`, a POSIX TCP daemon that maps the PL PIP AXI-Lite
+  register block once through `/dev/mem` and accepts `status`, `ping`, and
+  `preset <name>` commands.
+- Updated the Linux tool build to produce `pip_effect_server` and print
+  `PIP_EFFECT_SERVER_BUILD_OK`.
+- Updated dashboard PIP actions to prefer TCP control and fall back to the
+  previous UART `/tmp/pip_effect_ctl` path when TCP is unavailable.
+- Added dashboard state/action fields for PIP control transport, latency, and
+  parsed register readback.
+- Added `tools/probe_pip_control_latency.py`.
+
+Verification performed:
+
+- Python compile check passed for dashboard and probe scripts.
+- `tools/probe_pip_control_latency.py --self-test` printed
+  `PIP_CONTROL_LATENCY_PROBE_SELF_TEST_OK`.
+- Dashboard self-test printed all existing dashboard markers including
+  `DASHBOARD_GSTREAMER_CONTROL_SELF_TEST_OK` and
+  `DASHBOARD_CHINESE_UI_SELF_TEST_OK`.
+- Linux build printed `PIP_EFFECT_SERVER_BUILD_OK`.
+- Board downloaded `/tmp/pip_effect_server`, verified SHA-256
+  `24ed7b0b90bc741aa910f940d547e12c858d695a8dcd8bc37fc390ffd6741e15`,
+  and started `PIP_CONTROL_SERVER_READY host=0.0.0.0 port=5012 base=0x43c00000`.
+- Direct PC TCP commands `status`, `preset top-left`, and
+  `preset bottom-right` returned `PIP_EFFECT_STATUS` and `PIP_CONTROL_OK`.
+- Dashboard API probe passed seven PIP actions with `transports=tcp`,
+  `min_ms=1.499`, `p50_ms=2.184`, `p95_ms=21.647`, and `max_ms=24.1`.
+
+Board action:
+
+- Deployed `/tmp/pip_effect_server` over Ethernet with a temporary PC HTTP
+  server and board `wget`.
+- Started the daemon from UART.
+- No boot image, rootfs, FPGA bitstream, or flash storage was changed.
+
+Evidence:
+
+- `docs/reports/pip-tcp-control-service.md`
+- `build/pip-tcp-control-service/uart_deploy_start_pip_server.log`
+- `build/pip-tcp-control-service/dashboard-probe/pip-control-latency-report.json`
+
+Result:
+
+- PASSED.
+
+Rollback point:
+
+- `killall pip_effect_server` stops the new service.
+- Dashboard can still use the previous UART fallback path.
+
+Third-party review:
+
+- None.
+
+Residual risks:
+
+- The daemon is a trusted-lab TCP service with no authentication.
+- It still uses userspace `/dev/mem`; no kernel driver was introduced.
+- It is not installed into board init; it was manually started from UART.
+- This cycle did not revalidate HDMI/video quality.
+
 ## Cycle: pl-controlled-pip-effect-pipeline
 
 Date: 2026-07-04

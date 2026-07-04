@@ -78,7 +78,15 @@ sha256sum "$out_dir/vdma_mm2s_config" | tee "$out_dir/vdma_mm2s_config.sha256.tx
 
 file "$out_dir/pip_effect_ctl" | tee "$out_dir/pip_effect_ctl.file.txt"
 sha256sum "$out_dir/pip_effect_ctl" | tee "$out_dir/pip_effect_ctl.sha256.txt"
+
+"$cross_cc" "${common_cflags[@]}" \
+    "$repo_root/software/eth_pass_through/linux_app/src/pip_effect_server.c" \
+    -o "$out_dir/pip_effect_server"
+
+file "$out_dir/pip_effect_server" | tee "$out_dir/pip_effect_server.file.txt"
+sha256sum "$out_dir/pip_effect_server" | tee "$out_dir/pip_effect_server.sha256.txt"
 echo "LINUX_RECEIVER_BUILD_OK out=$out_dir/fb_video_udp_receiver"
 echo "DRM_KMS_RECEIVER_BUILD_OK out=$out_dir/drm_kms_udp_receiver"
 echo "VDMA_MM2S_CONFIG_BUILD_OK out=$out_dir/vdma_mm2s_config"
 echo "PIP_EFFECT_CTL_BUILD_OK out=$out_dir/pip_effect_ctl"
+echo "PIP_EFFECT_SERVER_BUILD_OK out=$out_dir/pip_effect_server"

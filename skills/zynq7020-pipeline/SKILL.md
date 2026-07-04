@@ -905,5 +905,45 @@ also passed 24/24 PIP frame validation. This path proves preset-based runtime
 PIP control, not arbitrary sliders, rotation, a kernel driver, or high-fps
 transport quality.
 
+Verified low-latency PIP TCP control path (preferred for runtime PIP preset
+controls after the controlled-PIP bitstream is already deployed, 2026-07-04):
+
+```text
+1. Build the Linux receiver/helper package:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\software\eth_pass_through\scripts\build-linux-receiver-wsl.ps1 -OutDir build\pip-tcp-control-service\linux-tools
+2. Require:
+   PIP_EFFECT_CTL_BUILD_OK
+   PIP_EFFECT_SERVER_BUILD_OK
+3. Deploy /tmp/pip_effect_server to the board over Ethernet and verify its
+   SHA-256 against build\pip-tcp-control-service\linux-tools\pip_effect_server.sha256.txt.
+4. Start the resident daemon from the board shell:
+   /tmp/pip_effect_server --port 5012 > /tmp/pip_effect_server.log 2>&1 &
+5. Require:
+   PIP_CONTROL_SERVER_READY host=0.0.0.0 port=5012 base=0x43c00000
+6. Directly probe from the PC with TCP commands:
+   status
+   preset top-left
+   preset bottom-right
+   Require PIP_EFFECT_STATUS and PIP_CONTROL_OK for each command.
+7. Start the dashboard with the TCP target:
+   rtk powershell.exe -NoProfile -Command "python .\tools\dashboard\pc_dashboard.py --host 127.0.0.1 --port 8765 --pipeline gstreamer --uart-port COM16 --uart-login-root --uart-password root --pip-control-host 192.168.1.10 --pip-control-port 5012"
+8. Run the latency probe:
+   rtk powershell.exe -NoProfile -Command "python .\tools\probe_pip_control_latency.py --url http://127.0.0.1:8765 --repeat 1 --out-dir build\pip-tcp-control-service\dashboard-probe"
+9. Require:
+   PIP_CONTROL_LATENCY_SUMMARY result=pass
+   transports=tcp
+   seven ok samples for the top-left, bottom-right, large, small, invert,
+   grayscale, and bypass PIP actions
+   parsed PIP_EFFECT_STATUS readback for each action
+```
+
+Verified outcome:
+Runtime PIP preset control no longer pays the per-click UART login/shell/helper
+startup cost. The dashboard uses a resident POSIX TCP daemon on the board,
+falls back to UART only if TCP is unavailable, and reports control transport,
+end-to-end latency, and PL register readback. The passing run measured seven
+dashboard PIP actions over TCP with p50=2.184 ms and max=24.1 ms. This path
+does not change video transport, HDMI quality, PL logic, or boot persistence.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.
