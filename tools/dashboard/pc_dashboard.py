@@ -330,7 +330,6 @@ def make_output_placeholder_svg(width: int = DEFAULT_WIDTH, height: int = DEFAUL
 
 
 def dashboard_html(actions_enabled: bool = True) -> bytes:
-    policy = html.escape(NO_CAMERA_POLICY)
     disabled_attr = "" if actions_enabled else " disabled"
     page = f"""<!doctype html>
 <html lang="zh-CN">
@@ -394,22 +393,15 @@ def dashboard_html(actions_enabled: bool = True) -> bytes:
 <body>
   <header>
     <h1>Zynq 视频控制台</h1>
-    <div data-testid="no-camera-policy">{policy}</div>
   </header>
   <main>
     <section data-panel="input">
       <h2>输入到 FPGA</h2>
       <img class="preview" id="input-preview" src="/api/input-stream.mjpeg" alt="PC 端实际发送的 GStreamer 源视频流">
-      <div class="meta">来源：PC 端 GStreamer 演示源预览
-摄像头：禁用
-自定义文件：暂缓</div>
     </section>
     <section data-panel="output">
       <h2>FPGA 输出</h2>
       <img class="preview" id="output-preview" src="/api/output-stream.mjpeg" alt="FPGA HDMI 实时回传预览">
-      <div class="meta">来源：通过采集卡读取的 HDMI 实时回传
-角色：GStreamer RTP/JPEG 到 fbdevsink 的输出回看
-说明：Windows 可能把 HDMI/UVC 采集卡标记为摄像头设备</div>
     </section>
     <section data-panel="control">
       <h2>控制</h2>
@@ -1921,7 +1913,13 @@ def run_self_test(out_dir: Path) -> int:
         assert "输入到 FPGA" in page
         assert "FPGA 输出" in page
         assert "启动视频流" in page
-        assert NO_CAMERA_POLICY in page
+        assert NO_CAMERA_POLICY not in page
+        assert "来源：PC 端 GStreamer 演示源预览" not in page
+        assert "摄像头：禁用" not in page
+        assert "自定义文件：暂缓" not in page
+        assert "来源：通过采集卡读取的 HDMI 实时回传" not in page
+        assert "角色：GStreamer RTP/JPEG 到 fbdevsink 的输出回看" not in page
+        assert "说明：Windows 可能把 HDMI/UVC 采集卡标记为摄像头设备" not in page
         assert 'data-panel="input"' in page
         assert 'data-panel="output"' in page
         assert 'data-panel="control"' in page

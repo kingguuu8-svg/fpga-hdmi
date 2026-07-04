@@ -20,6 +20,59 @@ Third-party review:
 Residual risks:
 ```
 
+## Cycle: dashboard-console-copy-trim
+
+Date: 2026-07-04
+
+Commit: this commit (`cycle: trim dashboard console copy`)
+
+Objective: remove redundant explanatory copy from the visible dashboard panels
+while keeping machine-readable status/debug fields in `/api/state` and logs.
+
+Changed scope:
+
+- Removed the browser-visible header input-policy line.
+- Removed static input-panel source/camera/custom-file explanatory copy.
+- Removed static output-panel source/role/Windows-HDMI explanatory copy.
+- Kept dashboard API state fields and logs unchanged for debugging and
+  automation.
+
+Verification performed:
+
+- `python -m py_compile tools\dashboard\pc_dashboard.py`
+- `python .\tools\dashboard\pc_dashboard.py --self-test --out-dir build\dashboard-console-copy-trim`
+- Generated HTML absence check returned `HTML_COPY_TRIM_OK`.
+- Self-test markers included `DASHBOARD_GSTREAMER_CONTROL_SELF_TEST_OK` and
+  `DASHBOARD_CHINESE_UI_SELF_TEST_OK`.
+
+Board action:
+
+- None. PC-side dashboard rendering change only.
+
+Evidence:
+
+- `docs/reports/dashboard-console-copy-trim.md`
+- `build/dashboard-console-copy-trim/index.html`
+- `build/dashboard-console-copy-trim/state.json`
+- `build/dashboard-console-copy-trim/final-state.json`
+
+Result:
+
+- PASSED.
+
+Rollback point:
+
+- Previous commit: `e63ccf0 cycle: measure video bottlenecks`.
+
+Third-party review:
+
+- None.
+
+Residual risks:
+
+- An already-running dashboard process must be restarted to serve the updated
+  HTML.
+
 ## Cycle: video-bottleneck-probe
 
 Date: 2026-07-04

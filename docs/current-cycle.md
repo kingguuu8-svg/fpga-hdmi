@@ -43,6 +43,15 @@ None.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: dashboard-console-copy-trim
+Result: PASSED. Removed redundant explanatory text from the visible dashboard
+  panels while keeping machine-readable status/debug fields in /api/state and
+  logs. Dashboard self-test and generated HTML absence check passed.
+Evidence: docs/reports/dashboard-console-copy-trim.md,
+  build/dashboard-console-copy-trim/index.html,
+  build/dashboard-console-copy-trim/state.json
+Board action: none. PC-side dashboard rendering change only.
+
 Cycle ID: video-bottleneck-probe
 Result: PASSED for measurement. The bottleneck probe measured the current
   320x240 RTP/JPEG input path at 5/10/15/30fps into both fakesink and fbdevsink.
