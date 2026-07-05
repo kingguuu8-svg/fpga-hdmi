@@ -24,6 +24,21 @@
 #define BUFFER_PROBE_MARKER_SIZE 24
 #define DEFAULT_DMA_DEVICE "/dev/jpegpl_dma_probe"
 
+typedef struct _GstJpegPlDecJpegInfo {
+  gboolean valid;
+  gboolean baseline;
+  gboolean progressive;
+  gboolean has_sos;
+  gboolean sampling_420;
+  guint width;
+  guint height;
+  guint components;
+  guint restart_interval;
+  guint dqt_segments;
+  guint dht_segments;
+  gchar sampling[16];
+} GstJpegPlDecJpegInfo;
+
 typedef struct _GstJpegPlDecSample {
   GstClockTime entered_at;
   gsize in_bytes;
@@ -35,6 +50,7 @@ typedef struct _GstJpegPlDec {
   GQueue *pending;
   GMutex lock;
   gchar *probe_mode;
+  gchar *backend;
   gchar *dma_device;
   guint summary_interval;
   guint32 pl_base;
@@ -62,8 +78,13 @@ typedef struct _GstJpegPlDec {
   guint64 dma_writeback_frames;
   guint64 dma_writeback_pass_frames;
   guint64 dma_writeback_fail_frames;
+  guint64 compressed_dma_frames;
+  guint64 compressed_dma_pass_frames;
+  guint64 compressed_dma_fail_frames;
   guint64 total_dma_probe_ns;
   guint64 max_dma_probe_ns;
+  guint64 total_compressed_dma_ns;
+  guint64 max_compressed_dma_ns;
   guint64 recent_decode_ns[RECENT_WINDOW];
   guint recent_count;
   guint recent_index;
@@ -81,6 +102,7 @@ G_DEFINE_TYPE(GstJpegPlDec, gst_jpeg_pl_dec, GST_TYPE_BIN)
 
 enum {
   PROP_0,
+  PROP_BACKEND,
   PROP_PROBE_MODE,
   PROP_SUMMARY_INTERVAL,
   PROP_PL_BASE,
@@ -142,12 +164,21 @@ pl_reg_read(volatile guint8 *base, guint32 offset)
 }
 
 static gboolean
+gst_jpeg_pl_dec_compressed_dma_enabled(GstJpegPlDec *self)
+{
+  return g_strcmp0(self->probe_mode, "compressed-dma-probe") == 0 ||
+         g_strcmp0(self->probe_mode, "pl-compressed-dma-probe") == 0 ||
+         g_strcmp0(self->backend, "pl-compressed-probe") == 0;
+}
+
+static gboolean
 gst_jpeg_pl_dec_pl_probe_enabled(GstJpegPlDec *self)
 {
   return g_strcmp0(self->probe_mode, "pl-probe") == 0 ||
          g_strcmp0(self->probe_mode, "pl-buffer-probe") == 0 ||
          g_strcmp0(self->probe_mode, "pl-dma-probe") == 0 ||
-         g_strcmp0(self->probe_mode, "pl-dma-writeback") == 0;
+         g_strcmp0(self->probe_mode, "pl-dma-writeback") == 0 ||
+         g_strcmp0(self->probe_mode, "pl-compressed-dma-probe") == 0;
 }
 
 static gboolean
@@ -184,6 +215,125 @@ fnv1a32(const guint8 *data, gsize size)
     hash *= 16777619u;
   }
   return hash;
+}
+
+static guint
+read_be16(const guint8 *data)
+{
+  return ((guint)data[0] << 8) | (guint)data[1];
+}
+
+static void
+gst_jpeg_pl_dec_parse_jpeg_info(const guint8 *data, gsize size,
+                                GstJpegPlDecJpegInfo *info)
+{
+  gsize pos = 2u;
+
+  memset(info, 0, sizeof(*info));
+  g_strlcpy(info->sampling, "unknown", sizeof(info->sampling));
+
+  if (data == NULL || size < 4u || data[0] != 0xffu || data[1] != 0xd8u) {
+    return;
+  }
+
+  info->valid = TRUE;
+  while (pos + 4u <= size) {
+    guint marker;
+    guint segment_len;
+    gsize segment_start;
+
+    while (pos < size && data[pos] != 0xffu) {
+      pos++;
+    }
+    while (pos < size && data[pos] == 0xffu) {
+      pos++;
+    }
+    if (pos >= size) {
+      break;
+    }
+
+    marker = data[pos++];
+    if (marker == 0xd9u) {
+      break;
+    }
+    if (marker == 0x01u || (marker >= 0xd0u && marker <= 0xd7u)) {
+      continue;
+    }
+    if (pos + 2u > size) {
+      break;
+    }
+
+    segment_len = read_be16(data + pos);
+    if (segment_len < 2u || pos + segment_len > size) {
+      break;
+    }
+    segment_start = pos + 2u;
+
+    if (marker == 0xc0u || marker == 0xc2u) {
+      info->baseline = marker == 0xc0u;
+      info->progressive = marker == 0xc2u;
+      if (segment_len >= 8u) {
+        guint i;
+        guint sampling0 = 0u;
+
+        info->height = read_be16(data + segment_start + 1u);
+        info->width = read_be16(data + segment_start + 3u);
+        info->components = data[segment_start + 5u];
+        if (info->components > 0u && segment_len >= 8u + (info->components * 3u)) {
+          sampling0 = data[segment_start + 7u];
+          for (i = 0u; i < info->components; i++) {
+            guint sampling = data[segment_start + 7u + (i * 3u)];
+            if (i == 0u && sampling == 0x22u) {
+              continue;
+            }
+            if (i > 0u && sampling == 0x11u) {
+              continue;
+            }
+            sampling0 = 0u;
+            break;
+          }
+          info->sampling_420 = sampling0 == 0x22u && info->components == 3u;
+          if (info->sampling_420) {
+            g_strlcpy(info->sampling, "4:2:0", sizeof(info->sampling));
+          } else {
+            g_snprintf(info->sampling, sizeof(info->sampling), "0x%02x", sampling0);
+          }
+        }
+      }
+    } else if (marker == 0xdbu) {
+      info->dqt_segments++;
+    } else if (marker == 0xc4u) {
+      info->dht_segments++;
+    } else if (marker == 0xddu && segment_len >= 4u) {
+      info->restart_interval = read_be16(data + segment_start);
+    } else if (marker == 0xdau) {
+      info->has_sos = TRUE;
+      break;
+    }
+
+    pos += segment_len;
+  }
+}
+
+static gboolean
+gst_jpeg_pl_dec_get_jpeg_caps(GstPad *pad, gint *width, gint *height)
+{
+  GstCaps *caps = gst_pad_get_current_caps(pad);
+  GstStructure *structure;
+  gboolean ok = FALSE;
+
+  if (caps == NULL || gst_caps_is_empty(caps)) {
+    if (caps != NULL) {
+      gst_caps_unref(caps);
+    }
+    return FALSE;
+  }
+
+  structure = gst_caps_get_structure(caps, 0);
+  ok = gst_structure_get_int(structure, "width", width) &&
+       gst_structure_get_int(structure, "height", height);
+  gst_caps_unref(caps);
+  return ok;
 }
 
 static gboolean
@@ -526,6 +676,123 @@ done:
   }
 }
 
+static void
+gst_jpeg_pl_dec_log_compressed_dma_probe(GstJpegPlDec *self, GstBuffer *buffer,
+                                         GstPad *pad, guint64 frame_id)
+{
+  struct jpegpl_dma_probe_run req;
+  GstMapInfo map;
+  GstClockTime started;
+  guint64 elapsed_ns;
+  guint32 host_checksum = 0u;
+  gboolean pass = FALSE;
+  gboolean mapped = FALSE;
+  gint ioctl_result = -1;
+  gint ioctl_errno = 0;
+  gint caps_width = 0;
+  gint caps_height = 0;
+  gboolean caps_ok = FALSE;
+  GstJpegPlDecJpegInfo jpeg_info;
+
+  if (!gst_jpeg_pl_dec_compressed_dma_enabled(self) || buffer == NULL) {
+    return;
+  }
+
+  started = gst_util_get_timestamp();
+  memset(&req, 0, sizeof(req));
+  memset(&jpeg_info, 0, sizeof(jpeg_info));
+
+  if (!gst_jpeg_pl_dec_open_dma_probe(self)) {
+    ioctl_errno = errno;
+    goto done;
+  }
+  if (!gst_buffer_map(buffer, &map, GST_MAP_READ)) {
+    ioctl_errno = EFAULT;
+    goto done;
+  }
+  mapped = TRUE;
+  if (map.size == 0u || map.size > G_MAXUINT32) {
+    ioctl_errno = E2BIG;
+    goto done;
+  }
+
+  gst_jpeg_pl_dec_parse_jpeg_info(map.data, map.size, &jpeg_info);
+  caps_ok = gst_jpeg_pl_dec_get_jpeg_caps(pad, &caps_width, &caps_height);
+  if (self->dma_out_capacity < map.size) {
+    self->dma_out = g_realloc(self->dma_out, map.size);
+    self->dma_out_capacity = map.size;
+  }
+  memset(self->dma_out, 0, map.size);
+  host_checksum = fnv1a32(map.data, map.size);
+
+  req.length = (guint32)map.size;
+  req.timeout_ms = 1000u;
+  req.user_in = (guint64)(uintptr_t)map.data;
+  req.user_out = (guint64)(uintptr_t)self->dma_out;
+  ioctl_result = ioctl(self->dma_fd, JPEGPL_DMA_PROBE_IOC_RUN, &req);
+  if (ioctl_result != 0) {
+    ioctl_errno = errno;
+  } else {
+    pass = req.status == (JPEGPL_DMA_PROBE_STATUS_TX_DONE |
+                          JPEGPL_DMA_PROBE_STATUS_RX_DONE) &&
+           req.checksum_in == host_checksum &&
+           req.checksum_out == host_checksum &&
+           memcmp(map.data, self->dma_out, map.size) == 0;
+  }
+
+done:
+  elapsed_ns = gst_util_get_timestamp() - started;
+  self->compressed_dma_frames++;
+  self->total_compressed_dma_ns += elapsed_ns;
+  self->max_compressed_dma_ns = MAX(self->max_compressed_dma_ns, elapsed_ns);
+  if (pass) {
+    self->compressed_dma_pass_frames++;
+  } else {
+    self->compressed_dma_fail_frames++;
+  }
+
+  g_print("JPEGPLDEC_COMPRESSED_DMA_PROBE frame=%" G_GUINT64_FORMAT
+          " backend=%s mode=%s caps_width=%d caps_height=%d"
+          " jpeg_valid=%u jpeg_width=%u jpeg_height=%u baseline=%u progressive=%u"
+          " sampling=%s components=%u dqt=%u dht=%u sos=%u restart_interval=%u"
+          " bytes=%u chunks=%u max_chunk=%u status=0x%08x"
+          " checksum_host=0x%08x checksum_dma_in=0x%08x checksum_dma_out=0x%08x"
+          " dma_elapsed_ms=%.3f total_elapsed_ms=%.3f"
+          " ioctl_result=%d errno=%d result=%s\n",
+          frame_id,
+          self->backend,
+          self->probe_mode,
+          caps_ok ? caps_width : 0,
+          caps_ok ? caps_height : 0,
+          jpeg_info.valid ? 1u : 0u,
+          jpeg_info.width,
+          jpeg_info.height,
+          jpeg_info.baseline ? 1u : 0u,
+          jpeg_info.progressive ? 1u : 0u,
+          jpeg_info.sampling,
+          jpeg_info.components,
+          jpeg_info.dqt_segments,
+          jpeg_info.dht_segments,
+          jpeg_info.has_sos ? 1u : 0u,
+          jpeg_info.restart_interval,
+          req.length,
+          req.chunks,
+          req.max_chunk_size,
+          req.status,
+          host_checksum,
+          req.checksum_in,
+          req.checksum_out,
+          ns_to_ms(req.elapsed_ns),
+          ns_to_ms(elapsed_ns),
+          ioctl_result,
+          ioctl_errno,
+          pass ? "pass" : "fail");
+
+  if (mapped) {
+    gst_buffer_unmap(buffer, &map);
+  }
+}
+
 static gboolean
 gst_jpeg_pl_dec_map_pl_regs(GstJpegPlDec *self)
 {
@@ -651,11 +918,16 @@ gst_jpeg_pl_dec_sink_probe(GstPad *pad, GstPadProbeInfo *info,
   GstJpegPlDec *self = GST_JPEG_PL_DEC(user_data);
   GstBuffer *buffer = GST_PAD_PROBE_INFO_BUFFER(info);
   GstJpegPlDecSample *sample;
+  guint64 frame_id;
 
-  (void)pad;
   if (buffer == NULL) {
     return GST_PAD_PROBE_OK;
   }
+
+  g_mutex_lock(&self->lock);
+  frame_id = self->in_frames + 1u;
+  g_mutex_unlock(&self->lock);
+  gst_jpeg_pl_dec_log_compressed_dma_probe(self, buffer, pad, frame_id);
 
   sample = g_new0(GstJpegPlDecSample, 1);
   sample->entered_at = gst_util_get_timestamp();
@@ -765,6 +1037,18 @@ gst_jpeg_pl_dec_set_property(GObject *object, guint prop_id,
   GstJpegPlDec *self = GST_JPEG_PL_DEC(object);
 
   switch (prop_id) {
+    case PROP_BACKEND: {
+      const gchar *backend = g_value_get_string(value);
+      if (g_strcmp0(backend, "software-reference") != 0 &&
+          g_strcmp0(backend, "pl-compressed-probe") != 0) {
+        GST_WARNING_OBJECT(self, "unknown backend '%s', using software-reference",
+                           backend == NULL ? "" : backend);
+        backend = "software-reference";
+      }
+      g_free(self->backend);
+      self->backend = g_strdup(backend);
+      break;
+    }
     case PROP_PROBE_MODE: {
       const gchar *mode = g_value_get_string(value);
       if (g_strcmp0(mode, "software") != 0 &&
@@ -774,7 +1058,9 @@ gst_jpeg_pl_dec_set_property(GObject *object, guint prop_id,
           g_strcmp0(mode, "dma-probe") != 0 &&
           g_strcmp0(mode, "pl-dma-probe") != 0 &&
           g_strcmp0(mode, "dma-writeback") != 0 &&
-          g_strcmp0(mode, "pl-dma-writeback") != 0) {
+          g_strcmp0(mode, "pl-dma-writeback") != 0 &&
+          g_strcmp0(mode, "compressed-dma-probe") != 0 &&
+          g_strcmp0(mode, "pl-compressed-dma-probe") != 0) {
         GST_WARNING_OBJECT(self, "unknown probe-mode '%s', using software",
                            mode == NULL ? "" : mode);
         mode = "software";
@@ -809,6 +1095,9 @@ gst_jpeg_pl_dec_get_property(GObject *object, guint prop_id, GValue *value,
   GstJpegPlDec *self = GST_JPEG_PL_DEC(object);
 
   switch (prop_id) {
+    case PROP_BACKEND:
+      g_value_set_string(value, self->backend);
+      break;
     case PROP_PROBE_MODE:
       g_value_set_string(value, self->probe_mode);
       break;
@@ -860,11 +1149,22 @@ gst_jpeg_pl_dec_finalize(GObject *object)
             self->dma_writeback_pass_frames,
             self->dma_writeback_fail_frames);
   }
+  if (self->compressed_dma_frames > 0u) {
+    g_print("JPEGPLDEC_COMPRESSED_DMA_SUMMARY frames=%" G_GUINT64_FORMAT
+            " pass=%" G_GUINT64_FORMAT " fail=%" G_GUINT64_FORMAT
+            " avg_ms=%.3f max_ms=%.3f\n",
+            self->compressed_dma_frames,
+            self->compressed_dma_pass_frames,
+            self->compressed_dma_fail_frames,
+            ns_to_ms(self->total_compressed_dma_ns / self->compressed_dma_frames),
+            ns_to_ms(self->max_compressed_dma_ns));
+  }
   if (self->pending != NULL) {
     g_queue_free_full(self->pending, g_free);
     self->pending = NULL;
   }
   g_clear_pointer(&self->probe_mode, g_free);
+  g_clear_pointer(&self->backend, g_free);
   g_clear_pointer(&self->dma_device, g_free);
   g_clear_pointer(&self->dma_in, g_free);
   g_clear_pointer(&self->dma_out, g_free);
@@ -876,6 +1176,7 @@ static void
 gst_jpeg_pl_dec_init(GstJpegPlDec *self)
 {
   self->pending = g_queue_new();
+  self->backend = g_strdup("software-reference");
   self->probe_mode = g_strdup("software");
   self->dma_device = g_strdup(DEFAULT_DMA_DEVICE);
   self->dma_fd = -1;
@@ -914,11 +1215,20 @@ gst_jpeg_pl_dec_class_init(GstJpegPlDecClass *klass)
 
   g_object_class_install_property(
       object_class,
+      PROP_BACKEND,
+      g_param_spec_string(
+          "backend",
+          "Decoder backend",
+          "software-reference keeps the internal jpegdec child; pl-compressed-probe sends compressed JPEG input through the PL DMA data plane before falling back to software reference decode",
+          "software-reference",
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property(
+      object_class,
       PROP_PROBE_MODE,
       g_param_spec_string(
           "probe-mode",
           "Probe mode",
-          "software keeps the reference jpegdec path; pl-probe samples PL status; buffer-probe stamps I420; dma-probe loops each decoded buffer through PL; dma-writeback writes PL-returned bytes downstream",
+          "software keeps the reference jpegdec path; pl-probe samples PL status; buffer-probe stamps I420; dma-probe loops each decoded buffer through PL; compressed-dma-probe loops compressed JPEG input through PL before software decode; dma-writeback writes PL-returned bytes downstream",
           "software",
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property(
@@ -960,9 +1270,9 @@ gst_jpeg_pl_dec_class_init(GstJpegPlDecClass *klass)
 
   gst_element_class_set_static_metadata(
       element_class,
-      "JPEG PL decoder skeleton",
+      "JPEG PL decoder entry point",
       "Codec/Decoder/Image",
-      "Project-owned JPEG decoder entry point; current implementation wraps jpegdec as the software reference path",
+      "Project-owned JPEG decoder entry point with software reference and PL data-plane probes",
       "fpga-hdml");
 
   gst_element_class_add_static_pad_template(element_class, &sink_template);

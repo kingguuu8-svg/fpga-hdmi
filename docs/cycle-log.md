@@ -20,6 +20,77 @@ Third-party review:
 Residual risks:
 ```
 
+## Cycle: jpegpldec-pl-decode-720p30-v0
+
+Date: 2026-07-05
+
+Commit: this commit (`cycle: add jpegpldec compressed PL ingress`)
+
+Objective: implement the first 720p30 `jpegpldec` PL decode-backend boundary by
+sending compressed JPEG GstBuffers into the PL DMA data plane before falling
+back to the software reference decoder.
+
+Changed scope:
+
+- Added `backend=software-reference|pl-compressed-probe` to `jpegpldec`.
+- Added `probe-mode=compressed-dma-probe` and
+  `probe-mode=pl-compressed-dma-probe`.
+- Added JPEG metadata parsing for the compressed input contract.
+- Extended the connected probe runner to verify variable-size compressed JPEG
+  buffers through `/dev/jpegpl_dma_probe`.
+- Updated `software/gstreamer/jpegpldec/README.md`, the pipeline skill, and
+  this cycle report.
+
+Verification performed:
+
+- PowerShell parser accepted `tools/run_jpegpldec_pl_probe.ps1`.
+- `git diff --check` found no whitespace errors.
+- `JPEGPLDEC_PLUGIN_BUILD_OK` built an ARM `libgstjpegpldec.so` with SHA-256
+  `6b102b5d6f194b9e69386fa99511e0313b1e41fb54f2f9dac3469477544c7b5d`.
+- Connected board loaded the plugin and `jpegpl_dma_probe.ko`, and standalone
+  DMA test printed `JPEGPL_DMA_PROBE_TEST_OK length=115200`.
+- Connected board ran `jpegpldec backend=pl-compressed-probe
+  probe-mode=compressed-dma-probe` with PC 1280x720@30 RTP/JPEG input.
+- Four compressed JPEG frames logged `result=pass`, with zero failures and
+  parsed JPEG metadata `1280x720 baseline 4:2:0`.
+- PL counters advanced to 8 DMA transactions and 120408 bytes.
+- HDMI motion validation printed `HDMI_BALL_MOTION_OK samples=300
+  unique_hashes=5 frames_with_ball=300 x_span=80.134 y_span=133.253`.
+
+Board action:
+
+- Loaded temporary plugin/module from `/tmp`, ran a temporary GStreamer
+  receiver, sent 1280x720 RTP/JPEG from the PC over Ethernet, and captured HDMI
+  through the PC adapter. No BOOT.BIN, image.ub, rootfs, bitstream, TF-card
+  image, JTAG programming, or board flash changed.
+
+Evidence:
+
+- `docs/reports/jpegpldec-pl-decode-720p30-v0.md`
+- `build/jpegpldec-pl-decode-720p30-v0-pass3/summary.json`
+- `build/jpegpldec-pl-decode-720p30-v0-pass3/uart-deploy-inspect.log`
+- `build/jpegpldec-pl-decode-720p30-v0-pass3/uart-stop-dma-probe.log`
+- `build/jpegpldec-pl-decode-720p30-v0-pass3/hdmi-ball-motion-validation.json`
+
+Result: PASSED for compressed JPEG ingress into the PL data plane. This is not
+a full PL JPEG decoder, not a 30 fps throughput pass, and not native 720p HDMI
+output.
+
+Rollback point: parent of this cycle commit. Board changes are runtime-only and
+clear on reboot or by removing `/tmp/gst-plugins/libgstjpegpldec.so` and
+unloading `jpegpl_dma_probe`.
+
+Third-party review: none.
+
+Residual risks:
+
+- Actual JPEG decode is still performed by the internal software `jpegdec`
+  child.
+- The next implementation must replace a real decoder stage such as entropy
+  decode/dequant/IDCT/color conversion or bind a mature hardware decoder block.
+- The 720p30 software-reference path remains throughput-blocked at the prior
+  measured baseline.
+
 ## Cycle: 720p30-jpeg-chain-contract
 
 Date: 2026-07-05

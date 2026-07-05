@@ -56,6 +56,15 @@ udpsrc port=5011 caps=...
 ! fbdevsink device=/dev/fb0 sync=true
 ```
 
+## Backends
+
+- `backend=software-reference`: default path. `jpegpldec` keeps the internal
+  software `jpegdec` child and only adds profiling/probe hooks.
+- `backend=pl-compressed-probe`: sends compressed JPEG input buffers through
+  `/dev/jpegpl_dma_probe` before falling back to the software reference decode.
+  This is the first PL decode-backend boundary. It proves real compressed JPEG
+  ingress into the PL DMA data plane, not PL entropy decode yet.
+
 ## Probe Modes
 
 `jpegpldec` keeps the external GStreamer caps stable while exposing internal
@@ -76,6 +85,11 @@ measurement hooks:
   through `/dev/jpegpl_dma_probe`, and writes the PL-returned bytes into the
   downstream GstBuffer.
 - `probe-mode=pl-dma-writeback`: combines `pl-probe` and `dma-writeback`.
+- `probe-mode=compressed-dma-probe`: loops compressed JPEG input through
+  `/dev/jpegpl_dma_probe` before software decode, parses JPEG metadata, and
+  verifies returned bytes and checksums.
+- `probe-mode=pl-compressed-dma-probe`: combines `pl-probe` and
+  `compressed-dma-probe`.
 - `summary-interval=N`: emit one `JPEGPLDEC_PROFILE` marker every `N` decoded
   frames.
 - `pl-base=1136656384`: PL PIP AXI-Lite base address; default is
@@ -90,11 +104,19 @@ JPEGPLDEC_PL_PROBE frame=... main_frames=... pip_frames=... overlay_pixels=...
 JPEGPLDEC_BUFFER_PROBE frame=... checksum_before=... checksum_after=... result=pass
 JPEGPLDEC_DMA_PROBE frame=... bytes=... chunks=... checksum_host=... result=pass
 JPEGPLDEC_DMA_WRITEBACK frame=... checksum_staged=... checksum_written=... result=pass
+JPEGPLDEC_COMPRESSED_DMA_PROBE frame=... jpeg_width=... jpeg_height=... sampling=... result=pass
 ```
 
 The PL probe reads the existing PIP status registers. It proves that the
 plugin can access the live PL control/status plane while the video pipeline is
-running. It does not yet move compressed JPEG data through a PL decoder.
+running.
+
+The compressed DMA probe is the first PL decode-backend boundary. It taps the
+compressed `image/jpeg` GstBuffer on the decoder sink pad, parses enough JPEG
+headers to verify the contract, sends those exact compressed bytes through the
+PL DMA endpoint, and then continues through the software reference decoder.
+It does not yet implement Huffman decode, dequant, IDCT, color conversion, or
+decoded-frame generation in PL.
 
 The buffer probe modifies the decoded I420 buffer before downstream
 `videoconvert`, `videoscale`, `fbdevsink`, VDMA, PL PIP, and HDMI. It proves
@@ -143,4 +165,10 @@ For the PL-returned GstBuffer writeback probe:
 
 ```powershell
 rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_jpegpldec_pl_probe.ps1 -ProbeMode dma-writeback -SummaryInterval 10 -Frames 60 -Fps 5 -OutDir build\jpegpldec-dma-writeback
+```
+
+For the 720p compressed-JPEG PL ingress probe:
+
+```powershell
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_jpegpldec_pl_probe.ps1 -ProbeMode compressed-dma-probe -InputWidth 1280 -InputHeight 720 -OutputWidth 800 -OutputHeight 600 -Fps 30 -Frames 5 -SummaryInterval 5 -OutDir build\jpegpldec-pl-decode-720p30-v0
 ```

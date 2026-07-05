@@ -1234,5 +1234,43 @@ the writable GstBuffer. The passing run processed 60 logical frames, recorded
 HDMI-return frames. This is not zero-copy, not PL-generated pixel modification,
 and not JPEG entropy decode acceleration.
 
+Verified `jpegpldec` compressed-JPEG PL ingress path (preferred first 720p30
+decoder-backend boundary before implementing PL entropy decode, 2026-07-05):
+
+```text
+1. Run the connected-board compressed ingress probe:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_jpegpldec_pl_probe.ps1 -ProbeMode compressed-dma-probe -InputWidth 1280 -InputHeight 720 -OutputWidth 800 -OutputHeight 600 -Fps 30 -Frames 5 -SummaryInterval 5 -CompressedMinPassFrames 4 -OutDir build\jpegpldec-pl-decode-720p30-v0
+2. Require plugin and DMA-client readiness:
+   JPEGPLDEC_PLUGIN_BUILD_OK
+   JPEGPL_DMA_PROBE_CLIENT_BUILD_OK
+   JPEGPL_DMA_PROBE_TEST_OK length=115200
+   JPEGPLDEC_DEPLOY_INSPECT_DONE
+3. Require `gst-inspect-1.0 jpegpldec` to show:
+   backend
+   probe-mode
+   Children: software-reference-decoder
+4. Require the live pipeline to use:
+   jpegpldec backend=pl-compressed-probe probe-mode=compressed-dma-probe
+5. Require compressed JPEG ingress evidence:
+   JPEGPLDEC_COMPRESSED_DMA_PROBE ... caps_width=1280 caps_height=720 ...
+   jpeg_valid=1 jpeg_width=1280 jpeg_height=720 baseline=1 progressive=0
+   sampling=4:2:0 ... result=pass
+   at least four pass frames and zero fail frames
+6. Require PL counters to advance:
+   PL_DMA_FRAMES > 0
+   PL_DMA_BYTES > 0
+7. Require dynamic HDMI validation:
+   HDMI_BALL_MOTION_OK
+```
+
+Verified outcome:
+`jpegpldec` now has a real compressed-input PL data-plane ingress point for the
+720p30 contract. The passing run sent 1280x720 RTP/JPEG from the PC, parsed
+baseline 4:2:0 JPEG metadata inside `jpegpldec`, looped four variable-size
+compressed JPEG GstBuffers through `/dev/jpegpl_dma_probe`, recorded 8 PL DMA
+transactions and 120,408 bytes, and kept HDMI dynamic. This is not a full PL
+JPEG decoder: the internal software `jpegdec` child still performs actual
+decode after the compressed PL probe.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

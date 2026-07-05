@@ -16,6 +16,7 @@ param(
     [string]$CaptureDevice = "1",
     [string]$CaptureBackend = "dshow",
     [int]$SummaryInterval = 30,
+    [int]$CompressedMinPassFrames = 4,
     [string]$ProbeMode = "pl-probe",
     [string]$OutDir = "build\jpegpldec-pl-probe-and-profile",
     [string]$DashboardUrl = "http://127.0.0.1:8765"
@@ -195,6 +196,7 @@ try {
     }
     $deployLog = Invoke-UartCommands -Label "deploy-inspect" -Commands $deployCommands
     Require-Text -Path $deployLog -Pattern $hash -Label "deployed plugin sha256"
+    Require-Text -Path $deployLog -Pattern "backend" -Label "backend property"
     Require-Text -Path $deployLog -Pattern "probe-mode" -Label "probe-mode property"
     Require-Text -Path $deployLog -Pattern "pl-base" -Label "pl-base property"
     Require-Text -Path $deployLog -Pattern "JPEGPLDEC_DEPLOY_INSPECT_DONE" -Label "deploy marker"
@@ -204,7 +206,8 @@ try {
     }
 
     $caps = "application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string)JPEG, payload=(int)26"
-    $pipeline = "GST_PLUGIN_PATH=/tmp/gst-plugins GST_REGISTRY=/tmp/gst-registry-jpegpldec-profile.bin nohup gst-launch-1.0 -v udpsrc port=$GstPort caps=`"$caps`" ! rtpjitterbuffer latency=100 drop-on-latency=true ! rtpjpegdepay ! jpegpldec probe-mode=$ProbeMode summary-interval=$SummaryInterval ! videoconvert ! videoscale ! video/x-raw,format=BGR,width=$OutputWidth,height=$OutputHeight ! fbdevsink device=/dev/fb0 sync=true > /tmp/gst_jpegpldec_profile.log 2>&1 & echo `$! > /tmp/gst_jpegpldec_profile.pid"
+    $backendArg = if ($ProbeMode -match "compressed") { "backend=pl-compressed-probe " } else { "" }
+    $pipeline = "GST_PLUGIN_PATH=/tmp/gst-plugins GST_REGISTRY=/tmp/gst-registry-jpegpldec-profile.bin nohup gst-launch-1.0 -v udpsrc port=$GstPort caps=`"$caps`" ! rtpjitterbuffer latency=100 drop-on-latency=true ! rtpjpegdepay ! jpegpldec $($backendArg)probe-mode=$ProbeMode summary-interval=$SummaryInterval ! videoconvert ! videoscale ! video/x-raw,format=BGR,width=$OutputWidth,height=$OutputHeight ! fbdevsink device=/dev/fb0 sync=true > /tmp/gst_jpegpldec_profile.log 2>&1 & echo `$! > /tmp/gst_jpegpldec_profile.pid"
     $dmaResetCommand = if ($ProbeMode -match "dma") {
         "devmem 0x43c10000 32 0x5; devmem 0x43c10000 32 0x1; echo JPEGPL_DMA_PROBE_COUNTERS_RESET"
     } else {
@@ -258,6 +261,8 @@ try {
     }
 
     $probeOut = Join-Path $outPath "dashboard-output-mjpeg-probe"
+    $plDmaTransactions = 0
+    $plDmaBytes = 0
     if ($ProbeMode -match "dma") {
         $mjpegStatus = "not-run-direct-hdmi"
     } else {
@@ -323,29 +328,54 @@ try {
         )
         $dmaText = Get-Content -Raw -LiteralPath $stopLog
         $writebackMode = $ProbeMode -match "writeback"
-        $dmaMarker = if ($writebackMode) { "JPEGPLDEC_DMA_WRITEBACK" } else { "JPEGPLDEC_DMA_PROBE" }
+        $compressedMode = $ProbeMode -match "compressed"
+        $dmaMarker = if ($compressedMode) { "JPEGPLDEC_COMPRESSED_DMA_PROBE" } elseif ($writebackMode) { "JPEGPLDEC_DMA_WRITEBACK" } else { "JPEGPLDEC_DMA_PROBE" }
         $dmaPassFrames = ([regex]::Matches($dmaText, "$dmaMarker frame=.*result=pass")).Count
         $dmaFailFrames = ([regex]::Matches($dmaText, "$dmaMarker frame=.*result=fail")).Count
-        if ($dmaPassFrames -lt ($Frames - 1) -or $dmaFailFrames -ne 0) {
-            throw "DMA frame probe failed: pass=$dmaPassFrames fail=$dmaFailFrames expected=$Frames"
+        $requiredPassFrames = if ($compressedMode) { [Math]::Min($Frames, $CompressedMinPassFrames) } else { $Frames - 1 }
+        if ($dmaPassFrames -lt $requiredPassFrames -or $dmaFailFrames -ne 0) {
+            throw "DMA frame probe failed: pass=$dmaPassFrames fail=$dmaFailFrames required=$requiredPassFrames requested=$Frames"
         }
-        Require-Text -Path $stopLog -Pattern "JPEGPLDEC_PROFILE frames=$Frames" -Label "logical-frame profile count"
+        if ($compressedMode) {
+            Require-Text -Path $stopLog -Pattern "JPEGPLDEC_COMPRESSED_DMA_PROBE frame=" -Label "compressed DMA marker"
+        } else {
+            Require-Text -Path $stopLog -Pattern "JPEGPLDEC_PROFILE frames=$Frames" -Label "logical-frame profile count"
+        }
         if ($writebackMode) {
             Require-Text -Path $stopLog -Pattern "JPEGPLDEC_DMA_WRITEBACK_SUMMARY" -Label "DMA writeback summary"
         }
-        $frameBytes = [int](($InputWidth * $InputHeight * 3) / 2)
-        $dmaChunkBytes = 16380
-        $chunksPerFrame = [int][Math]::Ceiling($frameBytes / $dmaChunkBytes)
-        $expectedFramesHex = "0x{0:X8}" -f ($Frames * $chunksPerFrame)
-        $expectedBytesHex = "0x{0:X8}" -f ($frameBytes * $Frames)
-        $lastChunkBytes = $frameBytes % $dmaChunkBytes
-        if ($lastChunkBytes -eq 0) {
-            $lastChunkBytes = $dmaChunkBytes
+        if ($compressedMode) {
+            $plFramesMatch = [regex]::Match($dmaText, "PL_DMA_FRAMES=0x([0-9A-Fa-f]+)")
+            $plBytesMatch = [regex]::Match($dmaText, "PL_DMA_BYTES=0x([0-9A-Fa-f]+)")
+            if (-not $plFramesMatch.Success -or -not $plBytesMatch.Success) {
+                throw "compressed DMA PL counters missing"
+            }
+            $plFrames = [Convert]::ToInt64($plFramesMatch.Groups[1].Value, 16)
+            $plBytes = [Convert]::ToInt64($plBytesMatch.Groups[1].Value, 16)
+            if ($plFrames -le 0 -or $plBytes -le 0) {
+                throw "compressed DMA PL counters did not advance: frames=$plFrames bytes=$plBytes"
+            }
+            $plDmaTransactions = $plFrames
+            $plDmaBytes = $plBytes
+            $chunksPerFrame = 0
+            $frameBytes = 0
+        } else {
+            $frameBytes = [int](($InputWidth * $InputHeight * 3) / 2)
+            $dmaChunkBytes = 16380
+            $chunksPerFrame = [int][Math]::Ceiling($frameBytes / $dmaChunkBytes)
+            $expectedFramesHex = "0x{0:X8}" -f ($Frames * $chunksPerFrame)
+            $expectedBytesHex = "0x{0:X8}" -f ($frameBytes * $Frames)
+            $lastChunkBytes = $frameBytes % $dmaChunkBytes
+            if ($lastChunkBytes -eq 0) {
+                $lastChunkBytes = $dmaChunkBytes
+            }
+            $expectedLastFrameHex = "0x{0:X8}" -f $lastChunkBytes
+            Require-Text -Path $stopLog -Pattern "PL_DMA_FRAMES=$expectedFramesHex" -Label "PL frame counter"
+            Require-Text -Path $stopLog -Pattern "PL_DMA_BYTES=$expectedBytesHex" -Label "PL byte counter"
+            Require-Text -Path $stopLog -Pattern "PL_DMA_LAST_FRAME_BYTES=$expectedLastFrameHex" -Label "PL last-frame byte counter"
+            $plDmaTransactions = $Frames * $chunksPerFrame
+            $plDmaBytes = $frameBytes * $Frames
         }
-        $expectedLastFrameHex = "0x{0:X8}" -f $lastChunkBytes
-        Require-Text -Path $stopLog -Pattern "PL_DMA_FRAMES=$expectedFramesHex" -Label "PL frame counter"
-        Require-Text -Path $stopLog -Pattern "PL_DMA_BYTES=$expectedBytesHex" -Label "PL byte counter"
-        Require-Text -Path $stopLog -Pattern "PL_DMA_LAST_FRAME_BYTES=$expectedLastFrameHex" -Label "PL last-frame byte counter"
         Require-Text -Path $stopLog -Pattern "JPEGPLDEC_DMA_PROBE_STREAM_DONE" -Label "DMA stream marker"
         if ($writebackMode) {
             & python (Join-Path $repoRoot "tools\validate_jpegpldec_buffer_marker.py") `
@@ -378,7 +408,7 @@ try {
     }
 
     $summary = [PSCustomObject]@{
-        cycle = if ($ProbeMode -match "writeback") { "jpegpldec-pl-returned-buffer-writeback" } elseif ($ProbeMode -match "dma") { "jpegpldec-ps-pl-buffer-datapath-probe" } elseif ($ProbeMode -match "buffer") { "jpegpldec-pl-buffer-datapath-probe" } else { "jpegpldec-pl-probe-and-profile" }
+        cycle = if ($ProbeMode -match "compressed") { "jpegpldec-pl-decode-720p30-v0" } elseif ($ProbeMode -match "writeback") { "jpegpldec-pl-returned-buffer-writeback" } elseif ($ProbeMode -match "dma") { "jpegpldec-ps-pl-buffer-datapath-probe" } elseif ($ProbeMode -match "buffer") { "jpegpldec-pl-buffer-datapath-probe" } else { "jpegpldec-pl-probe-and-profile" }
         plugin_sha256 = $hash
         probe_mode = $ProbeMode
         deployed_plugin = "/tmp/gst-plugins/libgstjpegpldec.so"
@@ -390,8 +420,8 @@ try {
         logical_frames = if ($ProbeMode -match "dma") { $Frames } else { 0 }
         dma_logged_pass_frames = $dmaPassFrames
         dma_fail_frames = $dmaFailFrames
-        pl_dma_transactions = if ($ProbeMode -match "dma") { $Frames * $chunksPerFrame } else { 0 }
-        pl_dma_bytes = if ($ProbeMode -match "dma") { $frameBytes * $Frames } else { 0 }
+        pl_dma_transactions = $plDmaTransactions
+        pl_dma_bytes = $plDmaBytes
         dma_stop_log = $stopLog
         hdmi_motion_validation = if ($ProbeMode -match "dma" -and $ProbeMode -notmatch "writeback") { Join-Path $outPath "hdmi-ball-motion-validation.json" } else { $null }
         dma_writeback_marker_validation = if ($ProbeMode -match "writeback") { Join-Path $outPath "dma-writeback-marker-validation.json" } else { $null }

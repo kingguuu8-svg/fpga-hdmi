@@ -43,6 +43,25 @@ None.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: jpegpldec-pl-decode-720p30-v0
+Result: PASSED for the first PL decoder-backend boundary. `jpegpldec` now has
+  `backend=pl-compressed-probe` and `probe-mode=compressed-dma-probe`, which
+  taps compressed 1280x720 JPEG buffers before the internal software `jpegdec`
+  child, parses JPEG metadata, sends the compressed bytes through
+  `/dev/jpegpl_dma_probe`, and verifies byte-identical return. The passing
+  connected run logged four 1280x720 baseline 4:2:0 JPEG frames, zero DMA
+  failures, PL counters of 8 DMA transactions / 120408 bytes, and dynamic HDMI
+  return. This does not claim PL JPEG entropy decode, IDCT, raw-frame
+  generation, 30 fps throughput, or native 720p HDMI output.
+Evidence: docs/reports/jpegpldec-pl-decode-720p30-v0.md,
+  build/jpegpldec-pl-decode-720p30-v0-pass3/summary.json,
+  build/jpegpldec-pl-decode-720p30-v0-pass3/uart-stop-dma-probe.log,
+  build/jpegpldec-pl-decode-720p30-v0-pass3/hdmi-ball-motion-validation.json
+Board action: loaded temporary plugin/module from /tmp, ran a temporary
+  GStreamer receiver, sent 1280x720 RTP/JPEG from the PC, and captured HDMI.
+  No BOOT.BIN, image.ub, rootfs, bitstream, TF-card image, JTAG programming,
+  or board flash changed.
+
 Cycle ID: 720p30-jpeg-chain-contract
 Result: PASSED for contract and gate creation. The connected-board software
   reference gate accepted real 1280x720 RTP/JPEG input and downscaled to the
