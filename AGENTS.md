@@ -24,6 +24,9 @@
   probe, or downloaded reference project is inspected.
 - `docs/protocols/video-udp.md`: first-stage raw-video UDP chunk protocol used
   by the PC sender and PS baremetal receiver.
+- `docs/protocols/jpegpldec-720p30-contract.md`: 720p30 MJPEG contract for the
+  `jpegpldec` PL-decoder route, including buffer metadata, counters, and gate
+  tiers.
 - `docs/protocols/unified-passthrough-trace.md`: decoded sender/capture trace
   schema for reusable temporal pass-through validation.
 - `docs/current-cycle.md`: lightweight current-work note, or an explicit

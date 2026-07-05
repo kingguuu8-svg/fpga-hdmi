@@ -188,6 +188,12 @@ Phase C:
   evidence. The accepted next stage is replacing the staging marker with a
   deterministic PL-side pixel modification; zero-copy remains later
   optimization rather than a prerequisite for that stage.
+  jpegpldec 720p30 contract gate: PASSED for contract creation and BLOCKED for
+  software-reference throughput. The first real PL decoder target is defined in
+  `docs/protocols/jpegpldec-720p30-contract.md`; the measured 720p30 software
+  baseline only reached about 5.5 fps while downscaling to the current 800x600
+  display path, so the next implementation should open
+  `jpegpldec-pl-decode-720p30-v0` rather than returning to 320x240-only work.
   Later: carry the same command semantics over TCP/UDP.
 
 Phase D:

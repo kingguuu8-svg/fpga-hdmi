@@ -43,6 +43,23 @@ None.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: 720p30-jpeg-chain-contract
+Result: PASSED for contract and gate creation. The connected-board software
+  reference gate accepted real 1280x720 RTP/JPEG input and downscaled to the
+  current 800x600 output path, but it did not meet the 30 fps target:
+  fakesink averaged 5.47 fps and fbdevsink averaged 5.37 fps. This is recorded
+  as `720P30_JPEG_CHAIN_GATE_BLOCKED status=blocked-software-baseline`, and it
+  supports opening `jpegpldec-pl-decode-720p30-v0` rather than repeating generic
+  profiling.
+Evidence: docs/protocols/jpegpldec-720p30-contract.md,
+  docs/reports/720p30-jpeg-chain-contract.md,
+  tools/run_720p30_jpeg_chain_gate.ps1,
+  build/720p30-jpeg-chain-contract/video-bottleneck-summary.json,
+  build/720p30-jpeg-chain-contract/720p30-gate-summary.json
+Board action: ran temporary GStreamer benchmark receivers over UART and sent
+  1280x720 RTP/JPEG over Ethernet. No BOOT.BIN, image.ub, rootfs, bitstream,
+  TF-card image, JTAG programming, or board flash changed.
+
 Cycle ID: jpegpldec-pl-returned-buffer-writeback
 Result: PASSED. `jpegpldec probe-mode=dma-writeback` copied decoded I420
   frames into a staging buffer, stamped a deterministic luma marker before

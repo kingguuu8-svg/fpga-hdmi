@@ -20,6 +20,68 @@ Third-party review:
 Residual risks:
 ```
 
+## Cycle: 720p30-jpeg-chain-contract
+
+Date: 2026-07-05
+
+Commit: this commit (`cycle: define 720p30 jpegpldec contract`)
+
+Objective: fix 720p30 as the first real target for the `jpegpldec` PL decoder
+route and run a connected-board software-reference gate before implementing
+compressed JPEG decode in PL.
+
+Changed scope:
+
+- Added and registered `docs/protocols/jpegpldec-720p30-contract.md`.
+- Added `tools/run_720p30_jpeg_chain_gate.ps1`, a fixed-parameter wrapper for
+  the 1280x720@30 RTP/JPEG route gate.
+- Added the cycle report.
+
+Verification performed:
+
+- PowerShell parser accepted the new wrapper.
+- `-PlanOnly` printed `720P30_JPEG_CHAIN_GATE_PLAN_OK`.
+- Connected-board software-reference gate accepted 1280x720 RTP/JPEG input,
+  negotiated software `jpegdec` to 1280x720 I420, and downscaled to the current
+  800x600 output path.
+- `-AnalyzeOnly` classified the measured result as
+  `720P30_JPEG_CHAIN_GATE_BLOCKED status=blocked-software-baseline`.
+
+Board action:
+
+- Ran temporary GStreamer benchmark receivers on the already-booted board from
+  UART, sent 1280x720 RTP/JPEG from the PC over Ethernet, then stopped the
+  receivers. No BOOT.BIN, image.ub, rootfs, bitstream, TF-card image, JTAG
+  programming, or board flash changed.
+
+Evidence:
+
+- `docs/protocols/jpegpldec-720p30-contract.md`
+- `docs/reports/720p30-jpeg-chain-contract.md`
+- `tools/run_720p30_jpeg_chain_gate.ps1`
+- `build/720p30-jpeg-chain-contract/video-bottleneck-summary.json`
+- `build/720p30-jpeg-chain-contract/720p30-gate-summary.json`
+- `build/720p30-jpeg-chain-contract/uart-stop-jpeg-fakesink-30fps.log`
+- `build/720p30-jpeg-chain-contract/uart-stop-jpeg-fbdevsink-30fps.log`
+
+Result: PASSED for contract and gate creation; BLOCKED for the 720p30 software
+reference throughput target. Measured fakesink average was 5.47 fps and
+fbdevsink average was 5.37 fps for 1280x720@30 input downscaled to 800x600.
+
+Rollback point: parent of this cycle commit; board state is runtime-only and a
+reboot clears temporary GStreamer processes if any remain.
+
+Third-party review: none.
+
+Residual risks:
+
+- Native 720p HDMI output is not proven; this gate downscaled to the current
+  800x600 display path.
+- The gate used the software `jpegdec` benchmark route, not `jpegpldec` profile
+  counters at 720p.
+- The next implementation cycle still needs to replace the compressed
+  JPEG-to-raw-frame responsibility inside `jpegpldec`.
+
 ## Cycle: jpegpldec-pl-returned-buffer-writeback
 
 Date: 2026-07-05
