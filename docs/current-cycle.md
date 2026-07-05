@@ -43,6 +43,25 @@ None.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: jpegpldec-pl-dma-endpoint-bd-build
+Result: PASSED for hardware endpoint construction. Added a simple-mode AXI DMA
+  loop around axis_dma_probe_core in the stage-1 VDMA board BD. The endpoint
+  exposes axi_dma_0 at 0x43020000 and axis_dma_probe_core_0 at 0x43c10000,
+  connects DMA MM2S/S2MM streams through the PL probe core, reaches DDR through
+  HP0, and routes DMA interrupts to the PS IRQ concat. xsim still passes
+  AXI_FRAMEBUFFER_LINE_READER_OK, PL_CONTROLLED_PIP_CORE_SIM_OK,
+  PL_DUAL_VDMA_PIP_CORE_SIM_OK, and AXIS_DMA_PROBE_CORE_SIM_OK. The board
+  bitstream build passed with STAGE1_VDMA_BOARD_BUILD_OK and WNS=0.245.
+  This still does not complete the larger jpegpldec PS-to-PL buffer goal
+  because there is no Linux DMA client, coherent/CMA buffer allocation,
+  jpegpldec handoff, cache-coherency board proof, or GStreamer writeback path.
+Evidence: docs/reports/jpegpldec-pl-dma-endpoint-bd-build.md,
+  build/eth-ps-pl-hdmi-pass-through/vdma-board/reports/stage1_vdma_board_stdout.log,
+  build/eth-ps-pl-hdmi-pass-through/vdma-board/reports/timing_summary.rpt,
+  build/eth-ps-pl-hdmi-pass-through/vdma-board/reports/post_route_drc.rpt
+Board action: none. Bitstream was built but no BOOT.BIN, image.ub, rootfs,
+  TF-card image, JTAG programming, or board flash was changed.
+
 Cycle ID: jpegpldec-pl-dma-probe-core-sim
 Result: PASSED for PL data-plane core simulation. Added a 32-bit AXI4-Stream
   pass-through/marker/checksum core intended to sit between AXI DMA MM2S and

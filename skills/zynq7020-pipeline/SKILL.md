@@ -1115,5 +1115,41 @@ AXI-Lite-visible counters. This is only a simulated PL core. It is not yet a
 board DMA endpoint, a Linux coherent/CMA buffer client, a cache-coherency proof,
 or a `jpegpldec` GStreamer writeback path.
 
+Verified AXI DMA PL probe endpoint build path (preferred before adding a
+Linux DMA client, 2026-07-05):
+
+```text
+1. Run xsim for examples/eth-ps-pl-hdmi-pass-through:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\skills\zynq7020-vivado\scripts\sim-wsl.ps1 -Example eth-ps-pl-hdmi-pass-through
+2. Require:
+   AXI_FRAMEBUFFER_LINE_READER_OK
+   PL_CONTROLLED_PIP_CORE_SIM_OK
+   PL_DUAL_VDMA_PIP_CORE_SIM_OK
+   AXIS_DMA_PROBE_CORE_SIM_OK
+   SIM_OK
+3. Build the stage-1 VDMA board bitstream:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\examples\eth-ps-pl-hdmi-pass-through\tcl\build-stage1-vdma-board-wsl.ps1
+4. Require:
+   STAGE1_VDMA_BOARD_BUILD_OK
+   non-negative WNS
+   routed DRC with no Error or Critical Warning
+5. Inspect the generated BD handoff and require:
+   axi_dma_0
+   axis_dma_probe_core_0
+   axi_dma_0/M_AXIS_MM2S -> axis_dma_probe_core_0/S_AXIS
+   axis_dma_probe_core_0/M_AXIS -> axi_dma_0/S_AXIS_S2MM
+   axi_dma_0/M_AXI_MM2S and M_AXI_S2MM mapped through HP0
+   axi_dma_0 AXI-Lite at 0x43020000
+   axis_dma_probe_core_0 AXI-Lite at 0x43c10000
+```
+
+Verified outcome:
+The board BD now builds with a generic PS-to-PL-to-PS AXI DMA stream endpoint
+around `axis_dma_probe_core`. The passing build produced a bitstream with
+WNS=0.245 and no routed DRC Error or Critical Warning. This path proves only
+hardware endpoint construction. It does not prove a Linux coherent/CMA buffer
+client, `jpegpldec` DMA handoff, cache coherency, PL writeback to GStreamer,
+or board runtime behavior.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

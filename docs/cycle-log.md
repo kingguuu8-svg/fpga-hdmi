@@ -20,6 +20,81 @@ Third-party review:
 Residual risks:
 ```
 
+## Cycle: jpegpldec-pl-dma-endpoint-bd-build
+
+Date: 2026-07-05
+
+Commit: this commit (`cycle: build jpegpldec pl dma endpoint`)
+
+Objective: integrate the simulated `axis_dma_probe_core` into a buildable
+board hardware endpoint so a later Linux/`jpegpldec` client can transfer a
+DMA-safe decoded-frame buffer through PL without changing the external
+GStreamer pipeline.
+
+Changed scope:
+
+- Added `axis_dma_probe_core.v` to the stage-1 VDMA board build source list.
+- Instantiated `axi_dma_0` in simple MM2S/S2MM mode.
+- Connected `axi_dma_0/M_AXIS_MM2S -> axis_dma_probe_core_0/S_AXIS` and
+  `axis_dma_probe_core_0/M_AXIS -> axi_dma_0/S_AXIS_S2MM`.
+- Connected AXI DMA data masters to HP0 through `axi_smc`.
+- Exposed AXI-Lite register windows at `0x43020000` for `axi_dma_0` and
+  `0x43c10000` for `axis_dma_probe_core_0`.
+- Routed AXI DMA interrupts into the existing PS IRQ concat.
+
+Verification performed:
+
+- Re-ran xsim for `eth-ps-pl-hdmi-pass-through`; existing framebuffer/PIP
+  regressions passed and `AXIS_DMA_PROBE_CORE_SIM_OK` passed.
+- Rebuilt the stage-1 VDMA board bitstream.
+- Build marker:
+  `STAGE1_VDMA_BOARD_BUILD_OK ... wns=0.245`.
+- Timing report: WNS `0.245 ns`, TNS `0.000 ns`, all user timing constraints
+  met.
+- Routed DRC table: 2 Warning and 7 Advisory entries; no Error or Critical
+  Warning.
+- Generated BD handoff includes `axi_dma_0`, `axis_dma_probe_core_0`,
+  MM2S/S2MM stream loopback, HP0 data connections, AXI-Lite connections, and
+  the expected address windows.
+
+Evidence:
+
+- `docs/reports/jpegpldec-pl-dma-endpoint-bd-build.md`
+- `build/eth-ps-pl-hdmi-pass-through/sim/tb_axis_dma_probe_core-xsim-run.log`
+- `build/eth-ps-pl-hdmi-pass-through/vdma-board/eth_ps_vdma_hdmi_stage1_board.bit`
+- `build/eth-ps-pl-hdmi-pass-through/vdma-board/reports/stage1_vdma_board_stdout.log`
+- `build/eth-ps-pl-hdmi-pass-through/vdma-board/reports/timing_summary.rpt`
+- `build/eth-ps-pl-hdmi-pass-through/vdma-board/reports/post_route_drc.rpt`
+
+Result:
+
+- PASSED for hardware endpoint construction.
+- The larger active goal is still incomplete: no Linux coherent/CMA buffer
+  client, `jpegpldec` DMA handoff, real decoded-frame transfer, cache
+  coherency proof, or GStreamer PL-writeback path exists yet.
+
+Board action:
+
+- None. Bitstream was built but not packaged into BOOT.BIN or deployed.
+
+Rollback point:
+
+- Revert the two Tcl changes that add `axi_dma_0` and
+  `axis_dma_probe_core_0` to the board BD.
+
+Third-party review:
+
+- None.
+
+Residual risks:
+
+- The DRC warnings are in generated Xilinx FIFO/datamover BRAM logic; they are
+  not blocking, but reset-time behavior should be watched during board tests.
+- The current running board image does not contain this endpoint until a new
+  BOOT.BIN is packaged and deployed.
+- A safe Linux DMA buffer path is still the main unresolved implementation
+  risk before `jpegpldec` can use the endpoint.
+
 ## Cycle: jpegpldec-pl-dma-probe-core-sim
 
 Date: 2026-07-04
