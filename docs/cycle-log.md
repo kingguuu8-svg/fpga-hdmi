@@ -20,6 +20,75 @@ Third-party review:
 Residual risks:
 ```
 
+## Cycle: jpegpl-dma-probe-kernel-client-build
+
+Date: 2026-07-05
+
+Commit: this commit (`cycle: build jpegpl dma probe client`)
+
+Objective: add and build the Linux-side coherent DMA client that will let a
+later `jpegpldec` probe send decoded buffers through the PL AXI DMA endpoint
+without using unsafe userspace physical-address assumptions.
+
+Changed scope:
+
+- Added `software/kernel/jpegpl_dma_probe/`.
+- Implemented `jpegpl_dma_probe.ko` as a misc-device DMAengine client using
+  `dmam_alloc_coherent` TX/RX buffers.
+- Added UAPI ioctl `JPEGPL_DMA_PROBE_IOC_RUN`.
+- Added `jpegpl_dma_probe_test` userspace loopback tool.
+- Added WSL/PetaLinux build scripts.
+- Added a PetaLinux device-tree fragment for the later DMA client node.
+
+Verification performed:
+
+- Ran:
+  `rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\software\kernel\jpegpl_dma_probe\build-wsl.ps1 -OutDir build\jpegpl-dma-probe-kernel-client`.
+- Host self-test passed:
+  `JPEGPL_DMA_PROBE_TEST_SELF_TEST_OK checksum=0x6fd741bd`.
+- Kernel external-module build produced ARM `jpegpl_dma_probe.ko`.
+- ARM userspace test build produced `jpegpl_dma_probe_test`.
+- Build marker:
+  `JPEGPL_DMA_PROBE_CLIENT_BUILD_OK`.
+
+Evidence:
+
+- `docs/reports/jpegpl-dma-probe-kernel-client-build.md`
+- `software/kernel/jpegpl_dma_probe/`
+- `software/petalinux/jpegpl-dma-probe/system-user.dtsi.fragment`
+- `build/jpegpl-dma-probe-kernel-client/jpegpl_dma_probe.ko`
+- `build/jpegpl-dma-probe-kernel-client/jpegpl_dma_probe_test`
+- `build/jpegpl-dma-probe-kernel-client/jpegpl_dma_probe_test_host.log`
+
+Result:
+
+- PASSED for source/build feasibility.
+- The larger active goal is still incomplete: the module has not been loaded on
+  the board, the device tree is not yet rebuilt around the new HDF, no real
+  decoded `jpegpldec` frame has used the ioctl, and no hardware cache
+  coherency or GStreamer writeback proof exists yet.
+
+Board action:
+
+- None. No module insertion, BOOT.BIN/image.ub update, TF-card write, JTAG, or
+  board flash action.
+
+Rollback point:
+
+- Remove `software/kernel/jpegpl_dma_probe/` and
+  `software/petalinux/jpegpl-dma-probe/`.
+
+Third-party review:
+
+- None.
+
+Residual risks:
+
+- The device-tree DMA channel spec still needs validation against the generated
+  `axi_dma_0` node after HDF import.
+- The client copies user buffers into coherent buffers; this is correct for a
+  proof path, not final zero-copy performance.
+
 ## Cycle: jpegpldec-pl-dma-endpoint-bd-build
 
 Date: 2026-07-05

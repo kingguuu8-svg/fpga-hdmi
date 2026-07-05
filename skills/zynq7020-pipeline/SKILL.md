@@ -1151,5 +1151,28 @@ hardware endpoint construction. It does not prove a Linux coherent/CMA buffer
 client, `jpegpldec` DMA handoff, cache coherency, PL writeback to GStreamer,
 or board runtime behavior.
 
+Verified `jpegpl_dma_probe` kernel client build path (preferred Linux-side
+source step before board runtime DMA loopback, 2026-07-05):
+
+```text
+1. Build the kernel DMA client and userspace test tool:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\software\kernel\jpegpl_dma_probe\build-wsl.ps1 -OutDir build\jpegpl-dma-probe-kernel-client
+2. Require:
+   JPEGPL_DMA_PROBE_TEST_SELF_TEST_OK
+   JPEGPL_DMA_PROBE_CLIENT_BUILD_OK
+3. Require generated artifacts:
+   build/jpegpl-dma-probe-kernel-client/jpegpl_dma_probe.ko
+   build/jpegpl-dma-probe-kernel-client/jpegpl_dma_probe_test
+```
+
+Verified outcome:
+The Linux-side probe client now compiles against the current PetaLinux 2018.3
+Linux 4.14 build tree. The module exposes `/dev/jpegpl_dma_probe` through a
+misc device, requests DMAengine `tx`/`rx` channels, and uses
+`dmam_alloc_coherent` buffers for the future AXI DMA loopback. This path proves
+source/build feasibility only. It does not prove device-tree binding, module
+load, runtime DMA, cache coherency on hardware, real `jpegpldec` frames, or
+GStreamer writeback.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

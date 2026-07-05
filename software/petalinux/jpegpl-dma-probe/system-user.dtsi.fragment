@@ -1,0 +1,17 @@
+/*
+ * Append this fragment to project-spec/meta-user/recipes-bsp/device-tree/files/system-user.dtsi
+ * after importing an HDF that contains axi_dma_0.
+ *
+ * The generated device tree must define axi_dma_0 as a DMA controller. This
+ * client node binds the project-owned jpegpl_dma_probe kernel module to the
+ * AXI DMA MM2S/S2MM channels.
+ */
+
+/ {
+	jpegpl_dma_probe_0: jpegpl-dma-probe {
+		compatible = "fpga-hdml,jpegpl-dma-probe-1.0";
+		dmas = <&axi_dma_0 0>, <&axi_dma_0 1>;
+		dma-names = "tx", "rx";
+		buffer-size = <0x00200000>;
+	};
+};

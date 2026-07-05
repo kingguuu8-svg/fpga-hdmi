@@ -43,6 +43,25 @@ None.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: jpegpl-dma-probe-kernel-client-build
+Result: PASSED for source/build feasibility. Added jpegpl_dma_probe.ko, a
+  misc-device DMAengine client that allocates coherent TX/RX buffers with
+  dmam_alloc_coherent, exposes JPEGPL_DMA_PROBE_IOC_RUN through
+  /dev/jpegpl_dma_probe, and is intended to loop a later jpegpldec decoded
+  buffer through AXI DMA MM2S -> axis_dma_probe_core -> AXI DMA S2MM. Added an
+  ARM userspace loopback probe and a device-tree client-node fragment. The
+  existing PetaLinux 2018.3 kernel build tree compiled the module and ARM test
+  tool, and the host self-test passed. This still does not complete the active
+  goal because the module has not loaded on the board, the DT is not rebuilt
+  with axi_dma_0, no real jpegpldec frame used the ioctl, and cache coherency
+  plus GStreamer writeback remain unverified.
+Evidence: docs/reports/jpegpl-dma-probe-kernel-client-build.md,
+  build/jpegpl-dma-probe-kernel-client/jpegpl_dma_probe.ko,
+  build/jpegpl-dma-probe-kernel-client/jpegpl_dma_probe_test,
+  build/jpegpl-dma-probe-kernel-client/jpegpl_dma_probe_test_host.log
+Board action: none. No module insertion, BOOT.BIN/image.ub update, TF-card
+  image, JTAG programming, or board flash was changed.
+
 Cycle ID: jpegpldec-pl-dma-endpoint-bd-build
 Result: PASSED for hardware endpoint construction. Added a simple-mode AXI DMA
   loop around axis_dma_probe_core in the stage-1 VDMA board BD. The endpoint
