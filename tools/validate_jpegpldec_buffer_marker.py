@@ -55,6 +55,8 @@ def main() -> int:
 
     frame_dir = Path(args.frame_dir)
     frames = sorted(frame_dir.glob("mjpeg-frame-*.jpg"))
+    if not frames:
+        frames = sorted(frame_dir.glob("hdmi-motion-frame-*.jpg"))
     analyses = [analyze_frame(path, args.crop_size) for path in frames]
     pass_frames = [
         item for item in analyses

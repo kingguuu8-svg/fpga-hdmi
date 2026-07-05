@@ -181,9 +181,13 @@ Phase C:
   kernel coherent memory, transferred through AXI DMA MM2S -> PL probe ->
   S2MM, byte-checked, and allowed to continue through the original downstream
   GstBuffer. Sixty logical frames completed with zero reported mismatch and
-  dynamic HDMI validation passed. The accepted next stage is PL-returned
-  GstBuffer writeback with a deterministic PL marker/effect; zero-copy remains
-  later optimization rather than a prerequisite for that stage.
+  dynamic HDMI validation passed.
+  jpegpldec PL-returned GstBuffer writeback gate: PASSED. `dma-writeback`
+  mode writes bytes returned from the PS-to-PL-to-PS DMA path into the
+  downstream GstBuffer and verifies the result through HDMI-visible marker
+  evidence. The accepted next stage is replacing the staging marker with a
+  deterministic PL-side pixel modification; zero-copy remains later
+  optimization rather than a prerequisite for that stage.
   Later: carry the same command semantics over TCP/UDP.
 
 Phase D:

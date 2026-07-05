@@ -43,6 +43,23 @@ None.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: jpegpldec-pl-returned-buffer-writeback
+Result: PASSED. `jpegpldec probe-mode=dma-writeback` copied decoded I420
+  frames into a staging buffer, stamped a deterministic luma marker before
+  DMA, sent the staging data through coherent AXI DMA MM2S -> PL -> S2MM, and
+  wrote the returned bytes into the downstream GstBuffer. Sixty logical frames
+  completed; PL counters recorded 480 transactions and 6,912,000 bytes. HDMI
+  dynamic validation passed with 300 samples and 104 unique hashes, and the
+  writeback marker validator passed 224/300 frames. This closes copy-back
+  writeback, not zero-copy or PL JPEG decode.
+Evidence: docs/reports/jpegpldec-pl-returned-buffer-writeback.md,
+  build/jpegpldec-dma-writeback/summary.json,
+  build/jpegpldec-dma-writeback/uart-stop-dma-probe.log,
+  build/jpegpldec-dma-writeback/hdmi-ball-motion-validation.json,
+  build/jpegpldec-dma-writeback/dma-writeback-marker-validation.json
+Board action: loaded module/plugin from /tmp and ran the connected writeback
+  video probe; no boot image or nonvolatile storage changed.
+
 Cycle ID: jpegpldec-ps-pl-buffer-datapath-probe
 Result: PASSED. `jpegpldec probe-mode=dma-probe` sent 60 real 115200-byte
   decoded I420 frames through coherent AXI DMA MM2S -> PL -> S2MM buffers.

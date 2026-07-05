@@ -107,17 +107,68 @@ if ($ProbeMode -match "dma") {
     Copy-Item -LiteralPath (Join-Path $dmaOut "jpegpl_dma_probe_test") -Destination $pluginOut -Force
 }
 
-$http = Start-Process `
-    -FilePath python `
-    -ArgumentList @("-m", "http.server", "$HttpPort", "--bind", $PcIp) `
-    -WorkingDirectory $pluginOut `
-    -WindowStyle Hidden `
-    -PassThru
+$listener = Get-NetTCPConnection -LocalPort $HttpPort -State Listen -ErrorAction SilentlyContinue
+if ($listener) {
+    throw "TCP port $HttpPort is already listening"
+}
+$http = Start-Job -ArgumentList $HttpPort,$pluginOut -ScriptBlock {
+    param($BindPort, $Root)
+
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Any, [int]$BindPort)
+    $listener.Start()
+    try {
+        while ($true) {
+            $client = $listener.AcceptTcpClient()
+            try {
+                $stream = $client.GetStream()
+                $buffer = New-Object byte[] 2048
+                $read = $stream.Read($buffer, 0, $buffer.Length)
+                $request = [System.Text.Encoding]::ASCII.GetString($buffer, 0, [Math]::Max(0, $read))
+                $line = ($request -split "`r?`n")[0]
+                $parts = $line -split " "
+                $name = if ($parts.Length -ge 2) { [System.IO.Path]::GetFileName([Uri]::UnescapeDataString($parts[1].TrimStart("/"))) } else { "" }
+                $path = Join-Path $Root $name
+                if ($name -and (Test-Path -LiteralPath $path -PathType Leaf)) {
+                    $body = [System.IO.File]::ReadAllBytes($path)
+                    $headerText = "HTTP/1.0 200 OK`r`nContent-Type: application/octet-stream`r`nContent-Length: $($body.Length)`r`nConnection: close`r`n`r`n"
+                    $header = [System.Text.Encoding]::ASCII.GetBytes($headerText)
+                    $stream.Write($header, 0, $header.Length)
+                    $stream.Write($body, 0, $body.Length)
+                    $stream.Flush()
+                    Write-Output "JPEGPLDEC_HTTP_SERVED file=$name bytes=$($body.Length)"
+                } else {
+                    $body = [System.Text.Encoding]::ASCII.GetBytes("not found")
+                    $headerText = "HTTP/1.0 404 Not Found`r`nContent-Length: $($body.Length)`r`nConnection: close`r`n`r`n"
+                    $header = [System.Text.Encoding]::ASCII.GetBytes($headerText)
+                    $stream.Write($header, 0, $header.Length)
+                    $stream.Write($body, 0, $body.Length)
+                    $stream.Flush()
+                    Write-Output "JPEGPLDEC_HTTP_404 file=$name"
+                }
+            }
+            finally {
+                $client.Close()
+            }
+        }
+    }
+    finally {
+        $listener.Stop()
+    }
+}
 $sender = $null
 $hdmiCapture = $null
 try {
     Set-Content -LiteralPath (Join-Path $outPath "http-server.pid") -Value $http.Id -Encoding ASCII
-    Write-Output "JPEGPLDEC_PL_PROBE_HTTP_SERVER pid=$($http.Id) port=$HttpPort"
+    Write-Output "JPEGPLDEC_PL_PROBE_HTTP_SERVER job=$($http.Id) port=$HttpPort"
+    Start-Sleep -Seconds 1
+    $httpProbe = Join-Path $outPath "http-plugin-probe.bin"
+    Invoke-WebRequest -Uri "http://127.0.0.1:$($HttpPort)/libgstjpegpldec.so" `
+        -UseBasicParsing `
+        -TimeoutSec 10 `
+        -OutFile $httpProbe
+    if ((Get-Item -LiteralPath $httpProbe).Length -le 0) {
+        throw "HTTP plugin self-check returned an empty file"
+    }
 
     $deployCommands = @(
         "ifconfig eth0 $BoardIp netmask 255.255.255.0 up",
@@ -137,6 +188,7 @@ try {
             "rmmod jpegpl_dma_probe 2>/dev/null || true",
             "insmod /tmp/jpegpl_dma_probe.ko",
             "ls -l /dev/jpegpl_dma_probe",
+            "devmem 0x43c10004 32 0x0; devmem 0x43c10000 32 0x5; devmem 0x43c10000 32 0x1; echo JPEGPL_DMA_PROBE_COUNTERS_RESET",
             "/tmp/jpegpl_dma_probe_test --length 115200",
             "echo JPEGPL_DMA_PROBE_DEPLOY_TEST_DONE"
         )
@@ -247,15 +299,17 @@ try {
             $hdmiCaptureText -notmatch "HDMI_MOTION_CAPTURE_OK") {
             throw "HDMI motion capture failed with exit code $($hdmiCapture.ExitCode)"
         }
-        & python (Join-Path $repoRoot "tools\validate_hdmi_ball_motion.py") `
-            (Join-Path $OutDir "hdmi-motion-capture\*.jpg") `
-            --out-json (Join-Path $outPath "hdmi-ball-motion-validation.json") `
-            --min-samples 200 `
-            --min-unique-hashes 4 `
-            --min-frames-with-ball 20 `
-            --min-centroid-span 20
-        if ($LASTEXITCODE -ne 0) {
-            throw "HDMI ball motion validation failed"
+        if ($ProbeMode -notmatch "writeback") {
+            & python (Join-Path $repoRoot "tools\validate_hdmi_ball_motion.py") `
+                (Join-Path $OutDir "hdmi-motion-capture\*.jpg") `
+                --out-json (Join-Path $outPath "hdmi-ball-motion-validation.json") `
+                --min-samples 200 `
+                --min-unique-hashes 4 `
+                --min-frames-with-ball 20 `
+                --min-centroid-span 20
+            if ($LASTEXITCODE -ne 0) {
+                throw "HDMI ball motion validation failed"
+            }
         }
 
         $stopLog = Invoke-UartCommands -Label "stop-dma-probe" -FinalReadSeconds 4 -Commands @(
@@ -268,12 +322,17 @@ try {
             "echo JPEGPLDEC_DMA_PROBE_STREAM_DONE"
         )
         $dmaText = Get-Content -Raw -LiteralPath $stopLog
-        $dmaPassFrames = ([regex]::Matches($dmaText, "JPEGPLDEC_DMA_PROBE frame=.*result=pass")).Count
-        $dmaFailFrames = ([regex]::Matches($dmaText, "JPEGPLDEC_DMA_PROBE frame=.*result=fail")).Count
+        $writebackMode = $ProbeMode -match "writeback"
+        $dmaMarker = if ($writebackMode) { "JPEGPLDEC_DMA_WRITEBACK" } else { "JPEGPLDEC_DMA_PROBE" }
+        $dmaPassFrames = ([regex]::Matches($dmaText, "$dmaMarker frame=.*result=pass")).Count
+        $dmaFailFrames = ([regex]::Matches($dmaText, "$dmaMarker frame=.*result=fail")).Count
         if ($dmaPassFrames -lt ($Frames - 1) -or $dmaFailFrames -ne 0) {
             throw "DMA frame probe failed: pass=$dmaPassFrames fail=$dmaFailFrames expected=$Frames"
         }
         Require-Text -Path $stopLog -Pattern "JPEGPLDEC_PROFILE frames=$Frames" -Label "logical-frame profile count"
+        if ($writebackMode) {
+            Require-Text -Path $stopLog -Pattern "JPEGPLDEC_DMA_WRITEBACK_SUMMARY" -Label "DMA writeback summary"
+        }
         $frameBytes = [int](($InputWidth * $InputHeight * 3) / 2)
         $dmaChunkBytes = 16380
         $chunksPerFrame = [int][Math]::Ceiling($frameBytes / $dmaChunkBytes)
@@ -288,6 +347,16 @@ try {
         Require-Text -Path $stopLog -Pattern "PL_DMA_BYTES=$expectedBytesHex" -Label "PL byte counter"
         Require-Text -Path $stopLog -Pattern "PL_DMA_LAST_FRAME_BYTES=$expectedLastFrameHex" -Label "PL last-frame byte counter"
         Require-Text -Path $stopLog -Pattern "JPEGPLDEC_DMA_PROBE_STREAM_DONE" -Label "DMA stream marker"
+        if ($writebackMode) {
+            & python (Join-Path $repoRoot "tools\validate_jpegpldec_buffer_marker.py") `
+                $hdmiCaptureOut `
+                --out (Join-Path $outPath "dma-writeback-marker-validation.json") `
+                --min-frames 200 `
+                --min-pass-frames 150
+            if ($LASTEXITCODE -ne 0) {
+                throw "DMA writeback marker validation failed"
+            }
+        }
     } else {
         $dmaPassFrames = 0
         $dmaFailFrames = 0
@@ -309,7 +378,7 @@ try {
     }
 
     $summary = [PSCustomObject]@{
-        cycle = if ($ProbeMode -match "dma") { "jpegpldec-ps-pl-buffer-datapath-probe" } elseif ($ProbeMode -match "buffer") { "jpegpldec-pl-buffer-datapath-probe" } else { "jpegpldec-pl-probe-and-profile" }
+        cycle = if ($ProbeMode -match "writeback") { "jpegpldec-pl-returned-buffer-writeback" } elseif ($ProbeMode -match "dma") { "jpegpldec-ps-pl-buffer-datapath-probe" } elseif ($ProbeMode -match "buffer") { "jpegpldec-pl-buffer-datapath-probe" } else { "jpegpldec-pl-probe-and-profile" }
         plugin_sha256 = $hash
         probe_mode = $ProbeMode
         deployed_plugin = "/tmp/gst-plugins/libgstjpegpldec.so"
@@ -324,7 +393,8 @@ try {
         pl_dma_transactions = if ($ProbeMode -match "dma") { $Frames * $chunksPerFrame } else { 0 }
         pl_dma_bytes = if ($ProbeMode -match "dma") { $frameBytes * $Frames } else { 0 }
         dma_stop_log = $stopLog
-        hdmi_motion_validation = if ($ProbeMode -match "dma") { Join-Path $outPath "hdmi-ball-motion-validation.json" } else { $null }
+        hdmi_motion_validation = if ($ProbeMode -match "dma" -and $ProbeMode -notmatch "writeback") { Join-Path $outPath "hdmi-ball-motion-validation.json" } else { $null }
+        dma_writeback_marker_validation = if ($ProbeMode -match "writeback") { Join-Path $outPath "dma-writeback-marker-validation.json" } else { $null }
         result = "pass"
     }
     $summary | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $outPath "summary.json") -Encoding UTF8
@@ -336,7 +406,8 @@ try {
     if ($hdmiCapture -and -not $hdmiCapture.HasExited) {
         Stop-Process -Id $hdmiCapture.Id -Force -ErrorAction SilentlyContinue
     }
-    if ($http -and -not $http.HasExited) {
-        Stop-Process -Id $http.Id -Force -ErrorAction SilentlyContinue
+    if ($http) {
+        Stop-Job -Job $http -ErrorAction SilentlyContinue
+        Remove-Job -Job $http -Force -ErrorAction SilentlyContinue
     }
 }

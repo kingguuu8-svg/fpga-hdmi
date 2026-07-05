@@ -71,6 +71,11 @@ measurement hooks:
   `/dev/jpegpl_dma_probe`, verifies returned bytes and checksums, and leaves
   the original GstBuffer on the existing downstream path.
 - `probe-mode=pl-dma-probe`: combines `pl-probe` and `dma-probe`.
+- `probe-mode=dma-writeback`: copies the decoded raw buffer into a staging
+  buffer, stamps a top-left I420 luma marker in that staging copy, sends it
+  through `/dev/jpegpl_dma_probe`, and writes the PL-returned bytes into the
+  downstream GstBuffer.
+- `probe-mode=pl-dma-writeback`: combines `pl-probe` and `dma-writeback`.
 - `summary-interval=N`: emit one `JPEGPLDEC_PROFILE` marker every `N` decoded
   frames.
 - `pl-base=1136656384`: PL PIP AXI-Lite base address; default is
@@ -84,6 +89,7 @@ JPEGPLDEC_PROFILE frames=... mode=... avg_ms=... p50_ms=... p95_ms=...
 JPEGPLDEC_PL_PROBE frame=... main_frames=... pip_frames=... overlay_pixels=...
 JPEGPLDEC_BUFFER_PROBE frame=... checksum_before=... checksum_after=... result=pass
 JPEGPLDEC_DMA_PROBE frame=... bytes=... chunks=... checksum_host=... result=pass
+JPEGPLDEC_DMA_WRITEBACK frame=... checksum_staged=... checksum_written=... result=pass
 ```
 
 The PL probe reads the existing PIP status registers. It proves that the
@@ -102,6 +108,13 @@ loopback endpoint. The verified endpoint is handled inside the ioctl as
 plugin frame. This proves PS-to-PL-to-PS data integrity and cache-safe access.
 It deliberately does not replace the downstream GstBuffer with PL output;
 that is the next writeback step.
+
+The DMA writeback mode is the first GStreamer reconnection step. It avoids
+modifying the original GstBuffer before DMA by using a staging copy, then
+copies the coherent RX result back into the writable downstream GstBuffer.
+This proves that downstream `videoconvert`, `videoscale`, `fbdevsink`, VDMA,
+PL PIP, and HDMI consume bytes returned from the PS-to-PL-to-PS path. It is
+still not zero-copy and does not yet implement JPEG entropy decode in PL.
 
 ## Integrated Probe
 
@@ -124,4 +137,10 @@ For the real PS-to-PL DMA buffer probe and dynamic HDMI verification:
 
 ```powershell
 rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_jpegpldec_pl_probe.ps1 -ProbeMode dma-probe -SummaryInterval 10 -Frames 60 -Fps 5 -OutDir build\jpegpldec-dma-buffer-probe
+```
+
+For the PL-returned GstBuffer writeback probe:
+
+```powershell
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_jpegpldec_pl_probe.ps1 -ProbeMode dma-writeback -SummaryInterval 10 -Frames 60 -Fps 5 -OutDir build\jpegpldec-dma-writeback
 ```

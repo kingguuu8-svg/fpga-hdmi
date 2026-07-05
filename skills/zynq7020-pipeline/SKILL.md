@@ -1205,5 +1205,34 @@ hashes, and 270.141 pixels of ball motion. This clears the cache/data-plane
 gate for PL writeback. It does not yet replace the downstream GstBuffer with
 the PL-returned data.
 
+Verified `jpegpldec` PL-returned GstBuffer writeback path (preferred copy-back
+gate before adding useful PL pixel modification, 2026-07-05):
+
+```text
+1. Run the connected-board writeback probe:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_jpegpldec_pl_probe.ps1 -ProbeMode dma-writeback -SummaryInterval 10 -Frames 60 -Fps 5 -OutDir build\jpegpldec-dma-writeback
+2. Require the standalone full-frame precheck:
+   JPEGPL_DMA_PROBE_TEST_OK length=115200
+3. Require writeback logs and profile:
+   JPEGPLDEC_DMA_WRITEBACK ... stamp=top-left-i420-luma-checker-via-dma ... result=pass
+   JPEGPLDEC_PROFILE frames=60 mode=dma-writeback
+4. Require PL counters:
+   PL_DMA_FRAMES=0x000001E0
+   PL_DMA_BYTES=0x00697800
+   PL_DMA_LAST_FRAME_BYTES=0x0000021C
+5. Require HDMI-visible writeback marker evidence:
+   JPEGPLDEC_BUFFER_MARKER_OK
+```
+
+Verified outcome:
+`jpegpldec` now reconnects the PS-to-PL-to-PS returned raw bytes into the
+downstream GstBuffer through a copy-back writeback path. The plugin uses a
+staging I420 copy to avoid pre-modifying the original GstBuffer, stamps a
+deterministic luma checker before DMA, and copies the coherent RX result into
+the writable GstBuffer. The passing run processed 60 logical frames, recorded
+480 PL DMA transactions and 6,912,000 bytes, and saw the writeback marker on
+HDMI-return frames. This is not zero-copy, not PL-generated pixel modification,
+and not JPEG entropy decode acceleration.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

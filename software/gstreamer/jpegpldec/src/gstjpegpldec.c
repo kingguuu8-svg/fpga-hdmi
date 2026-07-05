@@ -43,6 +43,8 @@ typedef struct _GstJpegPlDec {
   gboolean pl_probe_failed;
   gboolean dma_probe_failed;
   gint dma_fd;
+  guint8 *dma_in;
+  gsize dma_in_capacity;
   guint8 *dma_out;
   gsize dma_out_capacity;
   guint64 frames;
@@ -57,6 +59,9 @@ typedef struct _GstJpegPlDec {
   guint64 dma_probe_frames;
   guint64 dma_probe_pass_frames;
   guint64 dma_probe_fail_frames;
+  guint64 dma_writeback_frames;
+  guint64 dma_writeback_pass_frames;
+  guint64 dma_writeback_fail_frames;
   guint64 total_dma_probe_ns;
   guint64 max_dma_probe_ns;
   guint64 recent_decode_ns[RECENT_WINDOW];
@@ -141,7 +146,8 @@ gst_jpeg_pl_dec_pl_probe_enabled(GstJpegPlDec *self)
 {
   return g_strcmp0(self->probe_mode, "pl-probe") == 0 ||
          g_strcmp0(self->probe_mode, "pl-buffer-probe") == 0 ||
-         g_strcmp0(self->probe_mode, "pl-dma-probe") == 0;
+         g_strcmp0(self->probe_mode, "pl-dma-probe") == 0 ||
+         g_strcmp0(self->probe_mode, "pl-dma-writeback") == 0;
 }
 
 static gboolean
@@ -155,7 +161,16 @@ static gboolean
 gst_jpeg_pl_dec_dma_probe_enabled(GstJpegPlDec *self)
 {
   return g_strcmp0(self->probe_mode, "dma-probe") == 0 ||
-         g_strcmp0(self->probe_mode, "pl-dma-probe") == 0;
+         g_strcmp0(self->probe_mode, "pl-dma-probe") == 0 ||
+         g_strcmp0(self->probe_mode, "dma-writeback") == 0 ||
+         g_strcmp0(self->probe_mode, "pl-dma-writeback") == 0;
+}
+
+static gboolean
+gst_jpeg_pl_dec_dma_writeback_enabled(GstJpegPlDec *self)
+{
+  return g_strcmp0(self->probe_mode, "dma-writeback") == 0 ||
+         g_strcmp0(self->probe_mode, "pl-dma-writeback") == 0;
 }
 
 static guint32
@@ -200,11 +215,11 @@ gst_jpeg_pl_dec_get_raw_caps(GstPad *pad, gchar *format, gsize format_size,
 }
 
 static gboolean
-gst_jpeg_pl_dec_stamp_i420_marker(GstBuffer *buffer, gint width, gint height,
-                                  guint32 *checksum_before,
-                                  guint32 *checksum_after)
+gst_jpeg_pl_dec_stamp_i420_marker_data(guint8 *data, gsize size,
+                                       gint width, gint height,
+                                       guint32 *checksum_before,
+                                       guint32 *checksum_after)
 {
-  GstMapInfo map;
   gint marker_w = MIN(BUFFER_PROBE_MARKER_SIZE, width);
   gint marker_h = MIN(BUFFER_PROBE_MARKER_SIZE, height);
   gint x;
@@ -216,20 +231,16 @@ gst_jpeg_pl_dec_stamp_i420_marker(GstBuffer *buffer, gint width, gint height,
   }
 
   expected_size = (gsize)width * (gsize)height * 3u / 2u;
-  if (!gst_buffer_map(buffer, &map, GST_MAP_READWRITE)) {
-    return FALSE;
-  }
-  if (map.size < expected_size) {
-    gst_buffer_unmap(buffer, &map);
+  if (data == NULL || size < expected_size) {
     return FALSE;
   }
 
-  *checksum_before = fnv1a32(map.data, map.size);
+  *checksum_before = fnv1a32(data, size);
 
   for (y = 0; y < marker_h; y++) {
     for (x = 0; x < marker_w; x++) {
       guint8 value = (((x / 4) + (y / 4)) & 1) ? 0xffu : 0x10u;
-      map.data[(gsize)y * (gsize)width + (gsize)x] = value;
+      data[(gsize)y * (gsize)width + (gsize)x] = value;
     }
   }
 
@@ -243,15 +254,31 @@ gst_jpeg_pl_dec_stamp_i420_marker(GstBuffer *buffer, gint width, gint height,
 
     for (y = 0; y < chroma_marker_h; y++) {
       for (x = 0; x < chroma_marker_w; x++) {
-        map.data[u_base + (gsize)y * (gsize)chroma_w + (gsize)x] = 0x80u;
-        map.data[v_base + (gsize)y * (gsize)chroma_w + (gsize)x] = 0x80u;
+        data[u_base + (gsize)y * (gsize)chroma_w + (gsize)x] = 0x80u;
+        data[v_base + (gsize)y * (gsize)chroma_w + (gsize)x] = 0x80u;
       }
     }
   }
 
-  *checksum_after = fnv1a32(map.data, map.size);
-  gst_buffer_unmap(buffer, &map);
+  *checksum_after = fnv1a32(data, size);
   return TRUE;
+}
+
+static gboolean
+gst_jpeg_pl_dec_stamp_i420_marker(GstBuffer *buffer, gint width, gint height,
+                                  guint32 *checksum_before,
+                                  guint32 *checksum_after)
+{
+  GstMapInfo map;
+  gboolean ok;
+
+  if (!gst_buffer_map(buffer, &map, GST_MAP_READWRITE)) {
+    return FALSE;
+  }
+  ok = gst_jpeg_pl_dec_stamp_i420_marker_data(map.data, map.size, width, height,
+                                              checksum_before, checksum_after);
+  gst_buffer_unmap(buffer, &map);
+  return ok;
 }
 
 static void
@@ -335,17 +362,27 @@ gst_jpeg_pl_dec_open_dma_probe(GstJpegPlDec *self)
 
 static void
 gst_jpeg_pl_dec_log_dma_probe(GstJpegPlDec *self, GstBuffer *buffer,
-                              guint64 frame_id)
+                              GstPad *pad, guint64 frame_id)
 {
   struct jpegpl_dma_probe_run req;
   GstMapInfo map;
   GstClockTime started;
   guint64 elapsed_ns;
+  guint8 *input_data = NULL;
   guint32 host_checksum = 0u;
+  guint32 checksum_before = 0u;
+  guint32 checksum_after = 0u;
+  guint32 write_checksum = 0u;
   gboolean pass = FALSE;
+  gboolean caps_ok = FALSE;
+  gboolean stamp_ok = FALSE;
   gboolean mapped = FALSE;
+  gboolean writeback = gst_jpeg_pl_dec_dma_writeback_enabled(self);
   gint ioctl_result = -1;
   gint ioctl_errno = 0;
+  gchar format[16] = "";
+  gint width = 0;
+  gint height = 0;
 
   if (!gst_jpeg_pl_dec_dma_probe_enabled(self) || buffer == NULL) {
     return;
@@ -357,7 +394,7 @@ gst_jpeg_pl_dec_log_dma_probe(GstJpegPlDec *self, GstBuffer *buffer,
     ioctl_errno = errno;
     goto done;
   }
-  if (!gst_buffer_map(buffer, &map, GST_MAP_READ)) {
+  if (!gst_buffer_map(buffer, &map, writeback ? GST_MAP_READWRITE : GST_MAP_READ)) {
     ioctl_errno = EFAULT;
     goto done;
   }
@@ -372,11 +409,36 @@ gst_jpeg_pl_dec_log_dma_probe(GstJpegPlDec *self, GstBuffer *buffer,
     self->dma_out_capacity = map.size;
   }
   memset(self->dma_out, 0, map.size);
+  input_data = map.data;
   host_checksum = fnv1a32(map.data, map.size);
+  checksum_before = host_checksum;
+  checksum_after = host_checksum;
+  if (writeback) {
+    caps_ok = gst_jpeg_pl_dec_get_raw_caps(pad, format, sizeof(format),
+                                           &width, &height);
+    if (!caps_ok || g_strcmp0(format, "I420") != 0) {
+      ioctl_errno = EOPNOTSUPP;
+      goto done;
+    }
+    if (self->dma_in_capacity < map.size) {
+      self->dma_in = g_realloc(self->dma_in, map.size);
+      self->dma_in_capacity = map.size;
+    }
+    memcpy(self->dma_in, map.data, map.size);
+    stamp_ok = gst_jpeg_pl_dec_stamp_i420_marker_data(
+        self->dma_in, map.size, width, height, &checksum_before,
+        &checksum_after);
+    if (!stamp_ok) {
+      ioctl_errno = EFAULT;
+      goto done;
+    }
+    input_data = self->dma_in;
+    host_checksum = checksum_after;
+  }
 
   req.length = (guint32)map.size;
   req.timeout_ms = 1000u;
-  req.user_in = (guint64)(uintptr_t)map.data;
+  req.user_in = (guint64)(uintptr_t)input_data;
   req.user_out = (guint64)(uintptr_t)self->dma_out;
   ioctl_result = ioctl(self->dma_fd, JPEGPL_DMA_PROBE_IOC_RUN, &req);
   if (ioctl_result != 0) {
@@ -386,7 +448,12 @@ gst_jpeg_pl_dec_log_dma_probe(GstJpegPlDec *self, GstBuffer *buffer,
                           JPEGPL_DMA_PROBE_STATUS_RX_DONE) &&
            req.checksum_in == host_checksum &&
            req.checksum_out == host_checksum &&
-           memcmp(map.data, self->dma_out, map.size) == 0;
+           memcmp(input_data, self->dma_out, map.size) == 0;
+    if (pass && writeback) {
+      memcpy(map.data, self->dma_out, map.size);
+      write_checksum = fnv1a32(map.data, map.size);
+      pass = write_checksum == req.checksum_out;
+    }
   }
 
 done:
@@ -400,24 +467,59 @@ done:
     self->dma_probe_fail_frames++;
   }
 
-  g_print("JPEGPLDEC_DMA_PROBE frame=%" G_GUINT64_FORMAT
-          " bytes=%u chunks=%u max_chunk=%u status=0x%08x checksum_host=0x%08x"
-          " checksum_dma_in=0x%08x checksum_dma_out=0x%08x"
-          " dma_elapsed_ms=%.3f total_elapsed_ms=%.3f"
-          " ioctl_result=%d errno=%d result=%s\n",
-          frame_id,
-          req.length,
-          req.chunks,
-          req.max_chunk_size,
-          req.status,
-          host_checksum,
-          req.checksum_in,
-          req.checksum_out,
-          ns_to_ms(req.elapsed_ns),
-          ns_to_ms(elapsed_ns),
-          ioctl_result,
-          ioctl_errno,
-          pass ? "pass" : "fail");
+  if (writeback) {
+    self->dma_writeback_frames++;
+    if (pass) {
+      self->dma_writeback_pass_frames++;
+    } else {
+      self->dma_writeback_fail_frames++;
+    }
+    g_print("JPEGPLDEC_DMA_WRITEBACK frame=%" G_GUINT64_FORMAT
+            " format=%s width=%d height=%d bytes=%u chunks=%u max_chunk=%u"
+            " status=0x%08x checksum_original=0x%08x checksum_staged=0x%08x"
+            " checksum_dma_in=0x%08x checksum_dma_out=0x%08x"
+            " checksum_written=0x%08x stamp=%s"
+            " dma_elapsed_ms=%.3f total_elapsed_ms=%.3f"
+            " ioctl_result=%d errno=%d result=%s\n",
+            frame_id,
+            caps_ok ? format : "unknown",
+            width,
+            height,
+            req.length,
+            req.chunks,
+            req.max_chunk_size,
+            req.status,
+            checksum_before,
+            checksum_after,
+            req.checksum_in,
+            req.checksum_out,
+            write_checksum,
+            stamp_ok ? "top-left-i420-luma-checker-via-dma" : "none",
+            ns_to_ms(req.elapsed_ns),
+            ns_to_ms(elapsed_ns),
+            ioctl_result,
+            ioctl_errno,
+            pass ? "pass" : "fail");
+  } else {
+    g_print("JPEGPLDEC_DMA_PROBE frame=%" G_GUINT64_FORMAT
+            " bytes=%u chunks=%u max_chunk=%u status=0x%08x checksum_host=0x%08x"
+            " checksum_dma_in=0x%08x checksum_dma_out=0x%08x"
+            " dma_elapsed_ms=%.3f total_elapsed_ms=%.3f"
+            " ioctl_result=%d errno=%d result=%s\n",
+            frame_id,
+            req.length,
+            req.chunks,
+            req.max_chunk_size,
+            req.status,
+            host_checksum,
+            req.checksum_in,
+            req.checksum_out,
+            ns_to_ms(req.elapsed_ns),
+            ns_to_ms(elapsed_ns),
+            ioctl_result,
+            ioctl_errno,
+            pass ? "pass" : "fail");
+  }
 
   if (mapped) {
     gst_buffer_unmap(buffer, &map);
@@ -572,6 +674,7 @@ gst_jpeg_pl_dec_src_probe(GstPad *pad, GstPadProbeInfo *info,
 {
   GstJpegPlDec *self = GST_JPEG_PL_DEC(user_data);
   GstBuffer *buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+  GstBuffer *writable;
   GstJpegPlDecSample *sample = NULL;
   GstClockTime now;
   guint64 decode_ns = 0u;
@@ -586,7 +689,14 @@ gst_jpeg_pl_dec_src_probe(GstPad *pad, GstPadProbeInfo *info,
   now = gst_util_get_timestamp();
   gst_jpeg_pl_dec_log_buffer_probe(self, info, pad, self->frames + 1u);
   buffer = GST_PAD_PROBE_INFO_BUFFER(info);
-  gst_jpeg_pl_dec_log_dma_probe(self, buffer, self->frames + 1u);
+  if (gst_jpeg_pl_dec_dma_writeback_enabled(self)) {
+    writable = gst_buffer_make_writable(buffer);
+    if (writable != buffer) {
+      GST_PAD_PROBE_INFO_DATA(info) = writable;
+      buffer = writable;
+    }
+  }
+  gst_jpeg_pl_dec_log_dma_probe(self, buffer, pad, self->frames + 1u);
   out_bytes = gst_buffer_get_size(buffer);
 
   g_mutex_lock(&self->lock);
@@ -662,7 +772,9 @@ gst_jpeg_pl_dec_set_property(GObject *object, guint prop_id,
           g_strcmp0(mode, "buffer-probe") != 0 &&
           g_strcmp0(mode, "pl-buffer-probe") != 0 &&
           g_strcmp0(mode, "dma-probe") != 0 &&
-          g_strcmp0(mode, "pl-dma-probe") != 0) {
+          g_strcmp0(mode, "pl-dma-probe") != 0 &&
+          g_strcmp0(mode, "dma-writeback") != 0 &&
+          g_strcmp0(mode, "pl-dma-writeback") != 0) {
         GST_WARNING_OBJECT(self, "unknown probe-mode '%s', using software",
                            mode == NULL ? "" : mode);
         mode = "software";
@@ -741,12 +853,20 @@ gst_jpeg_pl_dec_finalize(GObject *object)
             ns_to_ms(self->total_dma_probe_ns / self->dma_probe_frames),
             ns_to_ms(self->max_dma_probe_ns));
   }
+  if (self->dma_writeback_frames > 0u) {
+    g_print("JPEGPLDEC_DMA_WRITEBACK_SUMMARY frames=%" G_GUINT64_FORMAT
+            " pass=%" G_GUINT64_FORMAT " fail=%" G_GUINT64_FORMAT "\n",
+            self->dma_writeback_frames,
+            self->dma_writeback_pass_frames,
+            self->dma_writeback_fail_frames);
+  }
   if (self->pending != NULL) {
     g_queue_free_full(self->pending, g_free);
     self->pending = NULL;
   }
   g_clear_pointer(&self->probe_mode, g_free);
   g_clear_pointer(&self->dma_device, g_free);
+  g_clear_pointer(&self->dma_in, g_free);
   g_clear_pointer(&self->dma_out, g_free);
   g_mutex_clear(&self->lock);
   G_OBJECT_CLASS(gst_jpeg_pl_dec_parent_class)->finalize(object);
@@ -798,7 +918,7 @@ gst_jpeg_pl_dec_class_init(GstJpegPlDecClass *klass)
       g_param_spec_string(
           "probe-mode",
           "Probe mode",
-          "software keeps the reference jpegdec path; pl-probe samples PL status; buffer-probe stamps I420; dma-probe loops each decoded buffer through PL",
+          "software keeps the reference jpegdec path; pl-probe samples PL status; buffer-probe stamps I420; dma-probe loops each decoded buffer through PL; dma-writeback writes PL-returned bytes downstream",
           "software",
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property(
