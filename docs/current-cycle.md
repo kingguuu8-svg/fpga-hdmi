@@ -43,6 +43,19 @@ None.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: jpeg-pl-decoder-core-qualification
+Result: PASSED. Pinned `ultraembedded/core_jpeg` performed complete baseline
+  JPEG RTL decode for the current GStreamer profile. xsim emitted 921600
+  unique RGB pixels in 1973637 cycles; software comparison reached 39.002 dB
+  PSNR. XC7Z020 standalone implementation closed at 66.667 MHz with WNS
+  +0.185 ns and zero DRC errors, corresponding to 29.605 ms/frame and 33.779
+  theoretical fps. This is not yet a board-live jpegpldec backend.
+Evidence: docs/reports/jpeg-pl-decoder-core-qualification.md,
+  build/jpeg-pl-decoder-qualification/summary.json,
+  build/jpeg-pl-decoder-qualification/sim/xsim.log,
+  build/jpeg-pl-decoder-qualification/impl/reports/post_route_timing_summary.rpt
+Board action: none. No combined bitstream or persistent board state changed.
+
 Cycle ID: jpegpldec-pl-decode-720p30-v0
 Result: PASSED for the first PL decoder-backend boundary. `jpegpldec` now has
   `backend=pl-compressed-probe` and `probe-mode=compressed-dma-probe`, which

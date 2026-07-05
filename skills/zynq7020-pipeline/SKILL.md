@@ -1272,5 +1272,30 @@ transactions and 120,408 bytes, and kept HDMI dynamic. This is not a full PL
 JPEG decoder: the internal software `jpegdec` child still performs actual
 decode after the compressed PL probe.
 
+Verified PL JPEG decoder qualification path (preferred before board-live core
+integration, 2026-07-05):
+
+```text
+1. Run the complete qualification:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\examples\jpeg-pl-decoder-qualification\run-qualification.ps1
+2. Require complete RTL output:
+   JPEG_PL_RTL_SIM_OK ... pixels=921600 ... duplicates=0
+3. Require software-reference image comparison:
+   JPEG_PL_RTL_COMPARE_OK ... psnr_db >= 35
+4. Require target-device implementation:
+   JPEG_PL_IMPLEMENT_OK part=xc7z020clg484-1 ... wns_ns >= 0 drc_errors=0
+5. Require the final gate:
+   JPEG_PL_DECODER_QUALIFICATION_OK
+```
+
+Verified outcome:
+The pinned `ultraembedded/core_jpeg` RTL performs complete decode for the
+project's current baseline JPEG profile. The accepted run produced every RGB
+pixel, passed reference comparison, met the 720p30 cycle budget, and closed
+standalone XC7Z020 timing. Use this path to requalify the core or source JPEG
+profile. It does not replace the board-live gate: the next integration must
+connect compressed DMA input and coordinate-aware RGB writeback to
+`jpegpldec`, then build and verify the combined design.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

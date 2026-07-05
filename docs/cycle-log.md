@@ -20,6 +20,62 @@ Third-party review:
 Residual risks:
 ```
 
+## Cycle: jpeg-pl-decoder-core-qualification
+
+Date: 2026-07-05
+
+Commit: this commit (`cycle: qualify 720p PL JPEG decoder core`)
+
+Objective: qualify a pinned, complete baseline JPEG RTL decoder against the
+current 720p30 GStreamer profile before binding it into the board-live
+`jpegpldec` backend.
+
+Changed scope:
+
+- Vendored the Apache-2.0 `ultraembedded/core_jpeg` RTL at commit
+  `f9e269a6687ed341b122cdd1412d101ee163e199`.
+- Added a real GStreamer JPEG vector, xsim testbench, software-reference pixel
+  comparator, and XC7Z020 implementation gate.
+- Added the verified qualification entry point to the pipeline skill.
+
+Verification performed:
+
+- xsim decoded 921600 unique pixels with zero duplicate coordinates in
+  1973637 cycles.
+- RTL/software comparison passed at PSNR 39.002 dB, MAE 2.599, and maximum
+  channel error 41.
+- At 66.667 MHz the measured cycle count corresponds to 29.605 ms/frame and
+  33.779 theoretical fps.
+- XC7Z020 placement and routing passed at WNS +0.185 ns with zero DRC errors.
+- Core resources were 5220 LUT, 3288 registers, 6 BRAM tiles, and 31 DSPs.
+- A 100 MHz implementation was correctly rejected at WNS -4.251 ns.
+
+Board action: none. Simulation and standalone implementation only; no combined
+bitstream or persistent board artifact changed. Programming was omitted because
+the standalone core has no board-level DMA/control top or observable output.
+
+Evidence:
+
+- `docs/reports/jpeg-pl-decoder-core-qualification.md`
+- `build/jpeg-pl-decoder-qualification/summary.json`
+- `build/jpeg-pl-decoder-qualification/sim/xsim.log`
+- `build/jpeg-pl-decoder-qualification/sim/pixel-comparison.json`
+- `build/jpeg-pl-decoder-qualification/impl/reports/post_route_timing_summary.rpt`
+- `build/jpeg-pl-decoder-qualification/impl/reports/post_route_utilization.rpt`
+
+Result: PASSED for real RTL decoder qualification and 720p30 cycle/timing
+feasibility. Board-live DMA, raw-buffer publication, HDMI, and combined-design
+timing are not claimed.
+
+Rollback point: parent of this cycle commit; no persistent board state changed.
+
+Third-party review: none.
+
+Residual risks: the exact profile uses fixed standard Huffman tables; decoder
+output is coordinate-addressed rather than a proven linear raster stream;
+combined BRAM estimate is 79.64% before adding the writeback adapter; and the
+theoretical throughput margin must be protected from DMA backpressure.
+
 ## Cycle: jpegpldec-pl-decode-720p30-v0
 
 Date: 2026-07-05
