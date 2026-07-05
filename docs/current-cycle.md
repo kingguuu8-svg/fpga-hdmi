@@ -43,6 +43,22 @@ None.
 ## Recently Closed Cycle
 
 ```text
+Cycle ID: jpegpldec-ps-pl-buffer-datapath-probe
+Result: PASSED. `jpegpldec probe-mode=dma-probe` sent 60 real 115200-byte
+  decoded I420 frames through coherent AXI DMA MM2S -> PL -> S2MM buffers.
+  Driver-internal splitting contained the timed 14-bit BTT limit as eight DMA
+  transactions per logical frame. PL counters recorded 480 transactions and
+  6,912,000 bytes; no DMA mismatch was reported. Dynamic HDMI validation saw
+  300 samples, 121 unique hashes, and 270.141 pixels of motion. The gate to PL
+  writeback is cleared, but PL-returned GstBuffer replacement and zero-copy are
+  not claimed.
+Evidence: docs/reports/jpegpldec-ps-pl-buffer-datapath-probe.md,
+  build/jpegpldec-dma-buffer-probe/summary.json,
+  build/jpegpldec-dma-buffer-probe/uart-stop-dma-probe.log,
+  build/jpegpldec-dma-buffer-probe/hdmi-ball-motion-validation.json
+Board action: loaded module/plugin from /tmp and ran the connected video probe;
+  no boot image or nonvolatile storage changed.
+
 Cycle ID: jpegpl-dma-probe-kernel-client-build
 Result: PASSED for source/build feasibility. Added jpegpl_dma_probe.ko, a
   misc-device DMAengine client that allocates coherent TX/RX buffers with

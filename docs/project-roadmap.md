@@ -176,6 +176,14 @@ Phase C:
   HDMI output. Direct HDMI capture passed the PIP validator, and the dashboard
   right-panel MJPEG return passed 24/24 saved-frame PIP validation. Software
   GStreamer/compositor effects were not used as completion evidence.
+  jpegpldec PS-to-PL decoded-buffer gate: PASSED. The external RTP/JPEG
+  GStreamer chain remains unchanged while each decoded buffer is copied into
+  kernel coherent memory, transferred through AXI DMA MM2S -> PL probe ->
+  S2MM, byte-checked, and allowed to continue through the original downstream
+  GstBuffer. Sixty logical frames completed with zero reported mismatch and
+  dynamic HDMI validation passed. The accepted next stage is PL-returned
+  GstBuffer writeback with a deterministic PL marker/effect; zero-copy remains
+  later optimization rather than a prerequisite for that stage.
   Later: carry the same command semantics over TCP/UDP.
 
 Phase D:

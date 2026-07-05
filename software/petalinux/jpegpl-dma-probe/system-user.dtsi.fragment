@@ -13,5 +13,6 @@
 		dmas = <&axi_dma_0 0>, <&axi_dma_0 1>;
 		dma-names = "tx", "rx";
 		buffer-size = <0x00200000>;
+		max-transfer-size = <16380>;
 	};
 };

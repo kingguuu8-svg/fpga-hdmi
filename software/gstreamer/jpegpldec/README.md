@@ -67,6 +67,10 @@ measurement hooks:
 - `probe-mode=buffer-probe`: software reference path plus decoded I420 buffer
   checksum and top-left luma marker stamping.
 - `probe-mode=pl-buffer-probe`: combines `pl-probe` and `buffer-probe`.
+- `probe-mode=dma-probe`: loops each decoded raw buffer through
+  `/dev/jpegpl_dma_probe`, verifies returned bytes and checksums, and leaves
+  the original GstBuffer on the existing downstream path.
+- `probe-mode=pl-dma-probe`: combines `pl-probe` and `dma-probe`.
 - `summary-interval=N`: emit one `JPEGPLDEC_PROFILE` marker every `N` decoded
   frames.
 - `pl-base=1136656384`: PL PIP AXI-Lite base address; default is
@@ -79,6 +83,7 @@ Markers:
 JPEGPLDEC_PROFILE frames=... mode=... avg_ms=... p50_ms=... p95_ms=...
 JPEGPLDEC_PL_PROBE frame=... main_frames=... pip_frames=... overlay_pixels=...
 JPEGPLDEC_BUFFER_PROBE frame=... checksum_before=... checksum_after=... result=pass
+JPEGPLDEC_DMA_PROBE frame=... bytes=... chunks=... checksum_host=... result=pass
 ```
 
 The PL probe reads the existing PIP status registers. It proves that the
@@ -90,6 +95,13 @@ The buffer probe modifies the decoded I420 buffer before downstream
 that data produced inside `jpegpldec` can be marked and later observed through
 the existing PL display data path. It does not prove an independent DMA-safe
 private buffer, PL writeback, or a GStreamer buffer returned from PL.
+
+The DMA probe uses kernel-owned coherent TX/RX buffers and the AXI DMA
+loopback endpoint. The verified endpoint is handled inside the ioctl as
+16380-byte transactions, so one decoded I420 GstBuffer remains one logical
+plugin frame. This proves PS-to-PL-to-PS data integrity and cache-safe access.
+It deliberately does not replace the downstream GstBuffer with PL output;
+that is the next writeback step.
 
 ## Integrated Probe
 
@@ -106,4 +118,10 @@ For the decoded-buffer data-path marker probe:
 
 ```powershell
 rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_jpegpldec_pl_probe.ps1 -ProbeMode pl-buffer-probe -OutDir build\jpegpldec-pl-buffer-datapath-probe
+```
+
+For the real PS-to-PL DMA buffer probe and dynamic HDMI verification:
+
+```powershell
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_jpegpldec_pl_probe.ps1 -ProbeMode dma-probe -SummaryInterval 10 -Frames 60 -Fps 5 -OutDir build\jpegpldec-dma-buffer-probe
 ```

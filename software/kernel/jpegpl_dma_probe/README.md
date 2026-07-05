@@ -19,6 +19,11 @@ The module deliberately uses kernel DMAengine plus `dma_alloc_coherent` instead
 of `/dev/mem` against normal userspace or `GstBuffer` addresses. That is the
 minimum path that can make a cache-coherency claim defensible.
 
+The ioctl accepts one logical userspace buffer. The verified AXI DMA endpoint
+has a 14-bit BTT field, so the driver internally splits larger buffers into
+16380-byte aligned transactions and returns one complete output buffer. The
+device-tree `max-transfer-size` property can override that transaction limit.
+
 ## Build
 
 ```powershell
@@ -37,14 +42,11 @@ The running device tree must expose the AXI DMA controller from the updated
 HDF and a client node with named `tx` and `rx` DMA channels. See
 `software/petalinux/jpegpl-dma-probe/system-user.dtsi.fragment`.
 
-## Boundary
+## Verified Boundary
 
-This source is not enough to claim the active goal. The full goal still needs:
-
-- BOOT.BIN/image update with the AXI DMA endpoint.
-- Device-tree update exposing `axi_dma_0` and the client node.
-- Board load of `jpegpl_dma_probe.ko`.
-- Standalone `/dev/jpegpl_dma_probe` loopback with a known buffer.
-- `jpegpldec` integration that sends real decoded frames through the ioctl.
-- HDMI return validation that proves GStreamer continues to display dynamic
-  frames after PL loopback.
+Connected-board testing now proves module binding, a 115200-byte standalone
+loopback, 60 consecutive decoded `jpegpldec` frames through the coherent DMA
+path, exact PL transaction/byte counters, and dynamic HDMI output. The probe
+still copies userspace data into kernel coherent buffers and does not return
+the PL output as the downstream GstBuffer. Zero-copy and GStreamer writeback
+remain separate work.

@@ -17,6 +17,7 @@
 
 #define JPEGPL_DMA_PROBE_DEFAULT_BUFFER_SIZE (2u * 1024u * 1024u)
 #define JPEGPL_DMA_PROBE_DEFAULT_TIMEOUT_MS 1000u
+#define JPEGPL_DMA_PROBE_DEFAULT_MAX_TRANSFER_SIZE 16380u
 
 struct jpegpl_dma_chan_wait {
 	struct completion done;
@@ -34,6 +35,7 @@ struct jpegpl_dma_probe_dev {
 	dma_addr_t tx_dma;
 	dma_addr_t rx_dma;
 	u32 buffer_size;
+	u32 max_transfer_size;
 };
 
 static u32 jpegpl_dma_probe_fnv1a32(const u8 *data, size_t size)
@@ -78,6 +80,7 @@ static int jpegpl_dma_probe_run(struct jpegpl_dma_probe_dev *probe,
 	dma_cookie_t tx_cookie;
 	unsigned long timeout;
 	u64 started_ns;
+	u32 offset = 0u;
 	int ret = 0;
 
 	if (copy_from_user(&req, argp, sizeof(req)))
@@ -85,6 +88,8 @@ static int jpegpl_dma_probe_run(struct jpegpl_dma_probe_dev *probe,
 
 	req.status = 0u;
 	req.elapsed_ns = 0u;
+	req.chunks = 0u;
+	req.max_chunk_size = probe->max_transfer_size;
 	if (req.timeout_ms == 0u)
 		req.timeout_ms = JPEGPL_DMA_PROBE_DEFAULT_TIMEOUT_MS;
 
@@ -106,55 +111,56 @@ static int jpegpl_dma_probe_run(struct jpegpl_dma_probe_dev *probe,
 	memset(probe->rx_buf, 0, req.length);
 	req.checksum_in = jpegpl_dma_probe_fnv1a32(probe->tx_buf, req.length);
 
-	init_completion(&rx_wait.done);
-	init_completion(&tx_wait.done);
-	rx_wait.status = DMA_IN_PROGRESS;
-	tx_wait.status = DMA_IN_PROGRESS;
-
-	rx_desc = dmaengine_prep_slave_single(probe->rx_chan, probe->rx_dma,
-					      req.length, DMA_DEV_TO_MEM,
-					      DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
-	if (!rx_desc) {
-		ret = -EIO;
-		goto out_copy_req;
-	}
-	tx_desc = dmaengine_prep_slave_single(probe->tx_chan, probe->tx_dma,
-					      req.length, DMA_MEM_TO_DEV,
-					      DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
-	if (!tx_desc) {
-		ret = -EIO;
-		goto out_copy_req;
-	}
-
-	rx_desc->callback = jpegpl_dma_probe_complete;
-	rx_desc->callback_param = &rx_wait;
-	tx_desc->callback = jpegpl_dma_probe_complete;
-	tx_desc->callback_param = &tx_wait;
-
-	rx_cookie = dmaengine_submit(rx_desc);
-	tx_cookie = dmaengine_submit(tx_desc);
-	if (dma_submit_error(rx_cookie) || dma_submit_error(tx_cookie)) {
-		ret = -EIO;
-		goto out_terminate;
-	}
-
 	started_ns = ktime_get_ns();
-	dma_async_issue_pending(probe->rx_chan);
-	dma_async_issue_pending(probe->tx_chan);
-
 	timeout = msecs_to_jiffies(req.timeout_ms);
-	if (!wait_for_completion_timeout(&tx_wait.done, timeout)) {
-		req.status |= JPEGPL_DMA_PROBE_STATUS_TIMEOUT;
-		ret = -ETIMEDOUT;
-		goto out_terminate;
+	while (offset < req.length) {
+		u32 chunk = min(req.length - offset, probe->max_transfer_size);
+
+		init_completion(&rx_wait.done);
+		init_completion(&tx_wait.done);
+		rx_wait.status = DMA_IN_PROGRESS;
+		tx_wait.status = DMA_IN_PROGRESS;
+
+		rx_desc = dmaengine_prep_slave_single(
+			probe->rx_chan, probe->rx_dma + offset, chunk,
+			DMA_DEV_TO_MEM, DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
+		if (!rx_desc) {
+			ret = -EIO;
+			goto out_terminate;
+		}
+		tx_desc = dmaengine_prep_slave_single(
+			probe->tx_chan, probe->tx_dma + offset, chunk,
+			DMA_MEM_TO_DEV, DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
+		if (!tx_desc) {
+			ret = -EIO;
+			goto out_terminate;
+		}
+
+		rx_desc->callback = jpegpl_dma_probe_complete;
+		rx_desc->callback_param = &rx_wait;
+		tx_desc->callback = jpegpl_dma_probe_complete;
+		tx_desc->callback_param = &tx_wait;
+
+		rx_cookie = dmaengine_submit(rx_desc);
+		tx_cookie = dmaengine_submit(tx_desc);
+		if (dma_submit_error(rx_cookie) || dma_submit_error(tx_cookie)) {
+			ret = -EIO;
+			goto out_terminate;
+		}
+
+		dma_async_issue_pending(probe->rx_chan);
+		dma_async_issue_pending(probe->tx_chan);
+		if (!wait_for_completion_timeout(&tx_wait.done, timeout) ||
+		    !wait_for_completion_timeout(&rx_wait.done, timeout)) {
+			req.status |= JPEGPL_DMA_PROBE_STATUS_TIMEOUT;
+			ret = -ETIMEDOUT;
+			goto out_terminate;
+		}
+
+		offset += chunk;
+		req.chunks++;
 	}
 	req.status |= JPEGPL_DMA_PROBE_STATUS_TX_DONE;
-
-	if (!wait_for_completion_timeout(&rx_wait.done, timeout)) {
-		req.status |= JPEGPL_DMA_PROBE_STATUS_TIMEOUT;
-		ret = -ETIMEDOUT;
-		goto out_terminate;
-	}
 	req.status |= JPEGPL_DMA_PROBE_STATUS_RX_DONE;
 	req.elapsed_ns = ktime_get_ns() - started_ns;
 	req.checksum_out = jpegpl_dma_probe_fnv1a32(probe->rx_buf, req.length);
@@ -201,6 +207,7 @@ static int jpegpl_dma_probe_probe(struct platform_device *pdev)
 {
 	struct jpegpl_dma_probe_dev *probe;
 	u32 buffer_size = JPEGPL_DMA_PROBE_DEFAULT_BUFFER_SIZE;
+	u32 max_transfer_size = JPEGPL_DMA_PROBE_DEFAULT_MAX_TRANSFER_SIZE;
 	int ret;
 
 	probe = devm_kzalloc(&pdev->dev, sizeof(*probe), GFP_KERNEL);
@@ -210,7 +217,12 @@ static int jpegpl_dma_probe_probe(struct platform_device *pdev)
 	probe->dev = &pdev->dev;
 	mutex_init(&probe->lock);
 	of_property_read_u32(pdev->dev.of_node, "buffer-size", &buffer_size);
+	of_property_read_u32(pdev->dev.of_node, "max-transfer-size",
+			     &max_transfer_size);
 	probe->buffer_size = buffer_size;
+	probe->max_transfer_size = min(max_transfer_size, buffer_size);
+	if (probe->max_transfer_size == 0u)
+		return -EINVAL;
 
 	probe->tx_chan = dma_request_chan(&pdev->dev, "tx");
 	if (IS_ERR(probe->tx_chan)) {
@@ -250,9 +262,9 @@ static int jpegpl_dma_probe_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, probe);
 	dev_info(&pdev->dev,
-		 "JPEGPL_DMA_PROBE_READY dev=/dev/%s buffer_size=%u tx_dma=%pad rx_dma=%pad\n",
-		 probe->miscdev.name, probe->buffer_size, &probe->tx_dma,
-		 &probe->rx_dma);
+		 "JPEGPL_DMA_PROBE_READY dev=/dev/%s buffer_size=%u max_transfer_size=%u tx_dma=%pad rx_dma=%pad\n",
+		 probe->miscdev.name, probe->buffer_size,
+		 probe->max_transfer_size, &probe->tx_dma, &probe->rx_dma);
 	return 0;
 
 err_release_rx:

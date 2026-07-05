@@ -18,8 +18,8 @@ struct jpegpl_dma_probe_run {
 	__u32 status;
 	__u32 checksum_in;
 	__u32 checksum_out;
-	__u32 reserved0;
-	__u32 reserved1;
+	__u32 chunks;
+	__u32 max_chunk_size;
 	__u64 user_in;
 	__u64 user_out;
 	__u64 elapsed_ns;

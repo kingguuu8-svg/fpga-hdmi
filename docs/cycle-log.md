@@ -20,6 +20,62 @@ Third-party review:
 Residual risks:
 ```
 
+## Cycle: jpegpldec-ps-pl-buffer-datapath-probe
+
+Date: 2026-07-05
+
+Commit: this commit (`cycle: verify jpegpldec PS-to-PL buffer probe`)
+
+Objective: keep the external GStreamer chain unchanged and continuously send
+real decoded frames through a coherent PS-to-PL-to-PS buffer path inside
+`jpegpldec`.
+
+Changed scope:
+
+- Added `jpegpldec probe-mode=dma-probe` with full byte/checksum validation.
+- Added driver-internal 16380-byte DMA transaction splitting so one 115200-byte
+  I420 GstBuffer remains one logical ioctl on the timed 14-bit endpoint.
+- Extended the connected-board helper with module/plugin deployment, full-frame
+  precheck, PL counter checks, and dynamic HDMI validation.
+- Added PetaLinux overlay/image helper scripts for reproducing the runtime DT
+  integration.
+
+Verification performed:
+
+- xsim regressions passed, including `AXIS_DMA_PROBE_CORE_SIM_OK`.
+- A 17-bit BTT trial was rejected at WNS `-0.101 ns` and was not deployed.
+- Standalone board loopback passed at 115200 bytes.
+- `jpegpldec` processed 60 real decoded frames at 115200 bytes each with zero
+  reported DMA mismatch.
+- PL counters recorded 480 transactions and 6,912,000 bytes.
+- HDMI validation passed with 300 samples, 121 unique hashes, and 270.141
+  pixels of detected motion.
+
+Board action:
+
+- Loaded the module and plugin from `/tmp`, ran the video probe, and stopped
+  the receiver. No boot image or nonvolatile storage changed.
+
+Evidence:
+
+- `docs/reports/jpegpldec-ps-pl-buffer-datapath-probe.md`
+- `build/jpegpldec-dma-buffer-probe/summary.json`
+- `build/jpegpldec-dma-buffer-probe/uart-stop-dma-probe.log`
+- `build/jpegpldec-dma-buffer-probe/hdmi-ball-motion-validation.json`
+
+Result: PASSED. The cache/data-plane gate is closed. Proceed to PL-returned
+GstBuffer writeback; this cycle does not claim writeback or zero-copy.
+
+Rollback point: parent of this cycle commit; reboot clears runtime `/tmp`
+artifacts and the loaded module.
+
+Third-party review: none.
+
+Residual risks:
+
+- The probe still copies through kernel coherent buffers.
+- PL output is verified but not yet reattached as the downstream GstBuffer.
+
 ## Cycle: jpegpl-dma-probe-kernel-client-build
 
 Date: 2026-07-05

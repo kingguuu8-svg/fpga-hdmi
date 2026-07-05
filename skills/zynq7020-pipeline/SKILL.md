@@ -1174,5 +1174,36 @@ source/build feasibility only. It does not prove device-tree binding, module
 load, runtime DMA, cache coherency on hardware, real `jpegpldec` frames, or
 GStreamer writeback.
 
+Verified `jpegpldec` PS-to-PL decoded-buffer probe path (preferred runtime
+cache/data-plane gate before PL writeback, 2026-07-05):
+
+```text
+1. Run the integrated connected-board probe:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_jpegpldec_pl_probe.ps1 -ProbeMode dma-probe -SummaryInterval 10 -Frames 60 -Fps 5 -OutDir build\jpegpldec-dma-buffer-probe
+2. Require the standalone full-frame precheck:
+   JPEGPL_DMA_PROBE_TEST_OK length=115200
+3. Require the GStreamer profile and no DMA failures:
+   JPEGPLDEC_PROFILE frames=60 mode=dma-probe
+   JPEGPLDEC_DMA_PROBE ... bytes=115200 chunks=8 ... result=pass
+4. Require PL counters after the run:
+   PL_DMA_FRAMES=0x000001E0
+   PL_DMA_BYTES=0x00697800
+   PL_DMA_LAST_FRAME_BYTES=0x0000021C
+5. Require dynamic HDMI validation and the final marker:
+   HDMI_BALL_MOTION_OK
+   JPEGPLDEC_PL_PROBE_OK
+```
+
+Verified outcome:
+The existing external RTP/JPEG pipeline keeps `rtpjpegdepay ! jpegpldec !
+videoconvert ! videoscale ! fbdevsink`. Inside `jpegpldec`, every decoded I420
+buffer crosses the real coherent AXI DMA MM2S -> PL probe -> S2MM path. The
+14-bit DMA BTT limit is contained inside the kernel ioctl as eight transactions
+per logical frame. Sixty logical frames produced 480 PL packets and 6,912,000
+bytes with zero reported mismatch; HDMI validation saw 300 samples, 121 unique
+hashes, and 270.141 pixels of ball motion. This clears the cache/data-plane
+gate for PL writeback. It does not yet replace the downstream GstBuffer with
+the PL-returned data.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

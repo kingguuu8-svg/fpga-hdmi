@@ -39,6 +39,7 @@ cflags=(
   -I"$gst_component/usr/include/gstreamer-1.0"
   -I"$glib_component/usr/include/glib-2.0"
   -I"$glib_component/usr/lib/glib-2.0/include"
+  -I"$repo_root/software/kernel/jpegpl_dma_probe/include"
 )
 
 ldflags=(
