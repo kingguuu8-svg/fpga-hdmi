@@ -3774,3 +3774,64 @@ Residual risks:
   `frame_duration_stddev_ms=19.614`.
 - This cycle did not change Vivado, PetaLinux, device tree, or PL buffering;
   those remain plausible places to improve frame pacing.
+
+## Cycle: jpegpldec-real-pl-backend-v1
+
+Objective: replace the `jpegpldec` software/probe-only decode boundary with a
+real PL decoder backend and complete a functional low-rate GStreamer-to-HDMI
+closure without claiming 720p30.
+
+Changed scope:
+
+- Added internal `GstVideoDecoder` backend selection through
+  `backend=pl-decoder`.
+- Published the roadmap-owned PL raw format through normal GstBuffers while preserving the
+  software-reference recovery backend.
+- Added target GStreamer video build linkage, optional output hashing, a
+  reproducible board gate, and the cycle report.
+- Updated the decoder contract, roadmap, plugin README, and preferred pipeline
+  skill entry.
+
+Verification:
+
+- Final ARM plugin cross-build passed with SHA-256
+  `685deca28bbd5ba4385697a3618b7e75c3243bd8289bfd0eb535463fcf365a99`.
+- Fixed PL output matched FNV `0x7127882c`, the expected 2,764,800-byte size,
+  and the qualified RGB SHA-256 exactly.
+- Software-reference fixed-vector regression passed.
+- Dynamic gate retained at least 61 PL decode pass markers, zero failures, and
+  at least 62 unique output hashes.
+- Runtime DOT evidence found the PL child and zero software decoder children.
+- HDMI validation passed 240 samples, 110 unique hashes, 240 ball detections,
+  and motion spans `x=202.955`, `y=265.818`.
+- Post-run Ethernet and kernel health checks passed.
+
+Board action:
+
+- Temporarily deployed the plugin/module under `/tmp`, reloaded the module,
+  ran fixed and dynamic pipelines, and captured HDMI.
+- No RTL, bitstream, boot image, TF-card, JTAG, or flash state changed.
+
+Evidence:
+
+- `docs/reports/jpegpldec-real-pl-backend-v1.md`
+- `build/jpegpldec-real-pl-backend-v1-release/summary.json`
+- `build/jpegpldec-real-pl-backend-v1-release/uart-fixed-and-software.log`
+- `build/jpegpldec-real-pl-backend-v1-release/uart-stop-stream.log`
+- `build/jpegpldec-real-pl-backend-v1-release/hdmi-ball-motion-validation.json`
+
+Rollback point: commit `6d282f2` plus the recovery image recorded by the
+preceding board-datapath cycle.
+
+Result: PASSED for the real PL-decoded low-rate GStreamer-to-HDMI functional
+boundary owned by `docs/project-roadmap.md`. The target throughput tier remains
+unclaimed.
+
+Residual risks:
+
+- Driver hardware-window average was about 68.657 ms; synchronous ioctl wall
+  average was about 104.956 ms.
+- PL writer stalls, the 50 MHz clock domain, and userspace/kernel copies remain
+  the next performance boundaries.
+- The old RTP depay path advertises unknown framerate, so the verified paced
+  framebuffer gate uses immediate sink presentation rather than clock sync.

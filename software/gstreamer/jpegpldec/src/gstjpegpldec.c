@@ -1,4 +1,6 @@
 #include <gst/gst.h>
+#include <gst/video/gstvideodecoder.h>
+#include <gst/video/video.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -53,6 +55,7 @@ typedef struct _GstJpegPlDec {
   gchar *backend;
   gchar *dma_device;
   guint summary_interval;
+  gboolean verify_output_hash;
   guint32 pl_base;
   guint32 pl_map_size;
   volatile guint8 *pl_regs;
@@ -94,11 +97,40 @@ typedef struct _GstJpegPlDecClass {
   GstBinClass parent_class;
 } GstJpegPlDecClass;
 
+typedef struct _GstJpegPlHwDec {
+  GstVideoDecoder parent;
+  gchar *dma_device;
+  gint dma_fd;
+  guint summary_interval;
+  gboolean verify_output_hash;
+  GstVideoCodecState *input_state;
+  GstVideoInfo output_info;
+  guint width;
+  guint height;
+  guint64 frames;
+  guint64 failures;
+  guint64 total_elapsed_ns;
+  guint64 max_elapsed_ns;
+  guint64 total_cycles;
+  guint64 total_stalls;
+} GstJpegPlHwDec;
+
+typedef struct _GstJpegPlHwDecClass {
+  GstVideoDecoderClass parent_class;
+} GstJpegPlHwDecClass;
+
 #define GST_TYPE_JPEG_PL_DEC (gst_jpeg_pl_dec_get_type())
 #define GST_JPEG_PL_DEC(obj) ((GstJpegPlDec *)(obj))
 GType gst_jpeg_pl_dec_get_type(void);
 
+#define GST_TYPE_JPEG_PL_HW_DEC (gst_jpeg_pl_hw_dec_get_type())
+#define GST_JPEG_PL_HW_DEC(obj) ((GstJpegPlHwDec *)(obj))
+#define GST_IS_JPEG_PL_HW_DEC(obj) \
+  (G_TYPE_CHECK_INSTANCE_TYPE((obj), GST_TYPE_JPEG_PL_HW_DEC))
+GType gst_jpeg_pl_hw_dec_get_type(void);
+
 G_DEFINE_TYPE(GstJpegPlDec, gst_jpeg_pl_dec, GST_TYPE_BIN)
+G_DEFINE_TYPE(GstJpegPlHwDec, gst_jpeg_pl_hw_dec, GST_TYPE_VIDEO_DECODER)
 
 enum {
   PROP_0,
@@ -107,7 +139,8 @@ enum {
   PROP_SUMMARY_INTERVAL,
   PROP_PL_BASE,
   PROP_PL_MAP_SIZE,
-  PROP_DMA_DEVICE
+  PROP_DMA_DEVICE,
+  PROP_VERIFY_OUTPUT_HASH
 };
 
 static GstStaticPadTemplate sink_template = GST_STATIC_PAD_TEMPLATE(
@@ -121,6 +154,18 @@ static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE(
     GST_PAD_SRC,
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS("video/x-raw"));
+
+static GstStaticPadTemplate hw_sink_template = GST_STATIC_PAD_TEMPLATE(
+    "sink",
+    GST_PAD_SINK,
+    GST_PAD_ALWAYS,
+    GST_STATIC_CAPS("image/jpeg"));
+
+static GstStaticPadTemplate hw_src_template = GST_STATIC_PAD_TEMPLATE(
+    "src",
+    GST_PAD_SRC,
+    GST_PAD_ALWAYS,
+    GST_STATIC_CAPS("video/x-raw, format=(string)RGB"));
 
 static gint
 compare_u64(const void *left, const void *right)
@@ -313,6 +358,336 @@ gst_jpeg_pl_dec_parse_jpeg_info(const guint8 *data, gsize size,
 
     pos += segment_len;
   }
+}
+
+enum {
+  HW_PROP_0,
+  HW_PROP_DMA_DEVICE,
+  HW_PROP_SUMMARY_INTERVAL,
+  HW_PROP_VERIFY_OUTPUT_HASH
+};
+
+static gboolean
+gst_jpeg_pl_hw_dec_configure_output(GstJpegPlHwDec *self, guint width,
+                                    guint height)
+{
+  GstVideoCodecState *output_state;
+
+  if (self->width == width && self->height == height) {
+    return TRUE;
+  }
+  output_state = gst_video_decoder_set_output_state(
+      GST_VIDEO_DECODER(self), GST_VIDEO_FORMAT_RGB, width, height,
+      self->input_state);
+  if (output_state == NULL) {
+    return FALSE;
+  }
+  self->output_info = output_state->info;
+  self->width = width;
+  self->height = height;
+  gst_video_codec_state_unref(output_state);
+  return gst_video_decoder_negotiate(GST_VIDEO_DECODER(self));
+}
+
+static gboolean
+gst_jpeg_pl_hw_dec_start(GstVideoDecoder *decoder)
+{
+  GstJpegPlHwDec *self = GST_JPEG_PL_HW_DEC(decoder);
+
+  self->dma_fd = open(self->dma_device, O_RDWR);
+  if (self->dma_fd < 0) {
+    GST_ELEMENT_ERROR(self, RESOURCE, OPEN_READ_WRITE,
+                      ("could not open PL JPEG decoder device"),
+                      ("device=%s error=%s", self->dma_device,
+                       g_strerror(errno)));
+    return FALSE;
+  }
+  self->width = 0u;
+  self->height = 0u;
+  self->frames = 0u;
+  self->failures = 0u;
+  self->total_elapsed_ns = 0u;
+  self->max_elapsed_ns = 0u;
+  self->total_cycles = 0u;
+  self->total_stalls = 0u;
+  g_print("JPEGPLDEC_BACKEND_SELECTED backend=pl-decoder device=%s software_jpegdec=absent\n",
+          self->dma_device);
+  return TRUE;
+}
+
+static gboolean
+gst_jpeg_pl_hw_dec_stop(GstVideoDecoder *decoder)
+{
+  GstJpegPlHwDec *self = GST_JPEG_PL_HW_DEC(decoder);
+
+  if (self->dma_fd >= 0) {
+    close(self->dma_fd);
+    self->dma_fd = -1;
+  }
+  g_print("JPEGPLDEC_PL_DECODE_SUMMARY frames=%" G_GUINT64_FORMAT
+          " failures=%" G_GUINT64_FORMAT " avg_ms=%.3f max_ms=%.3f"
+          " avg_cycles=%.1f avg_stalls=%.1f\n",
+          self->frames, self->failures,
+          self->frames == 0u ? 0.0 :
+              ns_to_ms(self->total_elapsed_ns / self->frames),
+          ns_to_ms(self->max_elapsed_ns),
+          self->frames == 0u ? 0.0 :
+              (gdouble)self->total_cycles / (gdouble)self->frames,
+          self->frames == 0u ? 0.0 :
+              (gdouble)self->total_stalls / (gdouble)self->frames);
+  return TRUE;
+}
+
+static gboolean
+gst_jpeg_pl_hw_dec_set_format(GstVideoDecoder *decoder,
+                              GstVideoCodecState *state)
+{
+  GstJpegPlHwDec *self = GST_JPEG_PL_HW_DEC(decoder);
+
+  if (self->input_state != NULL) {
+    gst_video_codec_state_unref(self->input_state);
+  }
+  self->input_state = gst_video_codec_state_ref(state);
+  self->width = 0u;
+  self->height = 0u;
+  return TRUE;
+}
+
+static GstFlowReturn
+gst_jpeg_pl_hw_dec_fail_frame(GstJpegPlHwDec *self, GstVideoCodecFrame *frame,
+                              const gchar *reason)
+{
+  self->failures++;
+  g_print("JPEGPLDEC_PL_DECODE frame=%" G_GUINT64_FORMAT
+          " result=fail reason=%s\n",
+          self->frames + self->failures, reason);
+  gst_video_decoder_drop_frame(GST_VIDEO_DECODER(self), frame);
+  return GST_FLOW_ERROR;
+}
+
+static GstFlowReturn
+gst_jpeg_pl_hw_dec_handle_frame(GstVideoDecoder *decoder,
+                                GstVideoCodecFrame *frame)
+{
+  GstJpegPlHwDec *self = GST_JPEG_PL_HW_DEC(decoder);
+  GstJpegPlDecJpegInfo jpeg_info;
+  struct jpegpl_dma_probe_decode req;
+  GstMapInfo input_map;
+  GstMapInfo output_map;
+  GstClockTime started;
+  guint64 total_ns;
+  guint64 frame_id = self->frames + self->failures + 1u;
+  guint32 output_hash;
+  GstFlowReturn flow;
+  gboolean input_mapped = FALSE;
+  gboolean output_mapped = FALSE;
+
+  memset(&input_map, 0, sizeof(input_map));
+  memset(&output_map, 0, sizeof(output_map));
+  if (!gst_buffer_map(frame->input_buffer, &input_map, GST_MAP_READ)) {
+    return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "input-map");
+  }
+  input_mapped = TRUE;
+  gst_jpeg_pl_dec_parse_jpeg_info(input_map.data, input_map.size, &jpeg_info);
+  if (!jpeg_info.valid || !jpeg_info.baseline || jpeg_info.progressive ||
+      !jpeg_info.has_sos || !jpeg_info.sampling_420 ||
+      jpeg_info.width != 1280u || jpeg_info.height != 720u) {
+    gst_buffer_unmap(frame->input_buffer, &input_map);
+    return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "unsupported-profile");
+  }
+  if (input_map.size > G_MAXUINT32 ||
+      !gst_jpeg_pl_hw_dec_configure_output(self, jpeg_info.width,
+                                           jpeg_info.height)) {
+    gst_buffer_unmap(frame->input_buffer, &input_map);
+    return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-caps");
+  }
+
+  flow = gst_video_decoder_allocate_output_frame(decoder, frame);
+  if (flow != GST_FLOW_OK || frame->output_buffer == NULL) {
+    gst_buffer_unmap(frame->input_buffer, &input_map);
+    return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-allocate");
+  }
+  if (!gst_buffer_map(frame->output_buffer, &output_map, GST_MAP_WRITE)) {
+    gst_buffer_unmap(frame->input_buffer, &input_map);
+    return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-map");
+  }
+  output_mapped = TRUE;
+
+  memset(&req, 0, sizeof(req));
+  req.input_length = (guint32)input_map.size;
+  req.width = jpeg_info.width;
+  req.height = jpeg_info.height;
+  req.stride = (guint32)GST_VIDEO_INFO_PLANE_STRIDE(&self->output_info, 0);
+  req.timeout_ms = 1000u;
+  req.user_input = (guint64)(guintptr)input_map.data;
+  req.user_output = (guint64)(guintptr)output_map.data;
+
+  started = gst_util_get_timestamp();
+  if (ioctl(self->dma_fd, JPEGPL_DMA_PROBE_IOC_DECODE, &req) != 0) {
+    gint saved_errno = errno;
+    gst_buffer_unmap(frame->output_buffer, &output_map);
+    gst_buffer_unmap(frame->input_buffer, &input_map);
+    g_print("JPEGPLDEC_PL_DECODE_IOCTL frame=%" G_GUINT64_FORMAT
+            " errno=%d status=0x%08x errors=0x%08x result=fail\n",
+            frame_id, saved_errno, req.status, req.error_flags);
+    return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "ioctl");
+  }
+  total_ns = gst_util_get_timestamp() - started;
+  output_hash = self->verify_output_hash ?
+      fnv1a32(output_map.data, output_map.size) : 0u;
+
+  if (req.output_bytes != output_map.size ||
+      req.pixels != jpeg_info.width * jpeg_info.height ||
+      req.commands != req.responses || req.error_flags != 0u ||
+      (req.status & JPEGPL_DMA_PROBE_STATUS_PL_DONE) == 0u) {
+    gst_buffer_unmap(frame->output_buffer, &output_map);
+    gst_buffer_unmap(frame->input_buffer, &input_map);
+    return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "counter-gate");
+  }
+
+  self->frames++;
+  self->total_elapsed_ns += total_ns;
+  self->max_elapsed_ns = MAX(self->max_elapsed_ns, total_ns);
+  self->total_cycles += req.cycles;
+  self->total_stalls += req.stall_cycles;
+  g_print("JPEGPLDEC_PL_DECODE frame=%" G_GUINT64_FORMAT
+          " pts=%" G_GUINT64_FORMAT " duration=%" G_GUINT64_FORMAT
+          " input_bytes=%u output_bytes=%u"
+          " cycles=%u stalls=%u commands=%u responses=%u"
+          " ioctl_ms=%.3f total_ms=%.3f hash_enabled=%u"
+          " output_fnv=0x%08x result=pass\n",
+          frame_id, (guint64)frame->pts, (guint64)frame->duration,
+          req.input_bytes, req.output_bytes,
+          req.cycles, req.stall_cycles, req.commands, req.responses,
+          ns_to_ms(req.elapsed_ns), ns_to_ms(total_ns),
+          self->verify_output_hash ? 1u : 0u, output_hash);
+  if (self->summary_interval > 0u &&
+      (self->frames % self->summary_interval) == 0u) {
+    g_print("JPEGPLDEC_PL_DECODE_PROGRESS frames=%" G_GUINT64_FORMAT
+            " failures=%" G_GUINT64_FORMAT " avg_ms=%.3f max_ms=%.3f\n",
+            self->frames, self->failures,
+            ns_to_ms(self->total_elapsed_ns / self->frames),
+            ns_to_ms(self->max_elapsed_ns));
+  }
+
+  if (output_mapped) {
+    gst_buffer_unmap(frame->output_buffer, &output_map);
+  }
+  if (input_mapped) {
+    gst_buffer_unmap(frame->input_buffer, &input_map);
+  }
+  return gst_video_decoder_finish_frame(decoder, frame);
+}
+
+static void
+gst_jpeg_pl_hw_dec_set_property(GObject *object, guint prop_id,
+                                const GValue *value, GParamSpec *pspec)
+{
+  GstJpegPlHwDec *self = GST_JPEG_PL_HW_DEC(object);
+
+  switch (prop_id) {
+    case HW_PROP_DMA_DEVICE:
+      g_free(self->dma_device);
+      self->dma_device = g_value_dup_string(value);
+      break;
+    case HW_PROP_SUMMARY_INTERVAL:
+      self->summary_interval = g_value_get_uint(value);
+      break;
+    case HW_PROP_VERIFY_OUTPUT_HASH:
+      self->verify_output_hash = g_value_get_boolean(value);
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
+      break;
+  }
+}
+
+static void
+gst_jpeg_pl_hw_dec_get_property(GObject *object, guint prop_id, GValue *value,
+                                GParamSpec *pspec)
+{
+  GstJpegPlHwDec *self = GST_JPEG_PL_HW_DEC(object);
+
+  switch (prop_id) {
+    case HW_PROP_DMA_DEVICE:
+      g_value_set_string(value, self->dma_device);
+      break;
+    case HW_PROP_SUMMARY_INTERVAL:
+      g_value_set_uint(value, self->summary_interval);
+      break;
+    case HW_PROP_VERIFY_OUTPUT_HASH:
+      g_value_set_boolean(value, self->verify_output_hash);
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
+      break;
+  }
+}
+
+static void
+gst_jpeg_pl_hw_dec_finalize(GObject *object)
+{
+  GstJpegPlHwDec *self = GST_JPEG_PL_HW_DEC(object);
+
+  if (self->dma_fd >= 0) {
+    close(self->dma_fd);
+  }
+  if (self->input_state != NULL) {
+    gst_video_codec_state_unref(self->input_state);
+  }
+  g_clear_pointer(&self->dma_device, g_free);
+  G_OBJECT_CLASS(gst_jpeg_pl_hw_dec_parent_class)->finalize(object);
+}
+
+static void
+gst_jpeg_pl_hw_dec_init(GstJpegPlHwDec *self)
+{
+  self->dma_device = g_strdup(DEFAULT_DMA_DEVICE);
+  self->dma_fd = -1;
+  self->summary_interval = 30u;
+  self->verify_output_hash = FALSE;
+  gst_video_info_init(&self->output_info);
+  gst_video_decoder_set_packetized(GST_VIDEO_DECODER(self), TRUE);
+}
+
+static void
+gst_jpeg_pl_hw_dec_class_init(GstJpegPlHwDecClass *klass)
+{
+  GObjectClass *object_class = G_OBJECT_CLASS(klass);
+  GstElementClass *element_class = GST_ELEMENT_CLASS(klass);
+  GstVideoDecoderClass *decoder_class = GST_VIDEO_DECODER_CLASS(klass);
+
+  object_class->set_property = gst_jpeg_pl_hw_dec_set_property;
+  object_class->get_property = gst_jpeg_pl_hw_dec_get_property;
+  object_class->finalize = gst_jpeg_pl_hw_dec_finalize;
+  decoder_class->start = gst_jpeg_pl_hw_dec_start;
+  decoder_class->stop = gst_jpeg_pl_hw_dec_stop;
+  decoder_class->set_format = gst_jpeg_pl_hw_dec_set_format;
+  decoder_class->handle_frame = gst_jpeg_pl_hw_dec_handle_frame;
+
+  g_object_class_install_property(
+      object_class, HW_PROP_DMA_DEVICE,
+      g_param_spec_string("dma-device", "PL JPEG device",
+                          "Linux misc device for the PL JPEG decoder",
+                          DEFAULT_DMA_DEVICE,
+                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property(
+      object_class, HW_PROP_SUMMARY_INTERVAL,
+      g_param_spec_uint("summary-interval", "Summary interval",
+                        "Frames between PL decode progress markers",
+                        0u, 100000u, 30u,
+                        G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property(
+      object_class, HW_PROP_VERIFY_OUTPUT_HASH,
+      g_param_spec_boolean("verify-output-hash", "Verify output hash",
+                           "Compute an ARM-side FNV hash for each PL output",
+                           FALSE,
+                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  gst_element_class_set_static_metadata(
+      element_class, "Zynq PL JPEG hardware decoder", "Codec/Decoder/Image",
+      "Decode baseline 4:2:0 JPEG through /dev/jpegpl_dma_probe", "fpga-hdml");
+  gst_element_class_add_static_pad_template(element_class, &hw_sink_template);
+  gst_element_class_add_static_pad_template(element_class, &hw_src_template);
 }
 
 static gboolean
@@ -895,10 +1270,11 @@ gst_jpeg_pl_dec_log_profile(GstJpegPlDec *self, guint64 decode_ns,
   avg_out_bytes = (gdouble)self->total_out_bytes / (gdouble)self->frames;
 
   g_print("JPEGPLDEC_PROFILE frames=%" G_GUINT64_FORMAT
-          " mode=%s last_ms=%.3f avg_ms=%.3f p50_ms=%.3f p95_ms=%.3f"
+          " backend=%s mode=%s last_ms=%.3f avg_ms=%.3f p50_ms=%.3f p95_ms=%.3f"
           " max_ms=%.3f avg_in_bytes=%.1f avg_out_bytes=%.1f"
           " pending=%u\n",
           self->frames,
+          self->backend,
           self->probe_mode,
           ns_to_ms(decode_ns),
           avg_ms,
@@ -1030,6 +1406,73 @@ gst_jpeg_pl_dec_install_probes(GstJpegPlDec *self)
   }
 }
 
+static gboolean
+gst_jpeg_pl_dec_select_backend(GstJpegPlDec *self, const gchar *backend)
+{
+  GstElement *next_decoder;
+  GstPad *next_sink;
+  GstPad *next_src;
+  GstPad *ghost_sink;
+  GstPad *ghost_src;
+  gboolean use_pl = g_strcmp0(backend, "pl-decoder") == 0;
+  gboolean ok;
+
+  if (use_pl) {
+    next_decoder = g_object_new(
+        GST_TYPE_JPEG_PL_HW_DEC,
+        "name", "pl-hardware-decoder",
+        "dma-device", self->dma_device,
+        "summary-interval", self->summary_interval,
+        "verify-output-hash", self->verify_output_hash,
+        NULL);
+  } else {
+    next_decoder = gst_element_factory_make("jpegdec",
+                                             "software-reference-decoder");
+  }
+  if (next_decoder == NULL) {
+    GST_ERROR_OBJECT(self, "could not create backend %s", backend);
+    return FALSE;
+  }
+  if (!gst_bin_add(GST_BIN(self), next_decoder)) {
+    gst_object_unref(next_decoder);
+    return FALSE;
+  }
+
+  next_sink = gst_element_get_static_pad(next_decoder, "sink");
+  next_src = gst_element_get_static_pad(next_decoder, "src");
+  ghost_sink = gst_element_get_static_pad(GST_ELEMENT(self), "sink");
+  ghost_src = gst_element_get_static_pad(GST_ELEMENT(self), "src");
+  ok = next_sink != NULL && next_src != NULL && ghost_sink != NULL &&
+       ghost_src != NULL &&
+       gst_ghost_pad_set_target(GST_GHOST_PAD(ghost_sink), next_sink) &&
+       gst_ghost_pad_set_target(GST_GHOST_PAD(ghost_src), next_src);
+  if (next_sink != NULL) {
+    gst_object_unref(next_sink);
+  }
+  if (next_src != NULL) {
+    gst_object_unref(next_src);
+  }
+  if (ghost_sink != NULL) {
+    gst_object_unref(ghost_sink);
+  }
+  if (ghost_src != NULL) {
+    gst_object_unref(ghost_src);
+  }
+  if (!ok) {
+    gst_bin_remove(GST_BIN(self), next_decoder);
+    return FALSE;
+  }
+
+  if (self->decoder != NULL) {
+    gst_bin_remove(GST_BIN(self), self->decoder);
+  }
+  self->decoder = next_decoder;
+  gst_jpeg_pl_dec_install_probes(self);
+  g_print("JPEGPLDEC_BACKEND_CONFIGURED backend=%s child=%s\n",
+          backend, GST_ELEMENT_NAME(next_decoder));
+  return TRUE;
+}
+
 static void
 gst_jpeg_pl_dec_set_property(GObject *object, guint prop_id,
                              const GValue *value, GParamSpec *pspec)
@@ -1040,10 +1483,22 @@ gst_jpeg_pl_dec_set_property(GObject *object, guint prop_id,
     case PROP_BACKEND: {
       const gchar *backend = g_value_get_string(value);
       if (g_strcmp0(backend, "software-reference") != 0 &&
-          g_strcmp0(backend, "pl-compressed-probe") != 0) {
+          g_strcmp0(backend, "pl-compressed-probe") != 0 &&
+          g_strcmp0(backend, "pl-decoder") != 0) {
         GST_WARNING_OBJECT(self, "unknown backend '%s', using software-reference",
                            backend == NULL ? "" : backend);
         backend = "software-reference";
+      }
+      if (self->decoder != NULL && g_strcmp0(self->backend, backend) != 0) {
+        if (GST_STATE(self) != GST_STATE_NULL) {
+          GST_WARNING_OBJECT(self,
+                             "backend can only change while the element is NULL");
+          break;
+        }
+        if (!gst_jpeg_pl_dec_select_backend(self, backend)) {
+          GST_WARNING_OBJECT(self, "backend switch to '%s' failed", backend);
+          break;
+        }
       }
       g_free(self->backend);
       self->backend = g_strdup(backend);
@@ -1071,6 +1526,11 @@ gst_jpeg_pl_dec_set_property(GObject *object, guint prop_id,
     }
     case PROP_SUMMARY_INTERVAL:
       self->summary_interval = g_value_get_uint(value);
+      if (self->decoder != NULL &&
+          GST_IS_JPEG_PL_HW_DEC(self->decoder)) {
+        g_object_set(self->decoder, "summary-interval",
+                     self->summary_interval, NULL);
+      }
       break;
     case PROP_PL_BASE:
       self->pl_base = g_value_get_uint(value);
@@ -1081,6 +1541,18 @@ gst_jpeg_pl_dec_set_property(GObject *object, guint prop_id,
     case PROP_DMA_DEVICE:
       g_free(self->dma_device);
       self->dma_device = g_value_dup_string(value);
+      if (self->decoder != NULL &&
+          GST_IS_JPEG_PL_HW_DEC(self->decoder)) {
+        g_object_set(self->decoder, "dma-device", self->dma_device, NULL);
+      }
+      break;
+    case PROP_VERIFY_OUTPUT_HASH:
+      self->verify_output_hash = g_value_get_boolean(value);
+      if (self->decoder != NULL &&
+          GST_IS_JPEG_PL_HW_DEC(self->decoder)) {
+        g_object_set(self->decoder, "verify-output-hash",
+                     self->verify_output_hash, NULL);
+      }
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -1112,6 +1584,9 @@ gst_jpeg_pl_dec_get_property(GObject *object, guint prop_id, GValue *value,
       break;
     case PROP_DMA_DEVICE:
       g_value_set_string(value, self->dma_device);
+      break;
+    case PROP_VERIFY_OUTPUT_HASH:
+      g_value_set_boolean(value, self->verify_output_hash);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -1181,6 +1656,7 @@ gst_jpeg_pl_dec_init(GstJpegPlDec *self)
   self->dma_device = g_strdup(DEFAULT_DMA_DEVICE);
   self->dma_fd = -1;
   self->summary_interval = 30u;
+  self->verify_output_hash = FALSE;
   self->pl_base = DEFAULT_PL_BASE;
   self->pl_map_size = DEFAULT_PL_MAP_SIZE;
   g_mutex_init(&self->lock);
@@ -1219,7 +1695,7 @@ gst_jpeg_pl_dec_class_init(GstJpegPlDecClass *klass)
       g_param_spec_string(
           "backend",
           "Decoder backend",
-          "software-reference keeps the internal jpegdec child; pl-compressed-probe sends compressed JPEG input through the PL DMA data plane before falling back to software reference decode",
+          "software-reference uses system jpegdec; pl-compressed-probe probes compressed ingress before software decode; pl-decoder publishes RGB888 decoded by the PL JPEG engine",
           "software-reference",
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property(
@@ -1267,12 +1743,21 @@ gst_jpeg_pl_dec_class_init(GstJpegPlDecClass *klass)
           "Linux misc device used for decoded-buffer PS-to-PL loopback",
           DEFAULT_DMA_DEVICE,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property(
+      object_class,
+      PROP_VERIFY_OUTPUT_HASH,
+      g_param_spec_boolean(
+          "verify-output-hash",
+          "Verify output hash",
+          "Compute an ARM-side FNV hash for every PL-decoded RGB frame",
+          FALSE,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   gst_element_class_set_static_metadata(
       element_class,
       "JPEG PL decoder entry point",
       "Codec/Decoder/Image",
-      "Project-owned JPEG decoder entry point with software reference and PL data-plane probes",
+      "Project-owned JPEG decoder with software reference and real PL decoder backends",
       "fpga-hdml");
 
   gst_element_class_add_static_pad_template(element_class, &sink_template);
@@ -1290,9 +1775,9 @@ GST_PLUGIN_DEFINE(
     GST_VERSION_MAJOR,
     GST_VERSION_MINOR,
     jpegpldec,
-    "Project-owned JPEG decoder skeleton for later Zynq PL acceleration",
+    "Project-owned JPEG decoder with Zynq PL acceleration",
     jpegpldec_plugin_init,
-    "0.1.0",
+    "0.2.0",
     "LGPL",
     "fpga-hdml",
     "https://github.com/kingguuu8-svg/fpga-hdmi")

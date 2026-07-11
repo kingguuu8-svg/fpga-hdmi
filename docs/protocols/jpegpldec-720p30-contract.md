@@ -28,11 +28,17 @@ PC source
 | First decoder entry | `jpegpldec` |
 | Reference backend | internal software `jpegdec` child |
 | PL backend target | compressed JPEG input to raw video output |
-| Preferred raw output | I420 while inside `jpegpldec` |
+| First board backend raw output | See `docs/project-roadmap.md` |
 | Display output | current HDMI path until a 720p HDMI mode is separately proven |
 
 The first target is not the final ceiling. A passing 720p30 result is the base
 for later 1080p30, 720p60, or 1080p60 investigations.
+
+The first board backend publishes the native raw output specified by
+`docs/project-roadmap.md`. Converting that frame to a different planar format
+inside `jpegpldec` and back again at the current framebuffer sink would add ARM
+work without proving more PL decode functionality. A different planar or native
+DMA-buffer output remains a later throughput optimization, not a v1 gate.
 
 ## JPEG Profile
 

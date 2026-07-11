@@ -3,10 +3,9 @@
 `jpegpldec` is the project-owned GStreamer decoder entry point for the
 MJPEG-to-PL-acceleration route.
 
-The first implementation is intentionally conservative: it is a GStreamer
-plugin that registers `jpegpldec` as a bin wrapping the system `jpegdec`
-element. This proves that the board can load a project-owned decoder element
-and that the current pipeline can replace:
+`jpegpldec` keeps a software-reference backend and also provides a real
+`pl-decoder` backend. The outer element remains a bin so the current pipeline
+can replace:
 
 ```text
 rtpjpegdepay ! jpegdec ! ...
@@ -20,8 +19,10 @@ rtpjpegdepay ! jpegpldec ! ...
 
 without changing the rest of the video chain.
 
-It is not a PL accelerator yet. Later cycles may replace the internal software
-reference path with a custom decoder implementation and PL offload interface.
+without changing the downstream video chain. `backend=pl-decoder` replaces the
+system `jpegdec` child with an internal `GstVideoDecoder`, sends the compressed
+buffer through `/dev/jpegpl_dma_probe`, and publishes the returned raw frame
+as a timed downstream GstBuffer.
 
 ## Build
 
@@ -64,6 +65,31 @@ udpsrc port=5011 caps=...
   `/dev/jpegpl_dma_probe` before falling back to the software reference decode.
   This is the first PL decode-backend boundary. It proves real compressed JPEG
   ingress into the PL DMA data plane, not PL entropy decode yet.
+- `backend=pl-decoder`: accepts the qualified profile owned by
+  `docs/project-roadmap.md` and the decoder contract, invokes
+  `JPEGPL_DMA_PROBE_IOC_DECODE`, and publishes the PL-decoded raw format owned
+  by the roadmap. The
+  system `jpegdec` child is absent from the selected runtime graph.
+- `verify-output-hash=true`: computes a diagnostic FNV hash for each PL output.
+  It is disabled by default because it adds ARM work and is not part of decode.
+
+The backend may only be changed while the element is in `NULL`. Unsupported
+profiles fail explicitly; select `backend=software-reference` as the recovery
+path.
+
+## Real Backend Gate
+
+Run the complete build, fixed-vector, software-regression, RTP/JPEG, PL decode,
+HDMI capture, graph, and health gate with:
+
+```powershell
+rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_jpegpldec_real_backend.ps1
+```
+
+The connected display pipeline uses `fbdevsink sync=false qos=false` for this
+paced low-rate gate defined by the roadmap. `rtpjpegdepay` on the current GStreamer version advertises
+`framerate=0/1`; clock-synchronizing that unknown-rate stream caused display
+wait/drop behavior even though PL decode had completed.
 
 ## Probe Modes
 

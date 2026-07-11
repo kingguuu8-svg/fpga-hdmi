@@ -1293,9 +1293,8 @@ The pinned `ultraembedded/core_jpeg` RTL performs complete decode for the
 project's current baseline JPEG profile. The accepted run produced every RGB
 pixel, passed reference comparison, met the 720p30 cycle budget, and closed
 standalone XC7Z020 timing. Use this path to requalify the core or source JPEG
-profile. It does not replace the board-live gate: the next integration must
-connect compressed DMA input and coordinate-aware RGB writeback to
-`jpegpldec`, then build and verify the combined design.
+profile. It does not replace the board-live gate or the verified GStreamer
+backend path below.
 
 Verified board-live JPEG PL single-frame datapath (preferred before GStreamer
 backend integration, 2026-07-11):
@@ -1333,6 +1332,35 @@ XC7Z020. The shortest evidence and exact fixed-vector commands are recorded in
 `docs/reports/jpeg-pl-decoder-board-datapath-v1.md`. This is a single-frame
 datapath entry point, not the sustained frame-rate target or a GStreamer
 `jpegpldec` backend.
+
+Verified real `jpegpldec` PL backend path (preferred for functional video
+closure, 2026-07-11):
+
+```text
+1. Boot the qualified board image and require /dev/jpegpl_dma_probe, Ethernet,
+   UART, /dev/fb0, and HDMI capture to be available.
+2. Run the integrated gate:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run_jpegpldec_real_backend.ps1
+3. Require the fixed vector to produce the expected raw byte count and FNV owned
+   by the current decoder qualification evidence.
+4. Require backend=software-reference to pass its fixed-vector regression.
+5. Run the paced RTP/JPEG stream with backend=pl-decoder. The current old
+   rtpjpegdepay reports framerate=0/1, so use immediate fbdev presentation for
+   this functional gate rather than sink clock synchronization.
+6. Require at least 60 JPEGPLDEC_PL_DECODE result=pass markers, zero fail
+   markers, multiple unique output hashes, a PL child in the DOT graph, and
+   zero software-reference-decoder children.
+7. Require HDMI_BALL_MOTION_OK plus clean Ethernet and kernel health evidence.
+8. Treat verify-output-hash=true as diagnostic only; disable it for throughput
+   work.
+```
+
+Verified outcome:
+The project-owned GStreamer entry point now performs real PL JPEG decode and
+publishes the roadmap-owned raw GstBuffers into the existing HDMI chain. This
+route is a functional low-rate closure; do not cite it as the target throughput
+tier. See
+`docs/reports/jpegpldec-real-pl-backend-v1.md`.
 
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

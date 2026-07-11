@@ -45,16 +45,17 @@ None.
 ## Most Recently Closed Cycle
 
 ```text
-Cycle ID: jpeg-pl-decoder-board-datapath-v1
-Result: PASSED. One fixed JPEG frame completed Linux coherent input DMA, PL
-  decode, coordinate-aware DataMover RGB888 writeback, coherent DDR return,
-  strict hardware-counter gates, and software-reference pixel comparison on
-  the connected board.
-Evidence: docs/reports/jpeg-pl-decoder-board-datapath-v1.md and
-  build/jpeg-pl-decoder-board-datapath-v1/.
-Rollback point: 65c2549 plus the TF-card BOOT.pre-final-v5.BIN recovery copy.
-Residual risk: this is a single-frame board datapath pass, not sustained video
-  throughput or a GStreamer jpegpldec backend.
+Cycle ID: jpegpldec-real-pl-backend-v1
+Result: PASSED. `jpegpldec backend=pl-decoder` bypassed system `jpegdec`,
+  published PL-decoded GstBuffers in the roadmap-owned raw format, matched the
+  qualified fixed-vector output exactly, and completed the dynamic low-rate
+  RTP/JPEG-to-HDMI gate defined by `docs/project-roadmap.md`.
+Evidence: docs/reports/jpegpldec-real-pl-backend-v1.md and
+  build/jpegpldec-real-pl-backend-v1-release/.
+Rollback point: commit 6d282f2 and the existing TF-card recovery image recorded
+  by the preceding board-datapath cycle.
+Residual risk: this is a synchronous copy-based low-rate closure, not sustained
+  720p30.
 ```
 
 ## Frozen Progress Note

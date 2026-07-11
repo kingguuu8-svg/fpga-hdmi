@@ -196,8 +196,15 @@ Phase C:
   PL JPEG decoder core qualification gate: PASSED. A pinned complete baseline
   JPEG RTL core decoded the current GStreamer profile, passed software-reference
   image comparison, met the 720p30 cycle budget, and closed standalone XC7Z020
-  timing. The next implementation boundary is board-live DMA and raw-buffer
-  publication through `jpegpldec`, not another decoder probe.
+  timing.
+  jpegpldec real PL backend gate: PASSED at the functional low-rate boundary.
+  `backend=pl-decoder` now bypasses the system `jpegdec`, sends qualified
+  1280x720 baseline 4:2:0 JPEG buffers through the board-live PL decoder, and
+  publishes RGB888 GstBuffers into the existing GStreamer-to-HDMI chain. Fixed
+  output matched the qualified RGB hash, dynamic HDMI motion passed, and the
+  runtime graph contained no software decoder child. This does not satisfy the
+  720p30 tier; the next boundary is PL writeback/clock and copy-path throughput
+  optimization inside this real pipeline.
   Later: carry the same command semantics over TCP/UDP.
 
 Phase D:
