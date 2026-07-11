@@ -267,7 +267,7 @@ static int jpegpl_dma_probe_decode(
 		ret = -EFAULT;
 		goto out;
 	}
-	memset(probe->rx_buf, 0, output_size);
+	/* Full-writeback mode overwrites every byte before PL_DONE. */
 	dma_wmb();
 
 	ret = jpegpl_dma_probe_verify_config(probe, req.width, req.height,

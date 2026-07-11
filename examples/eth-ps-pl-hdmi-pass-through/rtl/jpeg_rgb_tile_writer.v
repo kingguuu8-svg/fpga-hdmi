@@ -94,11 +94,13 @@ module jpeg_rgb_tile_writer (
     reg [31:0] status_error_flags;
     reg [31:0] status_last_address;
 
-    reg [23:0] block_buffer [0:BLOCK_PIXELS-1];
-    reg [11:0] current_block_x;
-    reg [11:0] current_block_y;
-    reg        block_active;
-    reg        block_full;
+    reg [23:0] block_buffer [0:(2*BLOCK_PIXELS)-1];
+    reg [11:0] block_x [0:1];
+    reg [11:0] block_y [0:1];
+    reg [1:0]  block_active;
+    reg [1:0]  block_full;
+    reg        capture_bank;
+    reg        flush_bank;
     reg [3:0]  flush_line;
     reg [3:0]  send_word;
     reg [1:0]  send_state;
@@ -132,24 +134,27 @@ module jpeg_rgb_tile_writer (
     wire [11:0] pixel_block_x = pixel_x[15:4];
     wire [11:0] pixel_block_y = pixel_y[15:4];
     wire [7:0] pixel_block_index = {pixel_y[3:0], pixel_x[3:0]};
-    wire block_change_pending =
-        !cfg_count_only && busy && block_active && !block_full && pixel_valid &&
-        (pixel_block_x != current_block_x || pixel_block_y != current_block_y);
-    wire [31:0] block_base_x = {16'd0, current_block_x, 4'd0};
-    wire [31:0] block_base_y = {16'd0, current_block_y, 4'd0};
+    wire capture_same_block = block_active[capture_bank] &&
+        pixel_block_x == block_x[capture_bank] &&
+        pixel_block_y == block_y[capture_bank];
+    wire other_bank_available =
+        !block_active[~capture_bank] && !block_full[~capture_bank];
+    wire [31:0] block_base_x = {16'd0, block_x[flush_bank], 4'd0};
+    wire [31:0] block_base_y = {16'd0, block_y[flush_bank], 4'd0};
     wire [31:0] flush_y = block_base_y + {28'd0, flush_line};
     wire [31:0] flush_address =
         cfg_dst_base + (flush_y * cfg_stride) + (block_base_x * 32'd3);
     wire line_last_word = send_word == 4'd11;
 
     function [7:0] block_byte;
+        input bank;
         input [3:0] line;
         input [5:0] byte_offset;
         reg [7:0] pixel_index;
         reg [23:0] pixel_value;
         begin
             pixel_index = {line, 4'd0} + (byte_offset / 3);
-            pixel_value = block_buffer[pixel_index];
+            pixel_value = block_buffer[{bank, pixel_index}];
             case (byte_offset % 3)
                 0: block_byte = pixel_value[23:16];
                 1: block_byte = pixel_value[15:8];
@@ -159,23 +164,26 @@ module jpeg_rgb_tile_writer (
     endfunction
 
     function [31:0] block_word;
+        input bank;
         input [3:0] line;
         input [3:0] word;
         reg [5:0] byte_offset;
         begin
             byte_offset = {word, 2'b00};
             block_word = {
-                block_byte(line, byte_offset + 6'd3),
-                block_byte(line, byte_offset + 6'd2),
-                block_byte(line, byte_offset + 6'd1),
-                block_byte(line, byte_offset)
+                block_byte(bank, line, byte_offset + 6'd3),
+                block_byte(bank, line, byte_offset + 6'd2),
+                block_byte(bank, line, byte_offset + 6'd1),
+                block_byte(bank, line, byte_offset)
             };
         end
     endfunction
 
     assign pixel_ready =
         busy && status_error_flags == 0 &&
-        (cfg_count_only || (!block_full && !block_change_pending));
+        (cfg_count_only || !block_active[capture_bank] ||
+         (capture_same_block && !block_full[capture_bank]) ||
+         (!capture_same_block && other_bank_available));
     assign m_axis_cmd_tvalid = send_state == SEND_COMMAND;
     // DataMover Full command: RSVD, TAG, SADDR, DRR, EOF, DSA, TYPE, BTT.
     assign m_axis_cmd_tdata =
@@ -220,10 +228,14 @@ module jpeg_rgb_tile_writer (
             status_stall_cycles <= 32'd0;
             status_error_flags <= 32'd0;
             status_last_address <= 32'd0;
-            current_block_x <= 12'd0;
-            current_block_y <= 12'd0;
-            block_active <= 1'b0;
-            block_full <= 1'b0;
+            block_x[0] <= 12'd0;
+            block_x[1] <= 12'd0;
+            block_y[0] <= 12'd0;
+            block_y[1] <= 12'd0;
+            block_active <= 2'b00;
+            block_full <= 2'b00;
+            capture_bank <= 1'b0;
+            flush_bank <= 1'b0;
             flush_line <= 4'd0;
             send_word <= 4'd0;
             send_state <= SEND_IDLE;
@@ -262,10 +274,14 @@ module jpeg_rgb_tile_writer (
                             status_stall_cycles <= 32'd0;
                             status_error_flags <= 32'd0;
                             status_last_address <= cfg_dst_base;
-                            current_block_x <= 12'd0;
-                            current_block_y <= 12'd0;
-                            block_active <= 1'b0;
-                            block_full <= 1'b0;
+                            block_x[0] <= 12'd0;
+                            block_x[1] <= 12'd0;
+                            block_y[0] <= 12'd0;
+                            block_y[1] <= 12'd0;
+                            block_active <= 2'b00;
+                            block_full <= 2'b00;
+                            capture_bank <= 1'b0;
+                            flush_bank <= 1'b0;
                             flush_line <= 4'd0;
                             send_word <= 4'd0;
                             send_state <= SEND_IDLE;
@@ -320,11 +336,6 @@ module jpeg_rgb_tile_writer (
                     status_stall_cycles <= status_stall_cycles + 32'd1;
             end
 
-            if (block_change_pending && send_state == SEND_IDLE) begin
-                block_full <= 1'b1;
-                flush_line <= 4'd0;
-            end
-
             if (pixel_fire) begin
                 status_pixels <= status_pixels + 32'd1;
                 if (pixel_width != cfg_width || pixel_height != cfg_height)
@@ -333,34 +344,50 @@ module jpeg_rgb_tile_writer (
                     status_error_flags[1] <= 1'b1;
 
                 if (!cfg_count_only) begin
-                    if (!block_active ||
-                        pixel_block_x != current_block_x ||
-                        pixel_block_y != current_block_y) begin
-                        current_block_x <= pixel_block_x;
-                        current_block_y <= pixel_block_y;
-                        block_active <= 1'b1;
+                    if (!block_active[capture_bank]) begin
+                        block_x[capture_bank] <= pixel_block_x;
+                        block_y[capture_bank] <= pixel_block_y;
+                        block_active[capture_bank] <= 1'b1;
+                        block_buffer[{capture_bank, pixel_block_index}] <=
+                            {pixel_r, pixel_g, pixel_b};
+                    end else if (capture_same_block) begin
+                        block_buffer[{capture_bank, pixel_block_index}] <=
+                            {pixel_r, pixel_g, pixel_b};
+                    end else begin
+                        block_full[capture_bank] <= 1'b1;
+                        capture_bank <= ~capture_bank;
+                        block_x[~capture_bank] <= pixel_block_x;
+                        block_y[~capture_bank] <= pixel_block_y;
+                        block_active[~capture_bank] <= 1'b1;
+                        block_buffer[{~capture_bank, pixel_block_index}] <=
+                            {pixel_r, pixel_g, pixel_b};
                     end
-                    block_buffer[pixel_block_index] <= {pixel_r, pixel_g, pixel_b};
                 end
             end
 
-            if (!cfg_count_only && busy && decoder_idle && block_active && !block_full &&
-                send_state == SEND_IDLE) begin
-                block_full <= 1'b1;
-                flush_line <= 4'd0;
+            if (!cfg_count_only && busy && decoder_idle &&
+                block_active[capture_bank] && !block_full[capture_bank]) begin
+                block_full[capture_bank] <= 1'b1;
             end
 
             case (send_state)
                 SEND_IDLE: begin
-                    if (block_full)
+                    if (block_full[0]) begin
+                        flush_bank <= 1'b0;
+                        flush_line <= 4'd0;
                         send_state <= SEND_COMMAND;
+                    end else if (block_full[1]) begin
+                        flush_bank <= 1'b1;
+                        flush_line <= 4'd0;
+                        send_state <= SEND_COMMAND;
+                    end
                 end
                 SEND_COMMAND: begin
                     if (cmd_fire) begin
                         status_commands <= status_commands + 32'd1;
                         status_last_address <= flush_address;
                         send_word <= 4'd0;
-                        m_axis_data_tdata <= block_word(flush_line, 4'd0);
+                        m_axis_data_tdata <= block_word(flush_bank, flush_line, 4'd0);
                         send_state <= SEND_DATA;
                     end
                 end
@@ -369,8 +396,8 @@ module jpeg_rgb_tile_writer (
                         status_output_bytes <= status_output_bytes + 32'd4;
                         if (line_last_word) begin
                             if (flush_line == 4'd15) begin
-                                block_active <= 1'b0;
-                                block_full <= 1'b0;
+                                block_active[flush_bank] <= 1'b0;
+                                block_full[flush_bank] <= 1'b0;
                                 flush_line <= 4'd0;
                                 send_state <= SEND_IDLE;
                             end else begin
@@ -380,7 +407,7 @@ module jpeg_rgb_tile_writer (
                         end else begin
                             send_word <= send_word + 4'd1;
                             m_axis_data_tdata <=
-                                block_word(flush_line, send_word + 4'd1);
+                                block_word(flush_bank, flush_line, send_word + 4'd1);
                         end
                     end
                 end
@@ -399,8 +426,8 @@ module jpeg_rgb_tile_writer (
                 end else if (busy && decoder_idle &&
                              status_pixels == cfg_expected_pixels &&
                              (cfg_count_only ||
-                              (!block_full &&
-                               !block_active &&
+                              (block_full == 2'b00 &&
+                               block_active == 2'b00 &&
                                send_state == SEND_IDLE &&
                                status_responses == status_commands &&
                                status_commands != 0))) begin

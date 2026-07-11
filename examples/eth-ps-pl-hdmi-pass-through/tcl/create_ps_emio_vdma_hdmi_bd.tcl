@@ -120,6 +120,18 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
     if {[llength [get_bd_cells -quiet jpeg_pl_decoder_axis_0]] == 0} {
         create_bd_cell -type module -reference jpeg_pl_decoder_axis jpeg_pl_decoder_axis_0
     }
+    if {[llength [get_bd_cells -quiet jpeg_clk_wiz]] == 0} {
+        create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:6.0 jpeg_clk_wiz
+        set_property -dict [list \
+            CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {66.667} \
+            CONFIG.PRIM_IN_FREQ {150.000} \
+            CONFIG.USE_LOCKED {true} \
+            CONFIG.USE_RESET {false} \
+        ] [get_bd_cells jpeg_clk_wiz]
+        create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 jpeg_fclk_reset
+        create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 jpeg_reset_zero
+        set_property CONFIG.CONST_VAL {0} [get_bd_cells jpeg_reset_zero]
+    }
     if {[llength [get_bd_cells -quiet axi_dma_0]] == 0} {
         create_bd_cell -type ip -vlnv xilinx.com:ip:axi_dma:7.1 axi_dma_0
     }
@@ -219,18 +231,22 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
     }
 
     connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK0] \
+        [get_bd_pins axi_vdma_1/s_axi_lite_aclk] \
+        [get_bd_pins ps7_0_axi_periph/M01_ACLK]
+    connect_bd_net [get_bd_pins jpeg_clk_wiz/clk_out1] \
         [get_bd_pins axi_dma_0/s_axi_lite_aclk] \
         [get_bd_pins axi_dma_0/m_axi_mm2s_aclk] \
         [get_bd_pins axi_datamover_0/m_axi_mm2s_aclk] \
         [get_bd_pins axi_datamover_0/m_axis_mm2s_cmdsts_aclk] \
         [get_bd_pins axi_datamover_0/m_axi_s2mm_aclk] \
         [get_bd_pins axi_datamover_0/m_axis_s2mm_cmdsts_awclk] \
-        [get_bd_pins axi_vdma_1/s_axi_lite_aclk] \
         [get_bd_pins jpeg_pl_decoder_axis_0/aclk] \
         [get_bd_pins axi_smc/aclk1] \
-        [get_bd_pins ps7_0_axi_periph/M01_ACLK] \
         [get_bd_pins ps7_0_axi_periph/M03_ACLK] \
-        [get_bd_pins ps7_0_axi_periph/M04_ACLK]
+        [get_bd_pins ps7_0_axi_periph/M04_ACLK] \
+        [get_bd_pins jpeg_fclk_reset/slowest_sync_clk]
+    connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK1] \
+        [get_bd_pins jpeg_clk_wiz/clk_in1]
     connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK1] \
         [get_bd_pins axi_vdma_1/m_axi_mm2s_aclk] \
         [get_bd_pins axi_vdma_1/m_axis_mm2s_aclk] \
@@ -241,15 +257,23 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
         [get_bd_pins ps7_0_axi_periph/M02_ARESETN]
     connect_bd_net [get_bd_pins rst_ps7_0_50M/peripheral_aresetn] \
         [get_bd_pins axi_vdma_1/axi_resetn] \
+        [get_bd_pins ps7_0_axi_periph/M01_ARESETN]
+    connect_bd_net [get_bd_pins jpeg_fclk_reset/peripheral_aresetn] \
         [get_bd_pins axi_dma_0/axi_resetn] \
         [get_bd_pins axi_datamover_0/m_axi_mm2s_aresetn] \
         [get_bd_pins axi_datamover_0/m_axis_mm2s_cmdsts_aresetn] \
         [get_bd_pins axi_datamover_0/m_axi_s2mm_aresetn] \
         [get_bd_pins axi_datamover_0/m_axis_s2mm_cmdsts_aresetn] \
         [get_bd_pins jpeg_pl_decoder_axis_0/aresetn] \
-        [get_bd_pins ps7_0_axi_periph/M01_ARESETN] \
         [get_bd_pins ps7_0_axi_periph/M03_ARESETN] \
         [get_bd_pins ps7_0_axi_periph/M04_ARESETN]
+    connect_bd_net [get_bd_pins processing_system7_0/FCLK_RESET0_N] \
+        [get_bd_pins jpeg_fclk_reset/ext_reset_in]
+    connect_bd_net [get_bd_pins jpeg_clk_wiz/locked] \
+        [get_bd_pins jpeg_fclk_reset/dcm_locked]
+    connect_bd_net [get_bd_pins jpeg_reset_zero/dout] \
+        [get_bd_pins jpeg_fclk_reset/aux_reset_in] \
+        [get_bd_pins jpeg_fclk_reset/mb_debug_sys_rst]
 
     create_bd_addr_seg -range 0x10000000 -offset 0x00000000 \
         [get_bd_addr_spaces axi_vdma_1/Data_MM2S] \

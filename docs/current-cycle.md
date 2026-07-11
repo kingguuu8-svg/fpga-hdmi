@@ -1,8 +1,74 @@
 # Current Cycle
 
-Status: no active work note is open. The most recently closed cycle is
-`jpeg-pl-decoder-board-datapath-v1`; its final evidence is in
+## jpegpldec-pl-throughput-720p30-v1 (active)
+
+Objective: make the real `jpegpldec backend=pl-decoder` path sustain the
+720p30 decoder-to-GStreamer boundary without using the system JPEG decoder.
+
+Implementation scope:
+
+- overlap JPEG block decode with RGB tile writeback using bounded PL buffers;
+- move the integrated decoder/writeback path to the fastest board-safe clock
+  domain that closes timing and has a qualified reset path;
+- strengthen randomized DataMover command/data/status backpressure simulation;
+- retain exact fixed-vector RGB output and existing driver/plugin ABI;
+- validate 300 dynamic frames through `rtpjpegdepay -> jpegpldec -> fakesink`.
+
+Acceptance:
+
+- xsim passes correctness, restart, malformed-status, and randomized
+  backpressure gates;
+- post-route WNS is non-negative and post-route DRC has zero errors;
+- the board fixed vector remains byte-identical to the qualified RGB output;
+- the real plugin emits at least 300 ordered frames with no PL decode failure,
+  no kernel fault, and sustained throughput of at least 30 fps at the
+  `fakesink` boundary;
+- measured PL full-writeback p95 is at most 33.333 ms.
+
+Explicit exclusion: HDMI conversion/presentation throughput and driver/plugin
+zero-copy are later cycles. This cycle does not count display-side frame rate
+as decoder throughput.
+
+Checkpoint: 2026-07-12 00:00 local time. The implementation checkpoint is
+saved, but this cycle remains active and is not passed. The most recently
+closed cycle is `jpeg-pl-decoder-board-datapath-v1`; its final evidence is in
 `docs/reports/jpeg-pl-decoder-board-datapath-v1.md`.
+
+Checkpoint evidence:
+
+- Dual-buffer tile-write RTL simulation passed the existing 921600-pixel
+  exact-vector and PSNR/FNV comparison gates. Raw output is under
+  `build/jpegpldec-pl-throughput-720p30-v1/sim/`.
+- The integrated Clock Wizard 66.667 MHz implementation passed post-route
+  timing with WNS `+0.048 ns` and post-route DRC with zero errors. The
+  bitstream is
+  `build/jpegpldec-pl-throughput-720p30-v1/vivado-clkwiz/eth_ps_vdma_hdmi_stage1_board.bit`.
+- FSBL rebuilt successfully from the matching HDF: 631 tasks attempted, 599
+  reused, all successful. The generated FSBL is in the existing PetaLinux
+  project under `images/linux/zynq_fsbl.elf`.
+- The updated kernel module and plugin both built successfully. The plugin
+  still uses the real `backend=pl-decoder` path and the existing ABI.
+- Boot-only packaging passed with bitstream SHA-256
+  `d0536a0cc22e4bc4c98c668976f6727862a2004b8efe0d60741f99e4a943a86f`,
+  reused `image.ub` SHA-256
+  `14cf602b94e160f6fe9c6cbfed46404a73603f6d2e0c277cecead8285a1f7e88`, and
+  `BOOT.BIN` SHA-256
+  `76273e2409c7ec3af92c4e55d553f086646cc56bff3a1c4ce8e9c01c2790f013`.
+
+Pending after the next workstation start:
+
+- Replace the TF-card `BOOT.BIN` only after backing up the current file, boot
+  the board, and confirm the new FSBL/bitstream reaches Linux without a
+  register hang.
+- Deploy the rebuilt `jpegpl_dma_probe.ko` and `libgstjpegpldec.so`, then run
+  the 300-frame `rtpjpegdepay -> jpegpldec -> fakesink` 720p30 test.
+- Record actual pass/fail frame count, kernel health, packet counters, and
+  `total_ms` p95 before closing this cycle.
+
+Rollback point: the previous committed source is `9ffc47b`; the board has not
+yet been changed by this checkpoint. The packaged BOOT.BIN is staged under
+`build/jpegpldec-pl-throughput-720p30-v1/boot-package/` and is not yet
+installed on the TF card.
 
 ## Rule
 
