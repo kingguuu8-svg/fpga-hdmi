@@ -4,15 +4,17 @@
  *
  * The generated device tree must define axi_dma_0 as a DMA controller. This
  * client node binds the project-owned jpegpl_dma_probe kernel module to the
- * AXI DMA MM2S/S2MM channels.
+ * AXI DMA MM2S channel and the PL decoder register bank. RGB writeback is
+ * performed by the PL-side AXI DataMover S2MM path.
  */
 
 / {
-	jpegpl_dma_probe_0: jpegpl-dma-probe {
+	jpegpl_dma_probe_0: jpegpl-decoder@43c10000 {
 		compatible = "fpga-hdml,jpegpl-dma-probe-1.0";
-		dmas = <&axi_dma_0 0>, <&axi_dma_0 1>;
-		dma-names = "tx", "rx";
-		buffer-size = <0x00200000>;
+		reg = <0x43c10000 0x10000>;
+		dmas = <&axi_dma_0 0>;
+		dma-names = "tx";
+		buffer-size = <0x00400000>;
 		max-transfer-size = <16380>;
 	};
 };

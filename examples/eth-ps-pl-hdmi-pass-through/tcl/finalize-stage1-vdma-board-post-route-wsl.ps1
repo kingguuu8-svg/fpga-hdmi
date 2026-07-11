@@ -2,7 +2,7 @@
 param(
     [string]$Distro = "Ubuntu-22.04",
     [string]$Vivado = "/opt/Xilinx/Vivado/2018.3/bin/vivado",
-    [string]$OutDir = "build\eth-ps-pl-hdmi-pass-through\vdma-board"
+    [string]$BuildDir = "build\eth-ps-pl-hdmi-pass-through\vdma-board"
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,24 +19,25 @@ function Convert-ToWslPath {
 }
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
-$buildRoot = if ([System.IO.Path]::IsPathRooted($OutDir)) {
-    [System.IO.Path]::GetFullPath($OutDir)
+$buildRoot = if ([System.IO.Path]::IsPathRooted($BuildDir)) {
+    [System.IO.Path]::GetFullPath($BuildDir)
 } else {
-    [System.IO.Path]::GetFullPath((Join-Path $repoRoot $OutDir))
+    [System.IO.Path]::GetFullPath((Join-Path $repoRoot $BuildDir))
 }
 $reportRoot = Join-Path $buildRoot "reports"
-$tcl = Join-Path $PSScriptRoot "build_stage1_vdma_board.tcl"
+$tcl = Join-Path $PSScriptRoot "finalize_stage1_vdma_board_post_route.tcl"
 
-New-Item -ItemType Directory -Force -Path $buildRoot | Out-Null
+if (!(Test-Path (Join-Path $buildRoot "eth_ps_vdma_hdmi_stage1_board.xpr"))) {
+    throw "Expected Vivado project is missing: $buildRoot"
+}
 New-Item -ItemType Directory -Force -Path $reportRoot | Out-Null
 
-$wslRepoRoot = Convert-ToWslPath $repoRoot
 $wslBuildRoot = Convert-ToWslPath $buildRoot
 $wslTcl = Convert-ToWslPath $tcl
-$wslVivadoLog = Convert-ToWslPath (Join-Path $reportRoot "vivado.log")
-$consoleLog = Join-Path $reportRoot "stage1_vdma_board_console.log"
-$stdoutLog = Join-Path $reportRoot "stage1_vdma_board_stdout.log"
-$stderrLog = Join-Path $reportRoot "stage1_vdma_board_stderr.log"
+$wslVivadoLog = Convert-ToWslPath (Join-Path $reportRoot "post_route_physopt.log")
+$consoleLog = Join-Path $reportRoot "post_route_physopt_console.log"
+$stdoutLog = Join-Path $reportRoot "post_route_physopt_stdout.log"
+$stderrLog = Join-Path $reportRoot "post_route_physopt_stderr.log"
 
 $vivadoArgs = @(
     "-d", $Distro,
@@ -45,7 +46,7 @@ $vivadoArgs = @(
     "-nojournal",
     "-log", $wslVivadoLog,
     "-source", $wslTcl,
-    "-tclargs", $wslRepoRoot, $wslBuildRoot
+    "-tclargs", $wslBuildRoot
 )
 
 $vivadoProcess = Start-Process -FilePath "wsl.exe" -ArgumentList $vivadoArgs `
@@ -58,12 +59,12 @@ Get-Content -Path $stdoutLog, $stderrLog -ErrorAction SilentlyContinue |
     Tee-Object -FilePath $consoleLog
 
 if ($vivadoExitCode -ne 0) {
-    throw "WSL Vivado stage1 VDMA board build failed with exit code $vivadoExitCode."
+    throw "WSL Vivado post-route optimization failed with exit code $vivadoExitCode."
 }
 
 $bitstream = Join-Path $buildRoot "eth_ps_vdma_hdmi_stage1_board.bit"
 if (!(Test-Path $bitstream)) {
-    throw "Expected bitstream was not produced: $bitstream"
+    throw "Expected optimized bitstream was not produced: $bitstream"
 }
 
-Write-Output "STAGE1_VDMA_BOARD_BUILD_OK bitstream=$bitstream"
+Write-Output "POST_ROUTE_PHYSOPT_WSL_OK bitstream=$bitstream"

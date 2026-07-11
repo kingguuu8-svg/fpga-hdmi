@@ -20,6 +20,75 @@ Third-party review:
 Residual risks:
 ```
 
+## Cycle: jpeg-pl-decoder-board-datapath-v1
+
+Date: 2026-07-11
+
+Commit: this commit (`cycle: close PL JPEG board datapath`)
+
+Objective: replace the compressed-DMA probe with one real JPEG frame decoded
+in PL and returned to Linux through coherent DDR, with simulation, combined
+timing/DRC, connected-board counters, and pixel-reference evidence.
+
+Changed scope:
+
+- Added the board-integrated JPEG AXI wrapper and coordinate-aware RGB888
+  DataMover writer.
+- Corrected DataMover Full command/status and AXI-Lite control contracts.
+- Moved the decoder data/control subgraph to the proven PS FCLK0/reset domain.
+- Reworked the kernel client for compressed MM2S input, PL-originated coherent
+  output, absolute timeout, synchronous termination, and strict readback.
+- Added input-sink, count-only, restart-counter, FNV, pixel-reference, guarded
+  packaging, and post-route DRC gates.
+
+Verification performed:
+
+- Final xsim emitted all 921600 pixels, 57600 commands/responses, and 2764800
+  RGB bytes; reference comparison passed at 39.002 dB and FNV `0x7127882c`.
+- Combined XC7Z020 implementation passed at WNS `+0.151 ns`, DRC 0 errors and
+  0 critical warnings.
+- Connected strict gates passed register smoke, input-sink, count-only, and
+  full writeback in sequence. Full writeback returned 2764800 bytes, 921600
+  pixels, 57600 matched commands/responses, zero hardware errors, and the
+  expected FNV.
+- Retrieved board RGB passed exact-FNV and host pixel-reference gates. UART,
+  kernel health scan, and PC ping 4/4 remained healthy afterward.
+- A 1 ms fault injection proved synchronous DMA-timeout recovery and a
+  subsequent normal transfer remained possible.
+
+Board action: backed up and replaced TF-card `BOOT.BIN` after hash checks,
+reused the unchanged accepted `image.ub`, rebooted, then loaded the final
+module/test/vector from `/tmp`. QSPI, NAND, eMMC, and rootfs packages were not
+changed.
+
+Evidence:
+
+- `docs/reports/jpeg-pl-decoder-board-datapath-v1.md`
+- `build/jpeg-pl-decoder-board-datapath-v1/sim-final-v6/`
+- `build/jpeg-pl-decoder-board-datapath-v1/vivado-final-v5/reports/`
+- `build/jpeg-pl-decoder-board-datapath-v1/board-final-v6-strict-cycle-gate.json`
+- `build/jpeg-pl-decoder-board-datapath-v1/board-final-v6-pixel-comparison.json`
+- `build/jpeg-pl-decoder-board-datapath-v1/board-final-v6-final-health-uart.log`
+- `build/jpeg-pl-decoder-board-datapath-v1/board-final-v6-final-ping.log`
+
+Result: PASSED for the connected single-frame PL JPEG decoder data path. The
+sustained target and GStreamer backend remain outside this cycle.
+
+Rollback point: Git `65c2549`; board recovery file
+`/run/media/mmcblk0p1/BOOT.pre-final-v5.BIN`; accepted `image.ub` unchanged.
+
+Third-party review: read-only final review completed. Lifecycle, counter,
+output-identity, packaging, and DRC false-pass findings were fixed and rerun.
+Unsupported-JPEG classification and partial AXI-Lite strobes remain recorded
+as non-blocking fixed-vector limitations.
+
+Residual risks: current full ioctl is about 68.4 ms, not sustained target-rate
+video; current combined decoder domain is 50 MHz; Linux clock metadata must be
+synchronized before frequency-dependent use; GStreamer publication, arbitrary
+JPEG profiles, native HDMI, and PL effects remain later work. The TF FAT volume
+also retains a prior unclean-unmount warning and needs an offline filesystem
+check at a safe maintenance point.
+
 ## Cycle: jpeg-pl-decoder-core-qualification
 
 Date: 2026-07-05

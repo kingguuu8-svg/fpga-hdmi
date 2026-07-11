@@ -1297,5 +1297,42 @@ profile. It does not replace the board-live gate: the next integration must
 connect compressed DMA input and coordinate-aware RGB writeback to
 `jpegpldec`, then build and verify the combined design.
 
+Verified board-live JPEG PL single-frame datapath (preferred before GStreamer
+backend integration, 2026-07-11):
+
+```text
+1. Use the profile, dimensions, and acceptance boundary owned by
+   docs/project-roadmap.md and docs/protocols/jpegpldec-720p30-contract.md.
+2. Run:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\examples\eth-ps-pl-hdmi-pass-through\tcl\sim-jpeg-board-datapath-wsl.ps1
+3. Require JPEG_INPUT_SINK_SUBTEST_OK, JPEG_BOARD_DATAPATH_SIM_OK,
+   JPEG_PL_RTL_COMPARE_OK with the fixed-vector FNV, and
+   JPEG_BOARD_DATAPATH_SIM_GATE_OK.
+4. Build the combined board project with:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\examples\eth-ps-pl-hdmi-pass-through\tcl\build-stage1-vdma-board-wsl.ps1
+5. Require non-negative WNS and drc_errors=0. If route needs the verified
+   recovery pass, use finalize-stage1-vdma-board-post-route-wsl.ps1 and require
+   POST_ROUTE_PHYSOPT_OK.
+6. Reuse image.ub only when Linux-visible HDF topology is unchanged. The
+   boot-only helper requires explicit bitstream/image hashes and
+   -ReuseExistingImageUb; otherwise rebuild the PetaLinux image.
+7. After a hash-checked BOOT update, run the board utility in this order:
+   register-smoke, input-sink, count-only, full writeback with the known-vector
+   expected FNV.
+8. Require physical lower/upper cycle bounds, exact byte/pixel and
+   command/response counters, zero hardware errors, then retrieve RGB and run
+   compare_pixels.py with both the PSNR threshold and expected FNV.
+9. Require post-run UART responsiveness, a clean kernel health scan, and 4/4
+   PC ping before closing the board gate.
+```
+
+Verified outcome:
+The compressed Linux buffer reached the PL decoder and returned a complete
+coordinate-correct RGB888 frame through DataMover/coherent DDR on the connected
+XC7Z020. The shortest evidence and exact fixed-vector commands are recorded in
+`docs/reports/jpeg-pl-decoder-board-datapath-v1.md`. This is a single-frame
+datapath entry point, not the sustained frame-rate target or a GStreamer
+`jpegpldec` backend.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

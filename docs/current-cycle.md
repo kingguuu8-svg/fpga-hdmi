@@ -1,6 +1,8 @@
 # Current Cycle
 
-Status: no active work note is open.
+Status: no active work note is open. The most recently closed cycle is
+`jpeg-pl-decoder-board-datapath-v1`; its final evidence is in
+`docs/reports/jpeg-pl-decoder-board-datapath-v1.md`.
 
 ## Rule
 
@@ -39,6 +41,577 @@ that lets a future agent return to the previous known-good point.
 ```text
 None.
 ```
+
+## Most Recently Closed Cycle
+
+```text
+Cycle ID: jpeg-pl-decoder-board-datapath-v1
+Result: PASSED. One fixed JPEG frame completed Linux coherent input DMA, PL
+  decode, coordinate-aware DataMover RGB888 writeback, coherent DDR return,
+  strict hardware-counter gates, and software-reference pixel comparison on
+  the connected board.
+Evidence: docs/reports/jpeg-pl-decoder-board-datapath-v1.md and
+  build/jpeg-pl-decoder-board-datapath-v1/.
+Rollback point: 65c2549 plus the TF-card BOOT.pre-final-v5.BIN recovery copy.
+Residual risk: this is a single-frame board datapath pass, not sustained video
+  throughput or a GStreamer jpegpldec backend.
+```
+
+## Frozen Progress Note
+
+```text
+Cycle ID: jpeg-pl-decoder-board-datapath-v1
+Frozen on: 2026-07-07
+Reason: The cycle reached a board-live failure that needs diagnosis before
+  more feature implementation. The failure is not a GStreamer/dashboard/HDMI
+  presentation issue; it occurs below that layer during the single-frame
+  hardware decode test.
+
+Facts established:
+  - The standalone jpeg_core qualification remains the prior known-good
+    decoder evidence.
+  - The integrated board design built and routed with non-negative timing.
+  - Latest BOOT.BIN/image.ub were deployed to the TF-card boot partition and
+    the board booted the new image.
+  - Runtime device tree exposes jpegpl-decoder@43c10000 with a tx DMA binding.
+  - jpegpl_dma_probe.ko inserted and created /dev/jpegpl_dma_probe.
+  - The test utility and 1280x720 JPEG vector were deployed with matching
+    hashes.
+  - Expected RTL output hash for the current simulation output was computed as
+    FNV32 0x7127882c for 921600 pixels / 2764800 RGB bytes.
+
+Observed failure:
+  - Starting the one-frame hardware decode did not produce the expected RGB
+    output file, status code, or final decode marker.
+  - A follow-up UART inspection captured only the host tool command markers,
+    with no useful board shell echo or command output.
+  - This is recorded as a suspected board-side non-interactive state after
+    decode start, not as a proven kernel panic.
+
+Current inference:
+  - The most likely fault region is PL decoded-RGB writeback to DDR:
+    jpeg_rgb_tile_writer -> AXI DataMover S2MM -> HP/DDR.
+  - The standalone JPEG decoder and software/GStreamer route are not the
+    primary suspects for this failure.
+  - The xsim DataMover mock was sufficient for functional intent but too weak
+    to prove exact Xilinx AXI DataMover command/status behavior in hardware.
+  - The BD still contains an unused AXI DMA S2MM half fed by an idle stream
+    while the Linux driver only requests the tx/MM2S channel; this is not
+    required for the current decode route and increases the possible AXI lock
+    surface.
+
+Shortest next diagnostic path:
+  1. Add a count-only/no-writeback hardware mode: JPEG bytes still enter PL and
+     jpeg_core still decodes, but RGB pixels are counted rather than written to
+     DDR.
+  2. If count-only passes on the board, treat decoder/MM2S as cleared and focus
+     on DataMover S2MM/writeback.
+  3. If count-only also fails, move the fault boundary upstream to MM2S,
+     jpeg_core integration, or stream backpressure.
+  4. Remove the unused AXI DMA S2MM half/idle stream from the BD unless a later
+     design needs it.
+  5. Reintroduce output writeback first as the simplest observable path before
+     restoring coordinate-aware tiled writeback.
+
+Evidence paths:
+  - build/jpeg-pl-decoder-board-datapath-v1/deploy-latest-image.uart.log
+  - build/jpeg-pl-decoder-board-datapath-v1/boot-after-latest-image.uart.log
+  - build/jpeg-pl-decoder-board-datapath-v1/post-latest-image-health.uart.log
+  - build/jpeg-pl-decoder-board-datapath-v1/deploy-current-kernel-client.uart.log
+  - build/jpeg-pl-decoder-board-datapath-v1/run-current-one-frame-decode-watchdog.uart.log
+  - build/jpeg-pl-decoder-board-datapath-v1/check-current-decode.uart.log
+```
+
+## 2026-07-07 Follow-Up
+
+```text
+Work performed:
+  - Corrected the AXI DataMover S2MM command fields in
+    jpeg_rgb_tile_writer.v: DSIZE is now 3'b010 for 32-bit stream width and
+    RSS is cleared.
+  - Added board-datapath testbench checks for Type, DSIZE, RSS, and reserved
+    command bits so the previous malformed command cannot pass the mock again.
+  - Re-ran the full JPEG board-datapath simulation and reference comparison:
+    JPEG_BOARD_DATAPATH_SIM_OK and JPEG_PL_RTL_COMPARE_OK psnr_db=39.002.
+  - Built the corrected bitstream. Initial routed WNS was +0.078 ns.
+  - Packaged and deployed BOOT.BIN hash
+    54bfd0e8cecf1e386e83fcc6f6d2bb414af5677ae822eb75d69c63ffaa584709.
+  - Re-ran the one-frame board decode. It still did not return, and a
+    follow-up UART probe again produced no useful board echo.
+  - Added a diagnostic count-only mode controlled by REG_CONTROL[1]. In this
+    mode JPEG input still enters PL and jpeg_core still decodes, but RGB pixels
+    are counted and no DataMover S2MM writeback commands are issued.
+  - Re-ran simulation after the count-only addition; the default RGB writeback
+    simulation still passed with JPEG_BOARD_DATAPATH_SIM_OK and
+    JPEG_PL_RTL_COMPARE_OK psnr_db=39.002.
+  - Rebuilt the kernel client with --count-only support:
+    jpegpl_dma_probe.ko hash
+    a9cf9b18556453436c93d17e6491de8d04479cb8407e321182b4fa474b58b2a6;
+    jpegpl_dma_probe_test hash
+    f83b1ff6cb5640b8ff40e02f41018b114d237846e57458e523bd0c14eaa222ad.
+  - Built the count-only bitstream. The first route failed timing with
+    WNS=-0.129 ns on an unrelated existing PIP-overlay clk_fpga_1 path.
+    Post-route phys_opt recovered timing to WNS=+0.121 ns with DRC 0 errors.
+  - Packaged and deployed BOOT.BIN hash
+    01c6188a28c84abadfbc238ca404ebfe5e60cd0a0b0dd524c2aad86cc4d6efaa.
+  - Re-ran the board count-only decode. It also did not return, and a
+    follow-up UART probe again produced no useful board echo.
+
+Updated inference:
+  - The original DataMover command-word bug was real and has been fixed, but
+    it was not sufficient to close the board-live decode path.
+  - Because count-only disables decoded-RGB DataMover S2MM writeback and still
+    triggers the same non-interactive board state, the fault boundary moves
+    upstream of RGB writeback.
+  - Current leading suspects are now AXI DMA MM2S interaction with the
+    jpeg_core ingress/backpressure path, jpeg_core board integration under
+    real DMA timing, or an AXI interconnect/bus lock triggered before PL
+    writeback starts.
+  - The next diagnostic should add a stream-sink mode that consumes AXI DMA
+    MM2S input without invoking jpeg_core, so the path can be split into:
+    Linux coherent input buffer -> AXI DMA MM2S -> PL sink versus
+    AXI DMA MM2S -> jpeg_core.
+
+Additional evidence paths:
+  - build/jpeg-pl-decoder-board-datapath-v1/run-dsize-one-frame-decode.uart.log
+  - build/jpeg-pl-decoder-board-datapath-v1/dsize-decode-followup.uart.log
+  - build/jpeg-pl-decoder-board-datapath-v1/run-count-only-decode.uart.log
+  - build/jpeg-pl-decoder-board-datapath-v1/count-only-followup.uart.log
+  - build/jpeg-pl-decoder-board-datapath-v1/image/latest-hashes-count-only.txt
+```
+
+## 2026-07-07 Input-Sink Follow-Up
+
+```text
+Work performed:
+  - Added input-sink diagnostic mode controlled by REG_CONTROL[2].
+  - In input-sink mode, jpeg_pl_decoder_axis asserts S_JPEG tready without
+    feeding jpeg_core, counts input bytes, and issues no RGB DataMover
+    writeback.
+  - The Linux test tool added --input-sink. In this mode the driver only waits
+    for AXI DMA MM2S send completion and snapshots counters; it does not wait
+    for PL decode done and does not copy RGB output.
+  - Re-ran default board-datapath simulation; RGB writeback path still passed
+    with JPEG_BOARD_DATAPATH_SIM_OK and JPEG_PL_RTL_COMPARE_OK psnr_db=39.002.
+  - Rebuilt kernel client:
+    jpegpl_dma_probe.ko hash
+    c33e0ac524f841a779328f81c7c6083bf6282eeef66ba8ff9deec0b7893bdae7;
+    jpegpl_dma_probe_test hash
+    d9843beb951d6439e72321cdfde139078940df48e397c52184a73166793b74e6.
+  - Rebuilt bitstream with WNS=+0.093 ns and routed DRC generated with no
+    hard error.
+  - Packaged and deployed BOOT.BIN hash
+    0658f066f834d9b7d0e7e71a6a3859aa161bae68b431bf87690f5b769994296a.
+  - Re-ran the board input-sink test. It also did not return, and the
+    follow-up UART probe again produced no useful board echo.
+
+Updated inference:
+  - input-sink removes jpeg_core and RGB/DataMover writeback from the active
+    data path, so those are no longer sufficient explanations for the observed
+    board non-interactive state.
+  - The failure now localizes to the AXI DMA MM2S / BD / Linux DMAengine
+    interaction around axi_dma_0. The strongest remaining structural suspect is
+    that axi_dma_0 is still built with an unused S2MM half and an idle-stream
+    workaround while the current driver requests only tx/MM2S.
+  - The next shortest aligned change is to remove axi_dma_0 S2MM and
+    axis_idle_source from the BD, rebuild, and re-run input-sink before
+    returning to count-only or full RGB writeback.
+
+Additional evidence paths:
+  - build/jpeg-pl-decoder-board-datapath-v1/run-input-sink-decode.uart.log
+  - build/jpeg-pl-decoder-board-datapath-v1/input-sink-followup.uart.log
+  - build/jpeg-pl-decoder-board-datapath-v1/image/latest-hashes-input-sink.txt
+```
+
+## 2026-07-10 Freeze Note
+
+```text
+Cycle ID: jpeg-pl-decoder-board-datapath-v1
+Frozen on: 2026-07-10
+Reason: User requested implementation pause. The cycle is still open and the
+  full objective is not complete: there is no connected-board proof of
+  Linux JPEG -> coherent DDR -> AXI DMA MM2S -> PL JPEG decode -> RGB888 DDR
+  writeback -> Linux userspace output.
+
+Work performed since the input-sink follow-up:
+  - Removed the unused axi_dma_0 S2MM half and axis_idle_source from the BD.
+  - Rebuilt the MM2S-only bitstream successfully before the AXI-Lite fix:
+    STAGE1_VDMA_BOARD_BUILD_OK, WNS=+0.181 ns.
+  - Packaged and deployed a BOOT.BIN containing the MM2S-only bitstream:
+    sha256=9901a8aff3352ea9357b6797234ae40ce8a4ed42b6cf86a872735089fc7ffdef.
+  - Re-ran input-sink with only BOOT.BIN changed. It still hung after the
+    background PID was printed; a follow-up UART probe produced no command echo.
+  - Inspected live /proc/device-tree and found that image.ub still described
+    axi_dma_0 as two channels:
+      dma-channel@43020000
+      dma-channel@43020030
+    while the deployed PL was already MM2S-only. This proved a PL/DT mismatch.
+  - Rebuilt the PetaLinux image from the current HDF and overlays so the device
+    tree matched the MM2S-only BD.
+  - Deployed matching artifacts to the TF-card FAT partition:
+      BOOT.BIN sha256=a6b84c57bc34dc0a23788c6d8efe7abc8de984023699341541e49897a5eaf02e
+      image.ub sha256=14cf602b94e160f6fe9c6cbfed46404a73603f6d2e0c277cecead8285a1f7e88
+  - Rebooted and confirmed live /proc/device-tree now exposes only:
+      /proc/device-tree/amba_pl/dma@43020000/dma-channel@43020000
+    with no dma-channel@43020030.
+  - Loaded jpegpl_dma_probe.ko successfully on the matched image and confirmed
+    /dev/jpegpl_dma_probe exists.
+  - Re-ran input-sink on the matched PL/DT image. It still hung immediately
+    after the background PID print; no input-sink result marker was produced.
+  - Identified a new strong RTL suspect in jpeg_rgb_tile_writer.v: its AXI-Lite
+    write path only completed writes when AWVALID and WVALID arrived in the same
+    cycle. Real AXI-Lite masters may deliver address and data independently,
+    and a stuck write response can explain the board shell losing interaction
+    before any DMA result is printed.
+  - Changed jpeg_rgb_tile_writer.v to latch AW and W independently, then fire
+    the register write when both halves are present.
+  - Changed tb_jpeg_pl_decoder_axis.v so selected configuration writes use a
+    split AW/W sequence instead of always presenting address and data in the
+    same cycle.
+  - Re-ran the full JPEG board-datapath simulation after the AXI-Lite fix:
+      JPEG_BOARD_DATAPATH_SIM_OK pixels=921600 lines=57600
+      commands=57600 responses=57600 bytes=2764800 input_bytes=30054
+      JPEG_PL_RTL_COMPARE_OK pixels=921600 psnr_db=39.002 mae=2.599 max_error=41
+      JPEG_BOARD_DATAPATH_SIM_GATE_OK
+  - Started a post-fix Vivado board build, but it did not complete to a usable
+    bitstream before this freeze. The command returned exit code 1073807364
+    with no final success marker in the terminal. The latest impl_1 runme.log
+    tail stops during routing at "Phase 4.3 Global Iteration 2"; no timing/DRC
+    gate is claimed for the AXI-Lite-fixed bitstream.
+
+Current inference:
+  - The original DataMover DSIZE/RSS issue was real but not sufficient.
+  - The unused axi_dma_0 S2MM half was removed, and the matching image.ub now
+    proves Linux sees the same MM2S-only DMA topology as PL, but input-sink
+    still hangs.
+  - The latest strongest suspect is the custom AXI-Lite slave implementation in
+    jpeg_rgb_tile_writer.v, because a CPU writel/readl stuck on the PL register
+    bank can freeze the shell before DMA or JPEG evidence appears.
+  - The AXI-Lite fix is simulation-verified only. It has not been routed,
+    packaged, deployed, or tested on the connected board.
+
+Next resume point:
+  1. Re-run the board build after the AXI-Lite fix and require
+     STAGE1_VDMA_BOARD_BUILD_OK, non-negative WNS, and routed DRC with no hard
+     error.
+  2. Rebuild/package BOOT.BIN with the new bitstream. If the HDF did not change
+     further, image.ub does not need another rebuild; if BD topology changed,
+     rebuild image.ub again.
+  3. Deploy the new BOOT.BIN, boot the board, verify live DT still has only the
+     MM2S DMA channel, load jpegpl_dma_probe.ko, then run --input-sink first.
+  4. Only if input-sink returns JPEGPL_DECODE_OK mode=input-sink should the
+     cycle proceed to --count-only and then full RGB888 writeback.
+
+Evidence paths:
+  - build/jpeg-pl-decoder-board-datapath-v1/deploy-mm2s-only-boot.uart.log
+  - build/jpeg-pl-decoder-board-datapath-v1/mm2s-only-postboot-login.uart.log
+  - build/jpeg-pl-decoder-board-datapath-v1/deploy-mm2s-only-kernel-client.uart.log
+  - build/jpeg-pl-decoder-board-datapath-v1/run-mm2s-only-input-sink.uart.log
+  - build/jpeg-pl-decoder-board-datapath-v1/mm2s-only-input-sink-followup.uart.log
+  - build/jpeg-pl-decoder-board-datapath-v1/inspect-live-dt-after-mm2s-hang.uart.log
+  - build/jpeg-pl-decoder-board-datapath-v1/mm2s-only-image/BOOT.BIN.sha256.txt
+  - build/jpeg-pl-decoder-board-datapath-v1/mm2s-only-image/image.ub.sha256.txt
+  - build/jpeg-pl-decoder-board-datapath-v1/deploy-mm2s-only-imageub.uart.log
+  - build/jpeg-pl-decoder-board-datapath-v1/mm2s-image-postboot-dt.uart.log
+  - build/jpeg-pl-decoder-board-datapath-v1/deploy-mm2s-image-kernel-client.uart.log
+  - build/jpeg-pl-decoder-board-datapath-v1/run-mm2s-image-input-sink.uart.log
+  - build/jpeg-pl-decoder-board-datapath-v1/sim/xsim.log
+  - build/eth-ps-pl-hdmi-pass-through/vdma-board/eth_ps_vdma_hdmi_stage1_board.runs/impl_1/runme.log
+```
+
+## 2026-07-10 Resume and Contract Correction
+
+```text
+Work resumed after the user-approved freeze.
+
+Contract correction:
+  - The 2026-07-07 third-party review misidentified AXI DataMover Full
+    command fields. Vivado 2018.3 generated DataMover v5.1 HDL defines bit 31
+    as DRR, bit 30 as EOF, bits 29:24 as DSA, bit 23 as TYPE, and bits 22:0 as
+    BTT. There is no DSIZE field in bits 26:24 and bit 30 is not RSS.
+  - The current DataMover instance is Full S2MM with DRE disabled and
+    Indeterminate BTT disabled. A 48-byte command whose final beat asserts
+    TLAST must therefore use DRR=0, EOF=1, DSA=0, TYPE=INCR, BTT=48.
+  - DataMover status bits 7:4 are OKAY/SLVERR/DECERR/INTERR and bits 3:0 are
+    TAG. The prior mock status value 0x00 and low-nibble error check did not
+    model a successful real status response.
+
+Current implementation direction:
+  - Correct the Full command word and status interpretation.
+  - Make AXI-Lite writes use actual independent AW/W handshakes and expose
+    readable CONTROL/configuration plus a fixed VERSION register.
+  - Require register readback before DMA so input-sink/count-only modes are
+    proven active rather than inferred from a requested flag.
+  - Re-run simulation, then build a fresh bitstream and validate in order:
+    register-smoke, input-sink, count-only, full RGB888 writeback.
+
+No post-correction bitstream or board result is claimed yet.
+```
+
+## 2026-07-10 Board Register-Smoke Diagnosis
+
+```text
+Verification completed before the board retry:
+  - Full 1280x720 RTL simulation passed with input_bytes=30054,
+    pixels=921600, commands=responses=57600, output_bytes=2764800, and
+    rtl_fnv=0x7127882c.
+  - The first clean implementation failed timing at WNS=-0.417 ns with DRC
+    0 errors. Performance_Explore improved a second clean implementation to
+    WNS=-0.024 ns. A reusable post-route AggressiveExplore pass closed timing
+    at WNS=+0.002 ns with DRC 0 errors and 0 critical warnings.
+  - The resulting BOOT.BIN hash was
+    12d49ff0782a63e338f2ed6272e9d2148dd3705daca74c4596dea3728ccdd2ad;
+    the existing image.ub hash remained
+    14cf602b94e160f6fe9c6cbfed46404a73603f6d2e0c277cecead8285a1f7e88.
+  - The connected board booted that pair, accepted root login, restored eth0,
+    and answered PC ping 4/4 before the register test.
+
+Observed register-smoke failure:
+  - Loading jpegpl_dma_probe.ko succeeded and printed JPEGPL_DECODER_READY.
+  - The first register-smoke attempt returned neither a success marker nor a
+    shell prompt; UART and Ethernet both stopped responding.
+  - A trace-only driver rebuild printed a marker before and after every MMIO
+    operation. The repeat attempt printed only
+    "JPEGPL_REGISTER_STEP write-dst begin" and then hung the system.
+  - After JTAG recovery, a control read from the existing stable-domain PIP
+    slave at 0x43c00000 returned 0x00000007 immediately on the same Linux
+    image and PS AXI interconnect.
+  - Therefore the first writel to REG_DST_BASE never received an AXI write
+    response. No register read, DMA submission, JPEG decode, or DataMover S2MM
+    command occurred in this failure.
+
+Current correction:
+  - Remove the new jpeg_clk_wiz/jpeg_reset chain from the board design.
+  - Clock and reset the JPEG AXI DMA, decoder, DataMover, SmartConnect port,
+    and AXI-Lite slave from the official design's already-proven FCLK0 and
+    rst_ps7_0_50M domain.
+  - This deliberately trades decoder frequency for a deterministic first
+    board closure. Higher-frequency decoder clocking remains a post-closure
+    optimization rather than part of this diagnostic.
+  - Full RTL simulation after the clock/reset BD change still passed with the
+    same counters, PSNR=39.002 dB, and rtl_fnv=0x7127882c.
+
+No v4 bitstream or post-fix board result is claimed yet.
+```
+
+## 2026-07-10 v4 Board Closure and Counter Follow-Up
+
+```text
+v4 clock/reset result:
+  - A clean build passed with WNS=+0.061 ns, DRC 0 errors and 0 critical
+    warnings. Bitstream SHA256 was
+    041ac6128ea23911f0f408dbe8a12edc806e237a4ede53cf92bdfbaa4a1d0c2c.
+  - A fresh BD-only source rebuild also passed validate_bd_design and asserted
+    that jpeg_pl_decoder_axis_0, AXI DMA MM2S, DataMover S2MM, SmartConnect
+    aclk1, and M04 use FCLK0/rst_ps7_0_50M with no jpeg_clk_wiz/jpeg_reset.
+  - BOOT.BIN SHA256
+    ae6b2ca206cc55756956e262426b8a0d9e466544db434b2e7900f5111b9b3d2c
+    was deployed while image.ub remained at the accepted baseline hash.
+
+Connected-board gates on v4:
+  - register-smoke PASSED with VERSION=0x4a504c31 and exact readback of
+    dst_base=0x0e800000, stride=3840, dimensions=0x02d00500, and
+    expected_pixels=921600.
+  - input-sink PASSED: input_bytes=30054, chunks=2, output_bytes=0, pixels=0,
+    commands=0, responses=0, errors=0, elapsed_ns=13708299.
+  - count-only PASSED its functional gates: input_bytes=30054, pixels=921600,
+    output_bytes=0, commands=0, responses=0, errors=0,
+    elapsed_ns=44811577.
+  - full RGB writeback PASSED: input_bytes=30054, output_bytes=2764800,
+    pixels=921600, commands=responses=57600, stalls=1216590, errors=0,
+    cycles=3636029, elapsed_ns=68408080, output_fnv=0x7127882c.
+  - The retrieved 2764800-byte board RGB output passed the software-reference
+    comparison at PSNR=39.002 dB, MAE=2.599, max_error=41, and the same
+    FNV-1a value 0x7127882c.
+
+Counter issue found by honest sequential execution:
+  - input-sink intentionally returns after DMA completion while PL busy stays
+    set. A following start cleared status_cycles in the control branch, but a
+    later old-busy assignment in the same clock edge overwrote that clear.
+  - A new sequential-mode test reproduced the issue in xsim with
+    restart_cycle_counter_not_reset cycles=52.
+  - Giving axi_start_fire priority over busy counters and completion logic made
+    the same test pass while preserving the full 720p simulation, PSNR, and
+    output FNV.
+  - The userspace gate now rejects zero cycles or cycles greater than the
+    ioctl elapsed nanoseconds. This catches stale cross-run counts without
+    hard-coding the temporary decoder clock frequency.
+
+Final v5 clean implementation and connected-board rerun remain pending.
+```
+
+## 2026-07-11 Final Review Follow-Up
+
+```text
+Review findings accepted and fixed:
+  - DMA timeout is now one absolute jiffies deadline shared by all compressed
+    input chunks and the subsequent PL-done wait.
+  - A chunk timeout calls dmaengine_terminate_sync while the callback's stack
+    completion is still alive; the abort path also uses synchronous terminate.
+  - The userspace cycle sanity gate now assumes at most 200 MHz for this
+    datapath and reports its computed max_cycles bound.
+  - Full writeback accepts --expect-fnv so the fixed vector's expected RGB
+    hash is a board-side pass condition, not only a printed diagnostic.
+
+Timeout fault injection on connected v4 hardware:
+  - A 4194304-byte input-sink request with timeout_ms=1 stopped after 14 DMA
+    chunks, returned ETIMEDOUT, and printed JPEGPL_DECODE_ABORT.
+  - UART remained interactive and PC ping remained 4/4 after the abort.
+  - A subsequent normal input-sink request entered and completed DMA. Its
+    output marker was correctly withheld by the strengthened cycle gate
+    because v4 intentionally lacks the pending restart-counter RTL fix.
+
+Review findings not treated as current blockers:
+  - Starting while an old pixel/command/data/status transaction is active is
+    unreachable through the mutex-serialized driver: full/count-only return
+    only after PL done and all status responses; input-sink generates no
+    output transactions. Direct /dev/mem writes outside this client remain
+    unsupported.
+  - The external board RGB was already retrieved and compared pixel-by-pixel;
+    --expect-fnv additionally moves the known-vector byte identity into the
+    board utility itself.
+
+Final v5 clean implementation and strict final board rerun remain pending.
+```
+
+## 2026-07-11 Final Closure
+
+```text
+Final result:
+  - Final simulation passed the input-sink/restart regression, complete frame
+    counters, software-reference PSNR gate, and fixed-vector FNV gate.
+  - The combined v5 implementation closed at WNS=+0.151 ns with post-route
+    DRC 0 errors and 0 critical warnings.
+  - Hash-checked BOOT.BIN was deployed with a recovery copy; image.ub remained
+    unchanged.
+  - The strict-v6 client passed register-smoke, input-sink, count-only, and
+    full RGB writeback in order on the connected board.
+  - Full writeback returned 2764800 bytes, 921600 pixels, 57600 matched
+    commands/responses, zero hardware errors, and FNV=0x7127882c.
+  - Retrieved RGB passed the host reference at PSNR=39.002 dB and exact FNV.
+  - UART, kernel health scan, and PC ping 4/4 remained healthy after the run.
+
+Closure evidence:
+  - docs/reports/jpeg-pl-decoder-board-datapath-v1.md
+  - build/jpeg-pl-decoder-board-datapath-v1/sim-final-v6/
+  - build/jpeg-pl-decoder-board-datapath-v1/vivado-final-v5/reports/
+  - build/jpeg-pl-decoder-board-datapath-v1/board-final-v6-strict-cycle-gate.json
+  - build/jpeg-pl-decoder-board-datapath-v1/board-final-v6-pixel-comparison.json
+  - build/jpeg-pl-decoder-board-datapath-v1/board-final-v6-final-health-uart.log
+
+Boundary:
+  The single-frame board data path is closed. Sustained target-rate video and
+  GStreamer jpegpldec backend integration remain separate future cycles.
+```
+
+## Third-Party Review (2026-07-07)
+
+Reviewer: opencode agent review pass on the frozen
+`jpeg-pl-decoder-board-datapath-v1` cycle.
+
+### Evidence re-interpretation
+
+The frozen note describes the failure as "one-frame hardware decode did not
+produce usable status/output evidence" and a "suspected board-side
+non-interactive state." The raw UART logs support a stronger reading: the board
+did not merely time out, it hung at decode start.
+
+- `run-current-one-frame-decode-watchdog.uart.log` shows the shell echo stops
+  immediately after `[1] 1305` (the backgrounded decode PID). None of the
+  subsequent host-injected commands (`sleep 25`, `kill -0`, `dmesg | tail`,
+  `ls -l`, `sha256sum`) produce any board echo.
+- `rebind-dma-after-jtag.log` shows later `unbind`/`bind` writes to
+  `/sys/bus/platform/drivers/xilinx-vdma` also produce no echo, i.e. the kernel
+  shell is dead, not just the userspace test process.
+
+This is consistent with a kernel-level or AXI-bus-level hang triggered by the
+decode ioctl, not a userspace timeout. The frozen note's residual risk
+("current evidence does not yet distinguish AXI bus hang, DataMover command
+issue, driver wait path, or PL writer state-machine deadlock") remains
+accurate, but the bus-hang branch should be treated as the leading hypothesis
+because a pure driver-wait timeout would not kill the shell.
+
+### Primary suspected root cause: DataMover S2MM command-word fields
+
+`examples/eth-ps-pl-hdmi-pass-through/rtl/jpeg_rgb_tile_writer.v:156-158`
+assembles the 72-bit S2MM command word as:
+
+```verilog
+{4'b0000, command_tag, flush_address, 1'b0, 1'b1, 6'b000000,
+ 1'b1, BLOCK_ROW_BYTES}
+```
+
+Mapped against the Xilinx AXI DataMover v5.1 S2MM command bit layout
+(PG022), the fields decode as:
+
+- BTT [22:0] = 48 (correct)
+- Type [23] = 1 (correct for S2MM)
+- DSIZE [26:24] = 3'b000 (8-bit stream) — the BD configures
+  `c_s_axis_s2mm_tdata_width {32}` in
+  `examples/eth-ps-pl-hdmi-pass-through/tcl/create_ps_emio_vdma_hdmi_bd.tcl`,
+  so DSIZE should be 3'b010. This mismatch is the strongest candidate for the
+  hang: a real DataMover strict on DSIZE would expect 48 beats at 8-bit while
+  the writer emits 12 beats at 32-bit, never see tlast, hold the S2MM write
+  command open, and lock the AXI write channel until the CPU stalls on the same
+  interconnect.
+- RSS [30] = 1 on every command, which resets the status stream per transfer;
+  unusual and a secondary suspect.
+- SADDR [63:32] = flush_address (correct for the 32-bit address width default).
+- TAG [67:64] = command_tag (correct).
+
+The reason this passed xsim but fails on hardware is that the board-datapath
+testbench `examples/eth-ps-pl-hdmi-pass-through/sim/tb_jpeg_pl_decoder_axis.v`
+is a mock, not the real DataMover IP. It checks only `cmd_tdata[22:0] == 48`
+and reads `cmd_tdata[63:32]` as the address, then unconditionally returns
+`sts_tdata = 8'd0` after a fixed 3-cycle delay
+(`tb_jpeg_pl_decoder_axis.v:142-219`). It never decodes DSIZE, RSS, Type, or
+TAG, so a malformed command word cannot fail simulation. The frozen note's
+claim that "the xsim DataMover mock was sufficient for functional intent but
+too weak to prove exact Xilinx AXI DataMover command/status behavior in
+hardware" is correct; this review localizes the weakness to the command-word
+field decoding.
+
+### Secondary suspects
+
+- The unused `axi_dma_0` S2MM half fed by `axis_idle_source_0` increases the
+  AXI lock surface and is not required for the decode route, as the frozen
+  note already flags.
+- Driver ordering in `software/kernel/jpegpl_dma_probe/src/jpegpl_dma_probe.c`
+  writes `REG_CONTROL` (pulse `decode_start`, set `busy`) before writing
+  `REG_DST_BASE`/`REG_STRIDE`/`REG_DIMENSIONS`/`REG_EXPECTED_PIXELS`. The RTL
+  tolerates this because config is read at flush time, not at CONTROL time,
+  so this is not the bug, but it is worth reordering for clarity in a later
+  cleanup.
+
+### Opinion on the proposed diagnostic path
+
+The frozen note's shortest-next-diagnostic-path (count-only/no-writeback mode
+to bisect decoder/MM2S from DataMover S2MM writeback) is endorsed. This review
+adds one mandatory complement:
+
+- A count-only run can localize the fault layer but cannot prevent regression
+  of the command-word fields. The mock testbench must be replaced with the
+  real `axi_datamover` IP in the board-datapath simulation so that DSIZE, RSS,
+  Type, and TAG are validated against the actual IP in xsim. Without this,
+  any future command-word edit will again pass a mock and hang on hardware.
+
+### Recommended next steps, cheapest first
+
+1. Correct the command word in `jpeg_rgb_tile_writer.v`: set DSIZE to
+   `3'b010` and RSS to `1'b0`; rebuild the bitstream and retry the one-frame
+   decode. This is the cheapest single experiment and, if DSIZE is the bug,
+   closes the cycle directly.
+2. In parallel, add the count-only/no-writeback mode to bisect the design, as
+   the frozen note proposes.
+3. Replace the mock DataMover in `tb_jpeg_pl_decoder_axis.v` with the real
+   `axi_datamover` IP so command-word regressions are caught in xsim before
+   any board run.
+4. Remove the unused `axi_dma_0` S2MM half and `axis_idle_source` from the BD
+   unless a later design needs them.
+
+If step 1 passes, steps 1 and 4 close the cycle. If step 1 fails, step 2
+isolates the fault boundary, and step 3 ensures the next fix is verifiable in
+simulation.
 
 ## Recently Closed Cycle
 

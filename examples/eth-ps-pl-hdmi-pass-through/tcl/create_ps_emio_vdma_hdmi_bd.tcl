@@ -114,10 +114,11 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
         CONFIG.c_mm2s_max_burst_length {64} \
     ] [get_bd_cells axi_vdma_1]
 
-    # jpegpldec data-plane route gate: add a standalone AXI DMA loopback path
-    # that can later move decoded buffers through PL without touching HDMI.
-    if {[llength [get_bd_cells -quiet axis_dma_probe_core_0]] == 0} {
-        create_bd_cell -type module -reference axis_dma_probe_core axis_dma_probe_core_0
+    # Board-live JPEG decode path. AXI DMA MM2S fetches compressed JPEG, the
+    # qualified core emits coordinate-tagged RGB, and AXI DataMover S2MM writes
+    # coordinate-addressed RGB888 tiles to the caller-provided coherent DDR buffer.
+    if {[llength [get_bd_cells -quiet jpeg_pl_decoder_axis_0]] == 0} {
+        create_bd_cell -type module -reference jpeg_pl_decoder_axis jpeg_pl_decoder_axis_0
     }
     if {[llength [get_bd_cells -quiet axi_dma_0]] == 0} {
         create_bd_cell -type ip -vlnv xilinx.com:ip:axi_dma:7.1 axi_dma_0
@@ -125,11 +126,20 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
     set_property -dict [list \
         CONFIG.c_include_sg {0} \
         CONFIG.c_include_mm2s {1} \
-        CONFIG.c_include_s2mm {1} \
+        CONFIG.c_include_s2mm {0} \
         CONFIG.c_m_axis_mm2s_tdata_width {32} \
     ] [get_bd_cells axi_dma_0]
-
-    set_property -dict [list CONFIG.NUM_SI {5}] [get_bd_cells axi_smc]
+    if {[llength [get_bd_cells -quiet axi_datamover_0]] == 0} {
+        create_bd_cell -type ip -vlnv xilinx.com:ip:axi_datamover:5.1 axi_datamover_0
+    }
+    set_property -dict [list \
+        CONFIG.c_include_mm2s {Basic} \
+        CONFIG.c_include_s2mm {Full} \
+        CONFIG.c_include_s2mm_dre {false} \
+        CONFIG.c_m_axi_s2mm_data_width {32} \
+        CONFIG.c_s_axis_s2mm_tdata_width {32} \
+    ] [get_bd_cells axi_datamover_0]
+    set_property -dict [list CONFIG.NUM_SI {5} CONFIG.NUM_CLKS {2}] [get_bd_cells axi_smc]
     set_property -dict [list CONFIG.NUM_MI {5}] [get_bd_cells ps7_0_axi_periph]
 
     set old_main_stream [get_bd_intf_nets -quiet axi_vdma_0_M_AXIS_MM2S]
@@ -167,25 +177,35 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
             [get_bd_intf_pins axis_pip_overlay_core_0/S_AXI] \
             [get_bd_intf_pins ps7_0_axi_periph/M02_AXI]
     }
-    if {[llength [get_bd_intf_nets -quiet dma_probe_mm2s_axis]] == 0} {
-        connect_bd_intf_net -intf_net dma_probe_mm2s_axis \
+    if {[llength [get_bd_intf_nets -quiet jpeg_decode_input_axis]] == 0} {
+        connect_bd_intf_net -intf_net jpeg_decode_input_axis \
             [get_bd_intf_pins axi_dma_0/M_AXIS_MM2S] \
-            [get_bd_intf_pins axis_dma_probe_core_0/S_AXIS]
+            [get_bd_intf_pins jpeg_pl_decoder_axis_0/S_JPEG]
     }
-    if {[llength [get_bd_intf_nets -quiet dma_probe_s2mm_axis]] == 0} {
-        connect_bd_intf_net -intf_net dma_probe_s2mm_axis \
-            [get_bd_intf_pins axis_dma_probe_core_0/M_AXIS] \
-            [get_bd_intf_pins axi_dma_0/S_AXIS_S2MM]
+    if {[llength [get_bd_intf_nets -quiet jpeg_decode_command_axis]] == 0} {
+        connect_bd_intf_net -intf_net jpeg_decode_command_axis \
+            [get_bd_intf_pins jpeg_pl_decoder_axis_0/M_CMD] \
+            [get_bd_intf_pins axi_datamover_0/S_AXIS_S2MM_CMD]
+    }
+    if {[llength [get_bd_intf_nets -quiet jpeg_decode_data_axis]] == 0} {
+        connect_bd_intf_net -intf_net jpeg_decode_data_axis \
+            [get_bd_intf_pins jpeg_pl_decoder_axis_0/M_DATA] \
+            [get_bd_intf_pins axi_datamover_0/S_AXIS_S2MM]
+    }
+    if {[llength [get_bd_intf_nets -quiet jpeg_decode_status_axis]] == 0} {
+        connect_bd_intf_net -intf_net jpeg_decode_status_axis \
+            [get_bd_intf_pins axi_datamover_0/M_AXIS_S2MM_STS] \
+            [get_bd_intf_pins jpeg_pl_decoder_axis_0/S_STS]
     }
     if {[llength [get_bd_intf_nets -quiet axi_dma_0_M_AXI_MM2S]] == 0} {
         connect_bd_intf_net -intf_net axi_dma_0_M_AXI_MM2S \
             [get_bd_intf_pins axi_smc/S03_AXI] \
             [get_bd_intf_pins axi_dma_0/M_AXI_MM2S]
     }
-    if {[llength [get_bd_intf_nets -quiet axi_dma_0_M_AXI_S2MM]] == 0} {
-        connect_bd_intf_net -intf_net axi_dma_0_M_AXI_S2MM \
+    if {[llength [get_bd_intf_nets -quiet axi_datamover_0_M_AXI_S2MM]] == 0} {
+        connect_bd_intf_net -intf_net axi_datamover_0_M_AXI_S2MM \
             [get_bd_intf_pins axi_smc/S04_AXI] \
-            [get_bd_intf_pins axi_dma_0/M_AXI_S2MM]
+            [get_bd_intf_pins axi_datamover_0/M_AXI_S2MM]
     }
     if {[llength [get_bd_intf_nets -quiet ps7_0_axi_periph_M03_AXI]] == 0} {
         connect_bd_intf_net -intf_net ps7_0_axi_periph_M03_AXI \
@@ -194,34 +214,42 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
     }
     if {[llength [get_bd_intf_nets -quiet ps7_0_axi_periph_M04_AXI]] == 0} {
         connect_bd_intf_net -intf_net ps7_0_axi_periph_M04_AXI \
-            [get_bd_intf_pins axis_dma_probe_core_0/S_AXI] \
+            [get_bd_intf_pins jpeg_pl_decoder_axis_0/S_AXI] \
             [get_bd_intf_pins ps7_0_axi_periph/M04_AXI]
     }
 
     connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK0] \
+        [get_bd_pins axi_dma_0/s_axi_lite_aclk] \
+        [get_bd_pins axi_dma_0/m_axi_mm2s_aclk] \
+        [get_bd_pins axi_datamover_0/m_axi_mm2s_aclk] \
+        [get_bd_pins axi_datamover_0/m_axis_mm2s_cmdsts_aclk] \
+        [get_bd_pins axi_datamover_0/m_axi_s2mm_aclk] \
+        [get_bd_pins axi_datamover_0/m_axis_s2mm_cmdsts_awclk] \
         [get_bd_pins axi_vdma_1/s_axi_lite_aclk] \
-        [get_bd_pins ps7_0_axi_periph/M01_ACLK]
+        [get_bd_pins jpeg_pl_decoder_axis_0/aclk] \
+        [get_bd_pins axi_smc/aclk1] \
+        [get_bd_pins ps7_0_axi_periph/M01_ACLK] \
+        [get_bd_pins ps7_0_axi_periph/M03_ACLK] \
+        [get_bd_pins ps7_0_axi_periph/M04_ACLK]
     connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK1] \
         [get_bd_pins axi_vdma_1/m_axi_mm2s_aclk] \
         [get_bd_pins axi_vdma_1/m_axis_mm2s_aclk] \
-        [get_bd_pins axi_dma_0/s_axi_lite_aclk] \
-        [get_bd_pins axi_dma_0/m_axi_mm2s_aclk] \
-        [get_bd_pins axi_dma_0/m_axi_s2mm_aclk] \
-        [get_bd_pins axis_dma_probe_core_0/aclk] \
         [get_bd_pins axis_pip_overlay_core_0/aclk] \
-        [get_bd_pins ps7_0_axi_periph/M02_ACLK] \
-        [get_bd_pins ps7_0_axi_periph/M03_ACLK] \
-        [get_bd_pins ps7_0_axi_periph/M04_ACLK]
+        [get_bd_pins ps7_0_axi_periph/M02_ACLK]
     connect_bd_net [get_bd_pins rst_ps7_0_100M/peripheral_aresetn] \
         [get_bd_pins axis_pip_overlay_core_0/aresetn] \
-        [get_bd_pins axi_dma_0/axi_resetn] \
-        [get_bd_pins axis_dma_probe_core_0/aresetn] \
-        [get_bd_pins ps7_0_axi_periph/M02_ARESETN] \
-        [get_bd_pins ps7_0_axi_periph/M03_ARESETN] \
-        [get_bd_pins ps7_0_axi_periph/M04_ARESETN]
+        [get_bd_pins ps7_0_axi_periph/M02_ARESETN]
     connect_bd_net [get_bd_pins rst_ps7_0_50M/peripheral_aresetn] \
         [get_bd_pins axi_vdma_1/axi_resetn] \
-        [get_bd_pins ps7_0_axi_periph/M01_ARESETN]
+        [get_bd_pins axi_dma_0/axi_resetn] \
+        [get_bd_pins axi_datamover_0/m_axi_mm2s_aresetn] \
+        [get_bd_pins axi_datamover_0/m_axis_mm2s_cmdsts_aresetn] \
+        [get_bd_pins axi_datamover_0/m_axi_s2mm_aresetn] \
+        [get_bd_pins axi_datamover_0/m_axis_s2mm_cmdsts_aresetn] \
+        [get_bd_pins jpeg_pl_decoder_axis_0/aresetn] \
+        [get_bd_pins ps7_0_axi_periph/M01_ARESETN] \
+        [get_bd_pins ps7_0_axi_periph/M03_ARESETN] \
+        [get_bd_pins ps7_0_axi_periph/M04_ARESETN]
 
     create_bd_addr_seg -range 0x10000000 -offset 0x00000000 \
         [get_bd_addr_spaces axi_vdma_1/Data_MM2S] \
@@ -232,9 +260,9 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
         [get_bd_addr_segs processing_system7_0/S_AXI_HP0/HP0_DDR_LOWOCM] \
         SEG_processing_system7_0_HP0_DDR_LOWOCM_2
     create_bd_addr_seg -range 0x10000000 -offset 0x00000000 \
-        [get_bd_addr_spaces axi_dma_0/Data_S2MM] \
+        [get_bd_addr_spaces axi_datamover_0/Data_S2MM] \
         [get_bd_addr_segs processing_system7_0/S_AXI_HP0/HP0_DDR_LOWOCM] \
-        SEG_processing_system7_0_HP0_DDR_LOWOCM_3
+        SEG_processing_system7_0_HP0_DDR_LOWOCM_4
     create_bd_addr_seg -range 0x00010000 -offset 0x43010000 \
         [get_bd_addr_spaces processing_system7_0/Data] \
         [get_bd_addr_segs axi_vdma_1/S_AXI_LITE/Reg] \
@@ -251,14 +279,14 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
         [get_bd_addr_spaces processing_system7_0/Data] \
         [lindex $pip_ctrl_addr_segs 0] \
         SEG_axis_pip_overlay_core_0_Reg
-    set dma_probe_addr_segs [get_bd_addr_segs -of_objects [get_bd_intf_pins axis_dma_probe_core_0/S_AXI]]
-    if {[llength $dma_probe_addr_segs] == 0} {
-        error "No address segment inferred for axis_dma_probe_core_0/S_AXI"
+    set jpeg_decoder_addr_segs [get_bd_addr_segs -of_objects [get_bd_intf_pins jpeg_pl_decoder_axis_0/S_AXI]]
+    if {[llength $jpeg_decoder_addr_segs] == 0} {
+        error "No address segment inferred for jpeg_pl_decoder_axis_0/S_AXI"
     }
     create_bd_addr_seg -range 0x00010000 -offset 0x43c10000 \
         [get_bd_addr_spaces processing_system7_0/Data] \
-        [lindex $dma_probe_addr_segs 0] \
-        SEG_axis_dma_probe_core_0_Reg
+        [lindex $jpeg_decoder_addr_segs 0] \
+        SEG_jpeg_pl_decoder_axis_0_Reg
 
     # PetaLinux device-tree generation requires the AXI VDMA interrupt outputs
     # to terminate at the PS interrupt controller. The official HDMI-only
@@ -294,14 +322,9 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
             [get_bd_pins axi_dma_0/mm2s_introut] \
             [get_bd_pins vdma_irq_concat/In3]
     }
-    if {[llength [get_bd_nets -quiet probe_dma_s2mm_irq]] == 0} {
-        connect_bd_net -net probe_dma_s2mm_irq \
-            [get_bd_pins axi_dma_0/s2mm_introut] \
-            [get_bd_pins vdma_irq_concat/In4]
-    }
     if {[llength [get_bd_nets -quiet vdma_irq_zero_net]] == 0} {
         set zero_sinks {}
-        for {set irq_idx 5} {$irq_idx < 16} {incr irq_idx} {
+        for {set irq_idx 4} {$irq_idx < 16} {incr irq_idx} {
             lappend zero_sinks [get_bd_pins vdma_irq_concat/In$irq_idx]
         }
         connect_bd_net -net vdma_irq_zero_net \

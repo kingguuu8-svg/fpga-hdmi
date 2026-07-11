@@ -51,7 +51,11 @@ set_property target_language Verilog [current_project]
 add_files -norecurse [list \
     [file join $repo_root examples eth-ps-pl-hdmi-pass-through rtl axis_pip_overlay_core.v] \
     [file join $repo_root examples eth-ps-pl-hdmi-pass-through rtl axis_dma_probe_core.v] \
+    [file join $repo_root examples eth-ps-pl-hdmi-pass-through rtl jpeg_rgb_tile_writer.v] \
+    [file join $repo_root examples eth-ps-pl-hdmi-pass-through rtl jpeg_pl_decoder_axis.v] \
 ]
+add_files -norecurse [lsort [glob \
+    [file join $repo_root third_party ultraembedded-core-jpeg src_v *.v]]]
 update_compile_order -fileset sources_1
 
 source [file join $repo_root examples eth-ps-pl-hdmi-pass-through tcl create_ps_emio_vdma_hdmi_bd.tcl]
@@ -83,6 +87,7 @@ write_checkpoint -force [file join $build_root post_synth.dcp]
 report_utilization -file [file join $report_root post_synth_utilization.rpt]
 report_drc -file [file join $report_root post_synth_drc.rpt]
 
+set_property strategy Performance_Explore [get_runs impl_1]
 launch_runs impl_1 -to_step write_bitstream -scripts_only -jobs 1
 run_implementation_direct $build_root
 if {[get_property PROGRESS [get_runs impl_1]] ne "100%"} {
@@ -93,6 +98,11 @@ open_run impl_1
 report_timing_summary -file [file join $report_root timing_summary.rpt]
 report_drc -file [file join $report_root post_route_drc.rpt]
 report_utilization -file [file join $report_root post_route_utilization.rpt]
+
+set drc_errors [get_drc_violations -quiet -filter {SEVERITY == Error}]
+if {[llength $drc_errors] != 0} {
+    error "Post-route DRC failed with [llength $drc_errors] error(s)."
+}
 
 set max_timing_paths [get_timing_paths -delay_type max -max_paths 1]
 if {[llength $max_timing_paths] > 0} {
@@ -110,4 +120,4 @@ file copy -force \
     [file join $build_root eth_ps_vdma_hdmi_stage1_board.runs impl_1 eth_ps_vdma_hdmi_board_top.bit] \
     [file join $build_root eth_ps_vdma_hdmi_stage1_board.bit]
 
-puts "STAGE1_VDMA_BOARD_BUILD_OK bitstream=[file join $build_root eth_ps_vdma_hdmi_stage1_board.bit] wns=$wns"
+puts "STAGE1_VDMA_BOARD_BUILD_OK bitstream=[file join $build_root eth_ps_vdma_hdmi_stage1_board.bit] wns=$wns drc_errors=0"

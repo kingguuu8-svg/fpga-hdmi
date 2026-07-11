@@ -19,14 +19,23 @@ if [[ ! -f "$system_user_dtsi" ]]; then
 fi
 
 if grep -q "$marker" "$system_user_dtsi"; then
-	if grep -q 'max-transfer-size' "$system_user_dtsi"; then
-		printf 'JPEGPL_DMA_PROBE_OVERLAY_ALREADY_PRESENT project=%s\n' "$project_path"
-	else
-		sed -i '/buffer-size = <0x00200000>;/a\		max-transfer-size = <16380>;' \
-			"$system_user_dtsi"
-		printf 'JPEGPL_DMA_PROBE_OVERLAY_UPGRADED project=%s system_user_dtsi=%s\n' \
-			"$project_path" "$system_user_dtsi"
-	fi
+	python3 - "$system_user_dtsi" "$fragment" <<'PY'
+import pathlib
+import re
+import sys
+
+target = pathlib.Path(sys.argv[1])
+fragment = pathlib.Path(sys.argv[2]).read_text()
+text = target.read_text()
+node = re.compile(r'\n\s*jpegpl_dma_probe_0: jpegpl-[^{]+\{.*?\n\s*\};', re.S)
+replacement = node.search(fragment).group(0)
+updated, count = node.subn(replacement, text, count=1)
+if count != 1:
+    raise SystemExit("existing jpegpl DMA node was not found")
+target.write_text(updated)
+PY
+	printf 'JPEGPL_DMA_PROBE_OVERLAY_UPDATED project=%s system_user_dtsi=%s\n' \
+		"$project_path" "$system_user_dtsi"
 else
 	{
 		printf '\n'

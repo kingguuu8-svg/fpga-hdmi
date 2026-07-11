@@ -4,8 +4,13 @@ puts "before_targets:"
 puts [targets]
 
 set reset_status [catch {
-    targets -set -nocase -filter {name =~ "DAP*"}
+    if {[catch {targets -set -nocase -filter {name =~ "DAP*"}}]} {
+        targets -set -nocase -filter {name =~ "APU*"}
+    }
     rst -system
+    after 500
+    targets -set -nocase -filter {name =~ "APU*"}
+    con
 } reset_err]
 puts "reset_status=$reset_status reset_err=$reset_err"
 
