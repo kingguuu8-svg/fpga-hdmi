@@ -29,9 +29,9 @@ Explicit exclusion: HDMI conversion/presentation throughput and driver/plugin
 zero-copy are later cycles. This cycle does not count display-side frame rate
 as decoder throughput.
 
-Checkpoint: 2026-07-12 00:00 local time. The implementation checkpoint is
-saved, but this cycle remains active and is not passed. The most recently
-closed cycle is `jpeg-pl-decoder-board-datapath-v1`; its final evidence is in
+Checkpoint: 2026-07-12 14:50:28 +08:00. This is a diagnostic checkpoint only;
+the cycle remains active and is not passed. The most recently closed cycle is
+`jpeg-pl-decoder-board-datapath-v1`; its final evidence is in
 `docs/reports/jpeg-pl-decoder-board-datapath-v1.md`.
 
 Checkpoint evidence:
@@ -54,21 +54,33 @@ Checkpoint evidence:
   `14cf602b94e160f6fe9c6cbfed46404a73603f6d2e0c277cecead8285a1f7e88`, and
   `BOOT.BIN` SHA-256
   `76273e2409c7ec3af92c4e55d553f086646cc56bff3a1c4ce8e9c01c2790f013`.
+- The packaged v1 `BOOT.BIN` was installed on the TF-card boot partition after
+  the previous file was backed up as
+  `/run/media/mmcblk0p1/BOOT.BIN.prev-jpegpldec-720p30-v1`.
+- v1 booted through FSBL/U-Boot and reached Linux, but Linux stopped after
+  `dma-pl330 f8003000.dmac` while probing the first new AXI DMA device; no
+  `xilinx-vdma 43020000` probe or login prompt was observed.
+- A v2 reset experiment replaced the Clock Wizard lock input with a constant
+  high signal. Its bitstream also passed timing (WNS `+0.134 ns`) and DRC,
+  but temporary JTAG loading reproduced the same Linux stop. This rules out
+  the lock input as a sufficient fix; it does not prove the clock/reset path
+  correct.
 
 Pending after the next workstation start:
 
-- Replace the TF-card `BOOT.BIN` only after backing up the current file, boot
-  the board, and confirm the new FSBL/bitstream reaches Linux without a
-  register hang.
+- Diagnose the AXI DMA probe hang before installing any further experimental
+  `BOOT.BIN`; keep the current v1 file and its backup available for rollback.
 - Deploy the rebuilt `jpegpl_dma_probe.ko` and `libgstjpegpldec.so`, then run
   the 300-frame `rtpjpegdepay -> jpegpldec -> fakesink` 720p30 test.
 - Record actual pass/fail frame count, kernel health, packet counters, and
   `total_ms` p95 before closing this cycle.
 
-Rollback point: the previous committed source is `9ffc47b`; the board has not
-yet been changed by this checkpoint. The packaged BOOT.BIN is staged under
-`build/jpegpldec-pl-throughput-720p30-v1/boot-package/` and is not yet
-installed on the TF card.
+Rollback point: the previous committed source is `08190b7`. The board can be
+returned to its pre-cycle boot image from the TF-card backup
+`/run/media/mmcblk0p1/BOOT.BIN.prev-jpegpldec-720p30-v1`; the v1 package is
+staged under `build/jpegpldec-pl-throughput-720p30-v1/boot-package/`.
+The current uncommitted source experiment is the constant-high reset trial in
+`examples/eth-ps-pl-hdmi-pass-through/tcl/create_ps_emio_vdma_hdmi_bd.tcl`.
 
 ## Rule
 

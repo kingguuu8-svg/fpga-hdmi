@@ -130,7 +130,9 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
         ] [get_bd_cells jpeg_clk_wiz]
         create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 jpeg_fclk_reset
         create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 jpeg_reset_zero
+        create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 jpeg_reset_one
         set_property CONFIG.CONST_VAL {0} [get_bd_cells jpeg_reset_zero]
+        set_property CONFIG.CONST_VAL {1} [get_bd_cells jpeg_reset_one]
     }
     if {[llength [get_bd_cells -quiet axi_dma_0]] == 0} {
         create_bd_cell -type ip -vlnv xilinx.com:ip:axi_dma:7.1 axi_dma_0
@@ -269,7 +271,10 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
         [get_bd_pins ps7_0_axi_periph/M04_ARESETN]
     connect_bd_net [get_bd_pins processing_system7_0/FCLK_RESET0_N] \
         [get_bd_pins jpeg_fclk_reset/ext_reset_in]
-    connect_bd_net [get_bd_pins jpeg_clk_wiz/locked] \
+    # Diagnostic trial: bypass the generated-clock lock pin to isolate whether
+    # reset gating is the cause of the Linux AXI-DMA probe hang. This is not a
+    # qualified fix; the board test is recorded in the active cycle note.
+    connect_bd_net [get_bd_pins jpeg_reset_one/dout] \
         [get_bd_pins jpeg_fclk_reset/dcm_locked]
     connect_bd_net [get_bd_pins jpeg_reset_zero/dout] \
         [get_bd_pins jpeg_fclk_reset/aux_reset_in] \
