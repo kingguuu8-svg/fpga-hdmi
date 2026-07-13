@@ -2,81 +2,122 @@
 
 ## Objective
 
-Optimize the real `jpegpldec backend=pl-decoder` path and verify a sustained
-720p30 RTP/JPEG-to-GStreamer boundary on the connected Zynq-7020 board.
+Verify that the real `jpegpldec backend=pl-decoder` path sustains a 1280x720
+30fps RTP/JPEG input at the decoder-to-GStreamer boundary on the connected
+Zynq-7020 board.
 
-## Changes
+This cycle does not claim HDMI presentation throughput or an asynchronous
+production buffer pool.
 
-- Changed the DataMover S2MM path from 32-bit to 64-bit and inserted a
-  32-to-64 AXIS width converter.
-- Kept decoder AXI-Lite control in the PS FCLK0 domain through an AXI-Lite
-  clock converter; the decoder and writeback data plane run at the generated
-  65 MHz clock.
-- Added a reproducible Vivado 2018.3 SmartConnect OOC clock-file fallback for
-  the generated 64-bit design.
-- Added DMA output mmap to the kernel probe and plugin, disabling the repeated
-  kernel-to-userspace output copy for the synchronous gate.
-- Cached stable decoder configuration and repeated control verification in the
-  kernel path.
-- Made the 330-frame gate wait for the board login prompt after reboot and
-  avoid PowerShell quote corruption in the remote GStreamer command.
+## Implementation
 
-## Verification
+- Kept the v4cc8b 64-bit DataMover S2MM writeback path and AXIS 32-to-64 width
+  converter.
+- Retained AXI-Lite control clock conversion, cached stable register setup,
+  and the synchronous DMA output mmap path.
+- Added opt-in per-phase kernel timing through `trace_timing=1` without
+  changing the driver UAPI.
+- Changed normal per-frame DMA submit/completion messages from `dev_info` to
+  `dev_dbg`, removing 115200-baud UART logging from the normal datapath.
+- Made the gate parser tolerate UART line wrapping when extracting
+  `total_ms` and `result=pass` from frame records.
 
-Build and timing:
+The PL bitstream and boot image were not changed in this optimization
+checkpoint. The verified v4cc8b hardware remains the active board design.
+
+## Static Verification
 
 - v4cc8b bitstream SHA-256:
   `5de6eef793c13bd70d4009b34a45c6e92a4363b2f63c51329ebce97addbdc312`
-- Post-route WNS `+0.170 ns`, WHS `+0.021 ns`, zero DRC errors.
+- Post-route WNS `+0.170 ns`, WHS `+0.021 ns`, and zero DRC errors.
 - Measured JPEG clock: `64.997 MHz`.
-- BOOT.BIN SHA-256:
-  `35be3620960337e3b743ac8e549787fd3cc59038203a93111c885cc5d32aeb95`
-- Reused image.ub SHA-256:
-  `afc8b5658ac868592b7770d42911bc011e8e4319762af62f86bf96c481e87570`
-
-RTL and single-frame board path:
-
-- RTL randomized backpressure simulation: `921600` pixels, `1974075`
-  cycles, PSNR `39.002 dB`, FNV `0x7127882c`.
-- Board register smoke passed.
-- Board full writeback passed with `2764800` RGB bytes, FNV `0x7127882c`,
-  output SHA-256
+- RTL randomized backpressure simulation: `921600` pixels,
+  `1974075` cycles, PSNR `39.002 dB`, FNV `0x7127882c`.
+- Board fixed-vector RGB writeback: `2764800` bytes, FNV `0x7127882c`,
+  qualified output SHA-256
   `01623472a5f3033e536d4691e3fde1ffc88e702c3b58c876743f5beb4c6d40c9`.
-- Board full-writeback measurement: approximately `35.916 ms`, `2559119`
-  cycles, `57600` commands, `57600` responses, and `115200` stalls.
 
-Real GStreamer gate:
+## Final Board Gate
 
-- Pipeline: PC GStreamer RTP/JPEG -> board `rtpjpegdepay` ->
-  `jpegpldec backend=pl-decoder` -> `fakesink`.
-- Requested/decoded frames: `330/330`; failures: `0`.
-- Kernel health: OK; Ethernet RX errors/dropped: `0/0`.
-- Steady average: `36.340 ms`; gate-script p95: `37.019 ms`.
-- First frame: approximately `70.694 ms`.
-- Output mmap was active and output copy was disabled.
+Pipeline:
+
+```text
+PC GStreamer RTP/JPEG -> board rtpjpegdepay ->
+jpegpldec backend=pl-decoder -> fakesink sync=false
+```
+
+Final gate command used 330 requested frames, 30fps target, and 300 minimum
+accepted frames. The generated summary reports:
+
+- decoded pass frames: `330`
+- decoded fail frames: `0`
+- gate total-time p95: `31.455 ms`
+- plugin profile: p50 `30.975 ms`, p95 `31.929 ms`, max `65.439 ms`
+- plugin backend selection: `backend=pl-decoder`,
+  `software_jpegdec=absent`, `output_mmap=1`
+- kernel health: `KERNEL_HEALTH_OK`
+- Ethernet: RX `errors=0`, `dropped=0`
+
+The final profile also reported `frames=330`, `failures=0`, and
+`avg_out_bytes=2764800.0`. The first frame is a warm-up outlier of roughly
+65ms; the steady profile remains below the 33.333ms 30fps frame budget.
+
+Evidence:
+
+- `build/jpegpldec-pl-throughput-720p30-v1/runtime-logging-fix-gate-final/summary.json`
+- `build/jpegpldec-pl-throughput-720p30-v1/runtime-logging-fix-gate-final/uart-stop.log`
+
+## Bottleneck Finding
+
+The earlier v4cc8b gate measured p95 `37.019 ms`. The phase timing sweep
+showed that this number was materially contaminated by per-frame kernel
+`dev_info` messages sent over the 115200-baud UART. With diagnostic console
+noise suppressed:
+
+- input-sink DMA was roughly `0.2 ms` per frame;
+- count-only full driver time was roughly `30.6 ms`;
+- PL completion polling was roughly `1.0 ms`;
+- copying the 2.7648MB RGB result to userspace added roughly `15 ms`.
+
+The normal plugin path uses output mmap, so it avoids that repeated RGB copy.
+The phase trace is retained as an opt-in diagnostic mode; the normal gate
+prints no per-frame timing dump.
+
+Timing evidence is under
+`build/jpegpldec-pl-throughput-720p30-v1/uart-timing-v4cc8b-lines.log`.
 
 ## Result
 
-Functional correctness and stability passed, but the throughput acceptance
-threshold did not: p95 is about `3.7 ms` above the `33.333 ms` 30fps budget.
-This cycle is therefore recorded as an active performance checkpoint, not a
-completed 720p30 claim.
+**PASSED for the 720p30 decoder-to-GStreamer boundary.** The board sustained
+330 ordered PL-decoded frames with zero decode failures, p95 below the 30fps
+budget, healthy kernel state, and no Ethernet RX errors or drops.
 
-## Remaining risks
+This does not yet prove:
 
-- The current 65 MHz data plane has only `+0.170 ns` WNS; increasing the clock
-  requires a new timing-qualified build.
-- The plugin wraps one coherent DMA output buffer and relies on synchronous
-  consumption in this gate. A production asynchronous buffer pool needs a
-  lifetime/fencing design before this mmap approach is generalized.
-- The v4cc8b generated-clock reset still contains the diagnostic constant-high
-  reset isolation used to make the DataMover path board-live. It is evidence
-  for the path, not yet a final reset architecture.
+- HDMI presentation at 30fps;
+- an asynchronous multi-buffer production design;
+- a higher PL clock or 1080p throughput target.
 
-## Evidence
+The profile's legacy `mode=software` text is not used as backend evidence. The
+backend selection line explicitly reports `backend=pl-decoder` and
+`software_jpegdec=absent`.
 
-- `build/jpegpldec-pl-throughput-720p30-v1/vivado-control-fclk0-v4cc8b/`
-- `build/jpegpldec-pl-throughput-720p30-v1/sim-v4cc8b/`
-- `build/jpegpldec-pl-throughput-720p30-v1/uart-smoke-v4cc8b.log`
-- `build/jpegpldec-pl-throughput-720p30-v1/uart-datapath-v4cc8b.log`
-- `build/jpegpldec-pl-throughput-720p30-v1/runtime-v4cc8b-gate-rerun/uart-stop.log`
+## Residual Risks and Rollback
+
+- The first-frame warm-up remains roughly 65ms.
+- The 65MHz PL data plane has only `+0.170ns` WNS; a clock increase requires a
+  new routed timing-qualified build.
+- The current mmap contract is synchronous and reuses one coherent output
+  buffer; an asynchronous production buffer pool needs explicit lifetime and
+  fencing rules.
+- The generated-clock reset still contains the diagnostic constant-high
+  isolation used to make the v4cc8b DataMover path board-live.
+- Rollback source point: commit `e0e0ea5`; rollback board state is the verified
+  v4cc8b BOOT.BIN/image.ub package.
+
+## Artifacts
+
+- Plugin SHA-256: `cd1b1178f6e389c67d9b876778a3afcdbe1c09c678330c85db3d5d4939ead2e0`
+- Kernel module SHA-256: `fa8e85c8aeea568dadeaacd9a34aba4a8a0b7c46c762d7e530ed8b0ed6ad40c3`
+- Final gate directory:
+  `build/jpegpldec-pl-throughput-720p30-v1/runtime-logging-fix-gate-final/`

@@ -8,6 +8,7 @@ param(
     [int]$Frames = 330,
     [int]$MinFrames = 300,
     [int]$Fps = 30,
+    [switch]$TraceTiming,
     [string]$CondaEnv = "build\conda-gstreamer-pc",
     [string]$OutDir = "build\jpegpldec-pl-throughput-720p30-v1\runtime"
 )
@@ -51,6 +52,14 @@ if ($LASTEXITCODE -ne 0) { throw "kernel client build failed" }
 $pluginHash = ((Get-Content (Join-Path $artifacts "libgstjpegpldec.sha256.txt") -TotalCount 1) -split "\s+")[0].ToLowerInvariant()
 $http = $null
 try {
+    $insmodCommand = "insmod /tmp/jpegpl_dma_probe.ko"
+    if ($TraceTiming) {
+        $insmodCommand += " trace_timing=1"
+    }
+    $timingDumpCommand = "echo JPEGPL_TIMING_TRACE_DISABLED"
+    if ($TraceTiming) {
+        $timingDumpCommand = "dmesg | grep JPEGPL_TIMING | tail -n 330"
+    }
     $http = Start-Process -FilePath python -ArgumentList @(
         "-m", "http.server", "$HttpPort", "--bind", $PcIp, "--directory", $artifacts
     ) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
@@ -64,7 +73,7 @@ try {
         "wget -q -O /tmp/jpegpl_dma_probe.ko http://$($PcIp):$($HttpPort)/jpegpl_dma_probe.ko",
         "sha256sum /tmp/gst-plugins/libgstjpegpldec.so",
         "rmmod jpegpl_dma_probe 2>/dev/null || true",
-        "insmod /tmp/jpegpl_dma_probe.ko",
+        $insmodCommand,
         "rm -f /tmp/gst-jpegpldec-720p30.log /tmp/gst-jpegpldec-720p30.pid",
         "GST_PLUGIN_PATH=/tmp/gst-plugins GST_REGISTRY=/tmp/gst-registry-jpegpldec-720p30.bin nohup gst-launch-1.0 -q udpsrc port=$GstPort caps=`"application/x-rtp,media=(string)video,clock-rate=(int)90000,encoding-name=(string)JPEG,payload=(int)26`" ! rtpjitterbuffer latency=100 drop-on-latency=false ! rtpjpegdepay ! jpegpldec backend=pl-decoder summary-interval=30 verify-output-hash=false ! fakesink sync=false > /tmp/gst-jpegpldec-720p30.log 2>&1 & echo `$! > /tmp/gst-jpegpldec-720p30.pid",
         "sleep 2",
@@ -93,13 +102,19 @@ try {
         "kill `$(cat /tmp/gst-jpegpldec-720p30.pid) 2>/dev/null || true",
         "sleep 1",
         "cat /tmp/gst-jpegpldec-720p30.log",
+        $timingDumpCommand,
         "if dmesg | grep -E 'Oops|BUG:|Kernel panic|hung task'; then echo KERNEL_HEALTH_FAIL; else echo KERNEL_HEALTH_OK; fi",
         "ifconfig eth0",
         "echo JPEGPLDEC_720P30_RECEIVER_STOPPED"
     )
     $text = Get-Content -Raw -LiteralPath $stopLog
-    $passes = [regex]::Matches($text, "JPEGPLDEC_PL_DECODE frame=.*total_ms=([0-9.]+).*result=pass")
-    $fails = [regex]::Matches($text, "JPEGPLDEC_PL_DECODE frame=.*result=fail")
+    # UART may wrap one frame record across physical lines.
+    $passes = [regex]::Matches(
+        $text,
+        "JPEGPLDEC_PL_DECODE[\s\S]{0,1000}?total_ms=([0-9.]+)[\s\S]{0,300}?result=pass")
+    $fails = [regex]::Matches(
+        $text,
+        "JPEGPLDEC_PL_DECODE[\s\S]{0,1000}?result=fail")
     if ($passes.Count -lt $MinFrames -or $fails.Count -ne 0) {
         throw "720p30 decode gate failed: pass=$($passes.Count) fail=$($fails.Count)"
     }

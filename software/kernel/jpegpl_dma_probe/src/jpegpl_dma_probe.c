@@ -8,6 +8,7 @@
 #include <linux/ioctl.h>
 #include <linux/jiffies.h>
 #include <linux/ktime.h>
+#include <linux/math64.h>
 #include <linux/mm.h>
 #include <linux/miscdevice.h>
 #include <linux/module.h>
@@ -50,6 +51,11 @@
 #define JPEGPL_CONTROL_INPUT_SINK BIT(2)
 #define JPEGPL_CONTROL_MODE_MASK (JPEGPL_CONTROL_COUNT_ONLY | \
 					  JPEGPL_CONTROL_INPUT_SINK)
+
+static bool jpegpl_trace_timing;
+module_param_named(trace_timing, jpegpl_trace_timing, bool, 0644);
+MODULE_PARM_DESC(trace_timing,
+		 "log per-frame driver phase timings when enabled");
 
 struct jpegpl_dma_chan_wait {
 	struct completion done;
@@ -242,9 +248,9 @@ static int jpegpl_dma_probe_send(struct jpegpl_dma_probe_dev *probe,
 
 		dma_async_issue_pending(probe->tx_chan);
 		if (offset == 0u)
-			dev_info(probe->dev,
-				 "JPEGPL_DMA_SUBMITTED input_length=%u\n",
-				 req->input_length);
+			dev_dbg(probe->dev,
+				"JPEGPL_DMA_SUBMITTED input_length=%u\n",
+				req->input_length);
 		if (!wait_for_completion_timeout(&tx_wait.done, remaining)) {
 			dmaengine_terminate_sync(probe->tx_chan);
 			return -ETIMEDOUT;
@@ -253,7 +259,7 @@ static int jpegpl_dma_probe_send(struct jpegpl_dma_probe_dev *probe,
 		req->chunks++;
 	}
 	req->status |= JPEGPL_DMA_PROBE_STATUS_TX_DONE;
-	dev_info(probe->dev, "JPEGPL_DMA_COMPLETED chunks=%u\n", req->chunks);
+	dev_dbg(probe->dev, "JPEGPL_DMA_COMPLETED chunks=%u\n", req->chunks);
 	return 0;
 }
 
@@ -284,6 +290,19 @@ static int jpegpl_dma_probe_decode(
 {
 	struct jpegpl_dma_probe_decode req;
 	u64 output_size;
+	u64 ioctl_start_ns = ktime_get_ns();
+	u64 copy_start_ns;
+	u64 copy_ns = 0u;
+	u64 config_start_ns;
+	u64 config_ns = 0u;
+	u64 control_start_ns;
+	u64 control_ns = 0u;
+	u64 tx_start_ns;
+	u64 tx_wait_ns = 0u;
+	u64 poll_start_ns;
+	u64 poll_ns = 0u;
+	u64 post_start_ns;
+	u64 post_ns = 0u;
 	unsigned long deadline;
 	u32 hw_status;
 	bool config_matches;
@@ -315,6 +334,7 @@ static int jpegpl_dma_probe_decode(
 		return -EINVAL;
 
 	mutex_lock(&probe->lock);
+	copy_start_ns = ktime_get_ns();
 	if (copy_from_user(probe->tx_buf,
 			   (const void __user *)(uintptr_t)req.user_input,
 			   req.input_length)) {
@@ -322,6 +342,7 @@ static int jpegpl_dma_probe_decode(
 		ret = -EFAULT;
 		goto out;
 	}
+	copy_ns = ktime_get_ns() - copy_start_ns;
 	/* Full-writeback mode overwrites every byte before PL_DONE. */
 	dma_wmb();
 
@@ -332,18 +353,24 @@ static int jpegpl_dma_probe_decode(
 	if (!config_matches) {
 		struct jpegpl_dma_probe_register_smoke config;
 
+		config_start_ns = ktime_get_ns();
 		ret = jpegpl_dma_probe_verify_config(probe, req.width, req.height,
 						     req.stride, &config);
+		config_ns = ktime_get_ns() - config_start_ns;
 		if (ret)
 			goto out;
 	}
+	control_start_ns = ktime_get_ns();
 	ret = jpegpl_dma_probe_start_and_verify_control(probe, req.flags);
+	control_ns = ktime_get_ns() - control_start_ns;
 	if (ret)
 		goto out;
 	req.elapsed_ns = ktime_get_ns();
 	deadline = jiffies + msecs_to_jiffies(req.timeout_ms);
 
+	tx_start_ns = ktime_get_ns();
 	ret = jpegpl_dma_probe_send(probe, &req, deadline);
+	tx_wait_ns = ktime_get_ns() - tx_start_ns;
 	if (ret) {
 		if (ret == -ETIMEDOUT)
 			req.status |= JPEGPL_DMA_PROBE_STATUS_TIMEOUT;
@@ -356,12 +383,14 @@ static int jpegpl_dma_probe_decode(
 		goto out;
 	}
 
+	poll_start_ns = ktime_get_ns();
 	do {
 		hw_status = readl(probe->regs + JPEGPL_REG_STATUS);
 		if (hw_status & JPEGPL_HW_STATUS_DONE)
 			break;
 		usleep_range(500, 1000);
 	} while (time_before(jiffies, deadline));
+	poll_ns = ktime_get_ns() - poll_start_ns;
 	if (!(hw_status & JPEGPL_HW_STATUS_DONE)) {
 		req.status |= JPEGPL_DMA_PROBE_STATUS_TIMEOUT;
 		jpegpl_dma_probe_snapshot(probe, &req);
@@ -372,6 +401,7 @@ static int jpegpl_dma_probe_decode(
 	if (hw_status & JPEGPL_HW_STATUS_ERROR)
 		req.status |= JPEGPL_DMA_PROBE_STATUS_PL_ERROR;
 
+	post_start_ns = ktime_get_ns();
 	jpegpl_dma_probe_snapshot(probe, &req);
 	req.elapsed_ns = ktime_get_ns() - req.elapsed_ns;
 	if (req.error_flags) {
@@ -391,6 +421,7 @@ static int jpegpl_dma_probe_decode(
 			ret = -EFAULT;
 		}
 	}
+	post_ns = ktime_get_ns() - post_start_ns;
 	goto out;
 
 out_terminate:
@@ -402,6 +433,19 @@ out_terminate:
 		 req.error_flags, req.chunks, req.last_address);
 	dmaengine_terminate_sync(probe->tx_chan);
 out:
+	if (jpegpl_trace_timing)
+		dev_info(probe->dev,
+			 "JPEGPL_TIMING flags=0x%08x copy_us=%llu config_us=%llu control_us=%llu tx_wait_us=%llu pl_poll_us=%llu post_us=%llu driver_window_us=%llu ioctl_us=%llu status=0x%08x\n",
+			 req.flags,
+			 div_u64(copy_ns, 1000u),
+			 div_u64(config_ns, 1000u),
+			 div_u64(control_ns, 1000u),
+			 div_u64(tx_wait_ns, 1000u),
+			 div_u64(poll_ns, 1000u),
+			 div_u64(post_ns, 1000u),
+			 div_u64(req.elapsed_ns, 1000u),
+			 div_u64(ktime_get_ns() - ioctl_start_ns, 1000u),
+			 req.status);
 	if (copy_to_user(argp, &req, sizeof(req)) && !ret)
 		ret = -EFAULT;
 	mutex_unlock(&probe->lock);

@@ -3850,6 +3850,9 @@ Changed scope:
   OOC fallback for Vivado 2018.3.
 - Hardened the 330-frame board gate against serial login and remote-command
   quoting races.
+- Added opt-in kernel phase timing and changed normal per-frame DMA messages
+  from `dev_info` to `dev_dbg`, removing UART logging from the normal datapath.
+- Made the gate parser tolerate UART-wrapped frame records.
 
 Verification:
 
@@ -3860,20 +3863,27 @@ Verification:
 - Board register, input-sink, count-only, and full RGB writeback passed. The
   board output was `2764800` bytes with FNV `0x7127882c`; writeback measured
   approximately `35.916 ms`.
-- Real GStreamer RTP/JPEG -> `jpegpldec backend=pl-decoder` -> `fakesink`
-  decoded `330/330` frames with zero failures, kernel health OK, and Ethernet
-  errors/dropped `0/0`. The gate-script p95 was `37.019 ms`.
+- A phase timing sweep separated input DMA at roughly `0.2 ms`, count-only
+  driver time at roughly `30.6 ms`, PL polling at roughly `1.0 ms`, and the
+  full userspace RGB copy at roughly `15 ms`.
+- The final clean real GStreamer RTP/JPEG -> `jpegpldec backend=pl-decoder` ->
+  `fakesink` gate decoded `330/330` frames with zero failures. The gate-script
+  p95 was `31.455 ms`; the plugin profile p95 was `31.929 ms`. Kernel health
+  was OK and Ethernet errors/dropped were `0/0`.
 
-Result: CHECKPOINT, not passed. Correctness and stability passed, but the
-`33.333 ms` p95 30fps threshold was not met.
+Result: PASSED for the 720p30 decoder-to-GStreamer boundary. HDMI presentation
+throughput and an asynchronous production buffer pool remain outside this
+cycle.
 
 Evidence: `docs/reports/jpegpldec-pl-throughput-720p30-v1.md` and the raw
 build/UART artifacts under
 `build/jpegpldec-pl-throughput-720p30-v1/`.
 
-Rollback point: commit `711416a`; the board recovery image is backed up as
-`/run/media/mmcblk0p1/BOOT.BIN.prev-v4cc8b`.
+Rollback point: commit `e0e0ea5`; the board recovery image is backed up as the
+verified v4cc8b BOOT.BIN/image.ub package.
 
 Residual risks: the 65 MHz data plane has only `+0.170 ns` WNS; the current
 mmap path reuses one coherent output buffer synchronously; and the generated
-clock reset still uses diagnostic constant-high isolation.
+clock reset still uses diagnostic constant-high isolation. The first frame is
+approximately `65 ms`, while the steady profile remains below the 30fps
+budget.

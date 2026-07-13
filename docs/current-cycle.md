@@ -1,6 +1,6 @@
 # Current Cycle
 
-## jpegpldec-pl-throughput-720p30-v1 (active)
+## jpegpldec-pl-throughput-720p30-v1 (closed)
 
 Objective: make the real `jpegpldec backend=pl-decoder` path sustain the
 720p30 decoder-to-GStreamer boundary without using the system JPEG decoder.
@@ -29,12 +29,12 @@ Explicit exclusion: HDMI conversion/presentation throughput and driver/plugin
 zero-copy are later cycles. This cycle does not count display-side frame rate
 as decoder throughput.
 
-Checkpoint: 2026-07-13. Implementation is paused after the v4cc8b board gate;
-the cycle remains active and is not passed. The most recently closed cycle is
-`jpegpldec-real-pl-backend-v1`; its final evidence is in
-`docs/reports/jpegpldec-real-pl-backend-v1.md`.
+Result: PASSED on 2026-07-13. The final clean board gate sustained the
+roadmap-owned 720p30 decoder boundary with the PL backend. The most recently
+closed cycle is this cycle; its detailed evidence is in
+`docs/reports/jpegpldec-pl-throughput-720p30-v1.md`.
 
-Checkpoint evidence:
+Final evidence:
 
 - v4cc8b routes the PL decoder/DataMover writeback path through a 64-bit
   S2MM port and an AXIS 32-to-64 width converter, while keeping the decoder
@@ -58,33 +58,35 @@ Checkpoint evidence:
   gates: `921600` pixels, `1974075` cycles, PSNR `39.002 dB`, and FNV
   `0x7127882c`. Raw output is under
   `build/jpegpldec-pl-throughput-720p30-v1/sim-v4cc8b/`.
-- The real PC GStreamer RTP/JPEG -> `jpegpldec backend=pl-decoder` ->
-  `fakesink` gate decoded `330/330` frames with zero failures. Kernel health
-  was OK and Ethernet RX errors/dropped packets were both zero. The steady
-  gate average was `36.340 ms`; the gate script measured p95 `37.019 ms`.
-  The first frame was about `70.694 ms`, and the PL output mmap path was
-  active with output copy disabled.
-- The cached register configuration/control path and DMA output mmap remove
-  repeated AXI-Lite setup and the kernel-to-userspace output copy. The 64-bit
-  writeback reduced the measured writer stalls from the earlier `460800` to
-  `115200`, but did not yet reduce the wall-time p95 below the `33.333 ms`
-  30fps threshold.
+- The final clean PC GStreamer RTP/JPEG -> `jpegpldec backend=pl-decoder` ->
+  `fakesink` gate decoded `330/330` frames with zero failures. The gate-script
+  total-time p95 was `31.455 ms`; the plugin profile reported p50 `30.975 ms`,
+  p95 `31.929 ms`, and max `65.439 ms`. Kernel health was OK and Ethernet RX
+  errors/dropped packets were both zero. The output mmap path was active and
+  the selected backend reported `software_jpegdec=absent`.
+- The remaining-time sweep showed input-sink DMA at roughly `0.2 ms`,
+  count-only full driver time at roughly `30.6 ms`, and PL completion polling
+  at roughly `1.0 ms`. Full userspace RGB copying added roughly `15 ms`, which
+  is why the synchronous output mmap path remains part of the measured route.
+- The prior `37.019 ms` p95 was contaminated by per-frame `dev_info` messages
+  on the 115200-baud UART. Normal per-frame submit/completion messages are now
+  `dev_dbg`; phase timing is opt-in through the driver's `trace_timing=1`
+  module parameter, and the normal gate no longer dumps diagnostic timing.
+- The gate parser now accepts UART-wrapped frame records. Its final summary is
+  `build/jpegpldec-pl-throughput-720p30-v1/runtime-logging-fix-gate-final/summary.json`.
 
-Pending after the pause:
+Closed-cycle boundary:
 
-- Profile the remaining approximately `3.7 ms` against the `33.333 ms`
-  budget, separating JPEG core cycles, DataMover completion, ioctl overhead,
-  and GStreamer buffer handling.
-- Try software-side reductions first: avoid unnecessary GstBuffer memory
-  replacement/map operations, retain the synchronous DMA mmap contract, and
-  measure each change with the same 330-frame gate.
-- Only after software profiling, evaluate a higher decoder clock or a deeper
-  PL pipeline. The current 65 MHz design has only `+0.170 ns` WNS, so a clock
-  increase must be rebuilt and timing-verified rather than assumed safe.
-- Re-run the complete 330-frame gate and close the cycle only when p95 is at
-  most `33.333 ms` with the existing correctness and health checks.
+- This passes the decoder-to-GStreamer `fakesink` throughput target, not HDMI
+  presentation throughput or an asynchronous production buffer pool.
+- The first-frame warm-up remains approximately `65 ms`; the steady profile
+  is below the 30fps frame budget. The 65 MHz PL data plane remains timing
+  qualified at WNS `+0.170 ns`, so further clock increases require a new build.
+- The profile's legacy `mode=software` label is not used as backend evidence;
+  backend selection is confirmed by `backend=pl-decoder` and
+  `software_jpegdec=absent`.
 
-Rollback point: the latest committed source before this cycle is `711416a`.
+Rollback point: the latest committed source before this cycle is `e0e0ea5`.
 The board currently contains the verified v4cc8b BOOT.BIN and matching
 `image.ub`; the previous BOOT is backed up on the TF card as
 `/run/media/mmcblk0p1/BOOT.BIN.prev-v4cc8b`. The v4cc8b package is staged under
@@ -131,17 +133,17 @@ None.
 ## Most Recently Closed Cycle
 
 ```text
-Cycle ID: jpegpldec-real-pl-backend-v1
-Result: PASSED. `jpegpldec backend=pl-decoder` bypassed system `jpegdec`,
-  published PL-decoded GstBuffers in the roadmap-owned raw format, matched the
-  qualified fixed-vector output exactly, and completed the dynamic low-rate
-  RTP/JPEG-to-HDMI gate defined by `docs/project-roadmap.md`.
-Evidence: docs/reports/jpegpldec-real-pl-backend-v1.md and
-  build/jpegpldec-real-pl-backend-v1-release/.
-Rollback point: commit 6d282f2 and the existing TF-card recovery image recorded
-  by the preceding board-datapath cycle.
-Residual risk: this is a synchronous copy-based low-rate closure, not sustained
-  720p30.
+Cycle ID: jpegpldec-pl-throughput-720p30-v1
+Result: PASSED. The real `jpegpldec backend=pl-decoder` path decoded 330
+  dynamic 1280x720 RTP/JPEG frames with zero failures and gate p95
+  `31.455 ms`.
+Evidence: docs/reports/jpegpldec-pl-throughput-720p30-v1.md and
+  build/jpegpldec-pl-throughput-720p30-v1/runtime-logging-fix-gate-final/.
+Rollback point: commit e0e0ea5 and the verified v4cc8b BOOT.BIN/image.ub
+  state recorded by this cycle.
+Residual risk: this is a synchronous decoder-to-GStreamer closure; HDMI
+  presentation throughput and an asynchronous production buffer pool remain
+  outside this cycle.
 ```
 
 ## Frozen Progress Note
