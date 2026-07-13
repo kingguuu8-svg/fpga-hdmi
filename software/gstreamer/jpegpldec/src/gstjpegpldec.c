@@ -101,6 +101,8 @@ typedef struct _GstJpegPlHwDec {
   GstVideoDecoder parent;
   gchar *dma_device;
   gint dma_fd;
+  guint8 *dma_output_map;
+  gsize dma_output_map_size;
   guint summary_interval;
   gboolean verify_output_hash;
   GstVideoCodecState *input_state;
@@ -393,6 +395,8 @@ static gboolean
 gst_jpeg_pl_hw_dec_start(GstVideoDecoder *decoder)
 {
   GstJpegPlHwDec *self = GST_JPEG_PL_HW_DEC(decoder);
+  struct jpegpl_dma_probe_info info;
+  void *mapped;
 
   self->dma_fd = open(self->dma_device, O_RDWR);
   if (self->dma_fd < 0) {
@@ -402,6 +406,30 @@ gst_jpeg_pl_hw_dec_start(GstVideoDecoder *decoder)
                        g_strerror(errno)));
     return FALSE;
   }
+  memset(&info, 0, sizeof(info));
+  if (ioctl(self->dma_fd, JPEGPL_DMA_PROBE_IOC_INFO, &info) != 0 ||
+      info.version != JPEGPL_DMA_PROBE_VERSION || info.buffer_size == 0u) {
+    GST_ELEMENT_ERROR(self, RESOURCE, SETTINGS,
+                      ("could not query PL JPEG decoder buffer"),
+                      ("device=%s error=%s", self->dma_device,
+                       g_strerror(errno)));
+    close(self->dma_fd);
+    self->dma_fd = -1;
+    return FALSE;
+  }
+  mapped = mmap(NULL, info.buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED,
+                self->dma_fd, 0);
+  if (mapped == MAP_FAILED) {
+    GST_ELEMENT_ERROR(self, RESOURCE, OPEN_READ,
+                      ("could not map PL JPEG decoder output"),
+                      ("device=%s size=%u error=%s", self->dma_device,
+                       info.buffer_size, g_strerror(errno)));
+    close(self->dma_fd);
+    self->dma_fd = -1;
+    return FALSE;
+  }
+  self->dma_output_map = mapped;
+  self->dma_output_map_size = info.buffer_size;
   self->width = 0u;
   self->height = 0u;
   self->frames = 0u;
@@ -410,8 +438,8 @@ gst_jpeg_pl_hw_dec_start(GstVideoDecoder *decoder)
   self->max_elapsed_ns = 0u;
   self->total_cycles = 0u;
   self->total_stalls = 0u;
-  g_print("JPEGPLDEC_BACKEND_SELECTED backend=pl-decoder device=%s software_jpegdec=absent\n",
-          self->dma_device);
+  g_print("JPEGPLDEC_BACKEND_SELECTED backend=pl-decoder device=%s software_jpegdec=absent output_mmap=1 output_mmap_size=%u\n",
+          self->dma_device, info.buffer_size);
   return TRUE;
 }
 
@@ -421,6 +449,11 @@ gst_jpeg_pl_hw_dec_stop(GstVideoDecoder *decoder)
   GstJpegPlHwDec *self = GST_JPEG_PL_HW_DEC(decoder);
 
   if (self->dma_fd >= 0) {
+    if (self->dma_output_map != NULL) {
+      munmap(self->dma_output_map, self->dma_output_map_size);
+      self->dma_output_map = NULL;
+      self->dma_output_map_size = 0u;
+    }
     close(self->dma_fd);
     self->dma_fd = -1;
   }
@@ -507,6 +540,24 @@ gst_jpeg_pl_hw_dec_handle_frame(GstVideoDecoder *decoder,
     gst_buffer_unmap(frame->input_buffer, &input_map);
     return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-allocate");
   }
+  {
+    GstMemory *output_memory;
+    gsize output_size = gst_buffer_get_size(frame->output_buffer);
+
+    if (output_size == 0u || output_size > self->dma_output_map_size) {
+      gst_buffer_unmap(frame->input_buffer, &input_map);
+      return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-mmap-size");
+    }
+    output_memory = gst_memory_new_wrapped(
+        0, self->dma_output_map, self->dma_output_map_size, 0u, output_size,
+        NULL, NULL);
+    if (output_memory == NULL) {
+      gst_buffer_unmap(frame->input_buffer, &input_map);
+      return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-mmap-wrap");
+    }
+    gst_buffer_remove_all_memory(frame->output_buffer);
+    gst_buffer_insert_memory(frame->output_buffer, 0u, output_memory);
+  }
   if (!gst_buffer_map(frame->output_buffer, &output_map, GST_MAP_WRITE)) {
     gst_buffer_unmap(frame->input_buffer, &input_map);
     return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-map");
@@ -520,7 +571,8 @@ gst_jpeg_pl_hw_dec_handle_frame(GstVideoDecoder *decoder,
   req.stride = (guint32)GST_VIDEO_INFO_PLANE_STRIDE(&self->output_info, 0);
   req.timeout_ms = 1000u;
   req.user_input = (guint64)(guintptr)input_map.data;
-  req.user_output = (guint64)(guintptr)output_map.data;
+  req.flags = JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_MMAP;
+  req.user_output = 0u;
 
   started = gst_util_get_timestamp();
   if (ioctl(self->dma_fd, JPEGPL_DMA_PROBE_IOC_DECODE, &req) != 0) {
@@ -555,6 +607,7 @@ gst_jpeg_pl_hw_dec_handle_frame(GstVideoDecoder *decoder,
           " input_bytes=%u output_bytes=%u"
           " cycles=%u stalls=%u commands=%u responses=%u"
           " ioctl_ms=%.3f total_ms=%.3f hash_enabled=%u"
+          " output_mmap=1"
           " output_fnv=0x%08x result=pass\n",
           frame_id, (guint64)frame->pts, (guint64)frame->duration,
           req.input_bytes, req.output_bytes,

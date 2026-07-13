@@ -123,7 +123,7 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
     if {[llength [get_bd_cells -quiet jpeg_clk_wiz]] == 0} {
         create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:6.0 jpeg_clk_wiz
         set_property -dict [list \
-            CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {66.667} \
+            CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {65.000} \
             CONFIG.PRIM_IN_FREQ {150.000} \
             CONFIG.USE_LOCKED {true} \
             CONFIG.USE_RESET {false} \
@@ -150,9 +150,29 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
         CONFIG.c_include_mm2s {Basic} \
         CONFIG.c_include_s2mm {Full} \
         CONFIG.c_include_s2mm_dre {false} \
-        CONFIG.c_m_axi_s2mm_data_width {32} \
-        CONFIG.c_s_axis_s2mm_tdata_width {32} \
+        CONFIG.c_m_axi_s2mm_data_width {64} \
+        CONFIG.c_s_axis_s2mm_tdata_width {64} \
     ] [get_bd_cells axi_datamover_0]
+    if {[llength [get_bd_cells -quiet jpeg_writeback_width_converter]] == 0} {
+        create_bd_cell -type ip \
+            -vlnv xilinx.com:ip:axis_dwidth_converter:1.1 \
+            jpeg_writeback_width_converter
+    }
+    set_property -dict [list \
+        CONFIG.S_TDATA_NUM_BYTES {4} \
+        CONFIG.M_TDATA_NUM_BYTES {8} \
+        CONFIG.HAS_TKEEP {1} \
+        CONFIG.HAS_TLAST {1} \
+    ] [get_bd_cells jpeg_writeback_width_converter]
+    if {[llength [get_bd_cells -quiet jpeg_decoder_ctrl_cc]] == 0} {
+        create_bd_cell -type ip \
+            -vlnv xilinx.com:ip:axi_clock_converter:2.1 \
+            jpeg_decoder_ctrl_cc
+    }
+    set_property -dict [list \
+        CONFIG.PROTOCOL {AXI4LITE} \
+        CONFIG.ACLK_ASYNC {1} \
+    ] [get_bd_cells jpeg_decoder_ctrl_cc]
     set_property -dict [list CONFIG.NUM_SI {5} CONFIG.NUM_CLKS {2}] [get_bd_cells axi_smc]
     set_property -dict [list CONFIG.NUM_MI {5}] [get_bd_cells ps7_0_axi_periph]
 
@@ -204,6 +224,11 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
     if {[llength [get_bd_intf_nets -quiet jpeg_decode_data_axis]] == 0} {
         connect_bd_intf_net -intf_net jpeg_decode_data_axis \
             [get_bd_intf_pins jpeg_pl_decoder_axis_0/M_DATA] \
+            [get_bd_intf_pins jpeg_writeback_width_converter/S_AXIS]
+    }
+    if {[llength [get_bd_intf_nets -quiet jpeg_decode_data_width_axis]] == 0} {
+        connect_bd_intf_net -intf_net jpeg_decode_data_width_axis \
+            [get_bd_intf_pins jpeg_writeback_width_converter/M_AXIS] \
             [get_bd_intf_pins axi_datamover_0/S_AXIS_S2MM]
     }
     if {[llength [get_bd_intf_nets -quiet jpeg_decode_status_axis]] == 0} {
@@ -228,25 +253,38 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
     }
     if {[llength [get_bd_intf_nets -quiet ps7_0_axi_periph_M04_AXI]] == 0} {
         connect_bd_intf_net -intf_net ps7_0_axi_periph_M04_AXI \
-            [get_bd_intf_pins jpeg_pl_decoder_axis_0/S_AXI] \
+            [get_bd_intf_pins jpeg_decoder_ctrl_cc/S_AXI] \
             [get_bd_intf_pins ps7_0_axi_periph/M04_AXI]
+    }
+    if {[llength [get_bd_intf_nets -quiet jpeg_decoder_ctrl_cc_M_AXI]] == 0} {
+        connect_bd_intf_net -intf_net jpeg_decoder_ctrl_cc_M_AXI \
+            [get_bd_intf_pins jpeg_pl_decoder_axis_0/S_AXI] \
+            [get_bd_intf_pins jpeg_decoder_ctrl_cc/M_AXI]
     }
 
     connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK0] \
         [get_bd_pins axi_vdma_1/s_axi_lite_aclk] \
         [get_bd_pins ps7_0_axi_periph/M01_ACLK]
     connect_bd_net [get_bd_pins jpeg_clk_wiz/clk_out1] \
-        [get_bd_pins axi_dma_0/s_axi_lite_aclk] \
         [get_bd_pins axi_dma_0/m_axi_mm2s_aclk] \
         [get_bd_pins axi_datamover_0/m_axi_mm2s_aclk] \
         [get_bd_pins axi_datamover_0/m_axis_mm2s_cmdsts_aclk] \
         [get_bd_pins axi_datamover_0/m_axi_s2mm_aclk] \
         [get_bd_pins axi_datamover_0/m_axis_s2mm_cmdsts_awclk] \
+        [get_bd_pins jpeg_writeback_width_converter/aclk] \
         [get_bd_pins jpeg_pl_decoder_axis_0/aclk] \
         [get_bd_pins axi_smc/aclk1] \
+        [get_bd_pins jpeg_fclk_reset/slowest_sync_clk]
+    # Keep the PS-facing AXI-Lite control path in the official 50 MHz domain.
+    # Vivado inserts an AXI clock converter between M04 and the decoder slave;
+    # the decoder data path remains on the faster generated clock.
+    connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK0] \
+        [get_bd_pins axi_dma_0/s_axi_lite_aclk] \
         [get_bd_pins ps7_0_axi_periph/M03_ACLK] \
         [get_bd_pins ps7_0_axi_periph/M04_ACLK] \
-        [get_bd_pins jpeg_fclk_reset/slowest_sync_clk]
+        [get_bd_pins jpeg_decoder_ctrl_cc/s_axi_aclk]
+    connect_bd_net [get_bd_pins jpeg_clk_wiz/clk_out1] \
+        [get_bd_pins jpeg_decoder_ctrl_cc/m_axi_aclk]
     connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK1] \
         [get_bd_pins jpeg_clk_wiz/clk_in1]
     connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK1] \
@@ -260,21 +298,27 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
     connect_bd_net [get_bd_pins rst_ps7_0_50M/peripheral_aresetn] \
         [get_bd_pins axi_vdma_1/axi_resetn] \
         [get_bd_pins ps7_0_axi_periph/M01_ARESETN]
-    connect_bd_net [get_bd_pins jpeg_fclk_reset/peripheral_aresetn] \
-        [get_bd_pins axi_dma_0/axi_resetn] \
+    # Diagnostic variant: release every 65 MHz-domain slave synchronously
+    # from a constant-high reset. This isolates proc_sys_reset/lock behavior
+    # from the DataMover and AXI clock-converter datapath.
+    connect_bd_net [get_bd_pins jpeg_reset_one/dout] \
         [get_bd_pins axi_datamover_0/m_axi_mm2s_aresetn] \
         [get_bd_pins axi_datamover_0/m_axis_mm2s_cmdsts_aresetn] \
         [get_bd_pins axi_datamover_0/m_axi_s2mm_aresetn] \
         [get_bd_pins axi_datamover_0/m_axis_s2mm_cmdsts_aresetn] \
-        [get_bd_pins jpeg_pl_decoder_axis_0/aresetn] \
+        [get_bd_pins jpeg_writeback_width_converter/aresetn]
+    connect_bd_net [get_bd_pins rst_ps7_0_50M/peripheral_aresetn] \
+        [get_bd_pins axi_dma_0/axi_resetn] \
         [get_bd_pins ps7_0_axi_periph/M03_ARESETN] \
-        [get_bd_pins ps7_0_axi_periph/M04_ARESETN]
+        [get_bd_pins ps7_0_axi_periph/M04_ARESETN] \
+        [get_bd_pins jpeg_decoder_ctrl_cc/s_axi_aresetn]
+    # The PS-facing AXI-Lite side remains on the FCLK0 reset domain.
+    connect_bd_net [get_bd_pins jpeg_reset_one/dout] \
+        [get_bd_pins jpeg_pl_decoder_axis_0/aresetn] \
+        [get_bd_pins jpeg_decoder_ctrl_cc/m_axi_aresetn]
     connect_bd_net [get_bd_pins processing_system7_0/FCLK_RESET0_N] \
         [get_bd_pins jpeg_fclk_reset/ext_reset_in]
-    # Diagnostic trial: bypass the generated-clock lock pin to isolate whether
-    # reset gating is the cause of the Linux AXI-DMA probe hang. This is not a
-    # qualified fix; the board test is recorded in the active cycle note.
-    connect_bd_net [get_bd_pins jpeg_reset_one/dout] \
+    connect_bd_net [get_bd_pins jpeg_clk_wiz/locked] \
         [get_bd_pins jpeg_fclk_reset/dcm_locked]
     connect_bd_net [get_bd_pins jpeg_reset_zero/dout] \
         [get_bd_pins jpeg_fclk_reset/aux_reset_in] \
@@ -308,9 +352,11 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
         [get_bd_addr_spaces processing_system7_0/Data] \
         [lindex $pip_ctrl_addr_segs 0] \
         SEG_axis_pip_overlay_core_0_Reg
+    # The clock converter is a bridge and does not own an address block. Map
+    # the PS address space to the decoder's native register block through it.
     set jpeg_decoder_addr_segs [get_bd_addr_segs -of_objects [get_bd_intf_pins jpeg_pl_decoder_axis_0/S_AXI]]
     if {[llength $jpeg_decoder_addr_segs] == 0} {
-        error "No address segment inferred for jpeg_pl_decoder_axis_0/S_AXI"
+        error "No address segment inferred for jpeg_pl_decoder_axis_0/S_AXI/reg0"
     }
     create_bd_addr_seg -range 0x00010000 -offset 0x43c10000 \
         [get_bd_addr_spaces processing_system7_0/Data] \

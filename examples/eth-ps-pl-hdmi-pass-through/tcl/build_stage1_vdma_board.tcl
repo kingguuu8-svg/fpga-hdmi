@@ -63,6 +63,20 @@ create_ps_emio_vdma_hdmi_bd $repo_root
 
 set bd_file [get_files ZYNQ_CORE.bd]
 generate_target all $bd_file
+
+# Vivado 2018.3 can omit SmartConnect's OOC clock file when an HP-facing
+# master changes width. Keep the generated OOC run reproducible.
+set axi_smc_ooc_xdc [file join $build_root \
+    eth_ps_vdma_hdmi_stage1_board.srcs sources_1 bd ZYNQ_CORE ip \
+    ZYNQ_CORE_axi_smc_0 ooc.xdc]
+if {![file exists $axi_smc_ooc_xdc]} {
+    set ooc_xdc [open $axi_smc_ooc_xdc w]
+    puts $ooc_xdc "# Fallback for Vivado 2018.3 SmartConnect OOC generation"
+    puts $ooc_xdc "create_clock -name aclk -period 6.667 \[get_ports aclk\]"
+    puts $ooc_xdc "create_clock -name aclk1 -period 15.385 \[get_ports aclk1\]"
+    close $ooc_xdc
+}
+
 make_wrapper -files $bd_file -top
 add_files -norecurse [glob -nocomplain [file join $build_root eth_ps_vdma_hdmi_stage1_board.srcs sources_1 bd ZYNQ_CORE hdl *_wrapper.v]]
 

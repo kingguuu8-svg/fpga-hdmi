@@ -3835,3 +3835,45 @@ Residual risks:
   the next performance boundaries.
 - The old RTP depay path advertises unknown framerate, so the verified paced
   framebuffer gate uses immediate sink presentation rather than clock sync.
+
+## Cycle: jpegpldec-pl-throughput-720p30-v1
+
+Objective: optimize the real `jpegpldec backend=pl-decoder` path and verify a
+sustained 720p30 RTP/JPEG-to-GStreamer boundary on the connected Zynq-7020.
+
+Changed scope:
+
+- Added the v4cc8b 64-bit DataMover S2MM writeback path and AXIS width
+  converter.
+- Added AXI-Lite control clock conversion, DMA output mmap, cached stable
+  register configuration/control verification, and a reproducible SmartConnect
+  OOC fallback for Vivado 2018.3.
+- Hardened the 330-frame board gate against serial login and remote-command
+  quoting races.
+
+Verification:
+
+- v4cc8b timing passed with WNS `+0.170 ns`, WHS `+0.021 ns`, and zero DRC
+  errors; measured JPEG clock was `64.997 MHz`.
+- RTL simulation passed with `921600` pixels, `1974075` cycles, PSNR
+  `39.002 dB`, and FNV `0x7127882c`.
+- Board register, input-sink, count-only, and full RGB writeback passed. The
+  board output was `2764800` bytes with FNV `0x7127882c`; writeback measured
+  approximately `35.916 ms`.
+- Real GStreamer RTP/JPEG -> `jpegpldec backend=pl-decoder` -> `fakesink`
+  decoded `330/330` frames with zero failures, kernel health OK, and Ethernet
+  errors/dropped `0/0`. The gate-script p95 was `37.019 ms`.
+
+Result: CHECKPOINT, not passed. Correctness and stability passed, but the
+`33.333 ms` p95 30fps threshold was not met.
+
+Evidence: `docs/reports/jpegpldec-pl-throughput-720p30-v1.md` and the raw
+build/UART artifacts under
+`build/jpegpldec-pl-throughput-720p30-v1/`.
+
+Rollback point: commit `711416a`; the board recovery image is backed up as
+`/run/media/mmcblk0p1/BOOT.BIN.prev-v4cc8b`.
+
+Residual risks: the 65 MHz data plane has only `+0.170 ns` WNS; the current
+mmap path reuses one coherent output buffer synchronously; and the generated
+clock reset still uses diagnostic constant-high isolation.

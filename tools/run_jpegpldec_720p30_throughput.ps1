@@ -25,7 +25,7 @@ function Invoke-UartCommands {
     $Commands | Set-Content -LiteralPath $commandFile -Encoding ASCII
     & (Join-Path $repoRoot "tools\uart_run_commands.ps1") `
         -Port $Port -CommandFile $commandFile -LoginRoot -Password root `
-        -InitialReadSeconds 0 -InterCommandDelayMilliseconds 400 `
+        -InitialReadSeconds 5 -InterCommandDelayMilliseconds 400 `
         -FinalReadSeconds $FinalReadSeconds `
         -OutputPath (Join-Path $OutDir "uart-$Label.log") | Out-Null
     $logFile = Join-Path $outPath "uart-$Label.log"
@@ -66,7 +66,7 @@ try {
         "rmmod jpegpl_dma_probe 2>/dev/null || true",
         "insmod /tmp/jpegpl_dma_probe.ko",
         "rm -f /tmp/gst-jpegpldec-720p30.log /tmp/gst-jpegpldec-720p30.pid",
-        "GST_PLUGIN_PATH=/tmp/gst-plugins GST_REGISTRY=/tmp/gst-registry-jpegpldec-720p30.bin nohup gst-launch-1.0 -q udpsrc port=$GstPort caps=\"application/x-rtp,media=(string)video,clock-rate=(int)90000,encoding-name=(string)JPEG,payload=(int)26\" ! rtpjitterbuffer latency=100 drop-on-latency=false ! rtpjpegdepay ! jpegpldec backend=pl-decoder summary-interval=30 verify-output-hash=false ! fakesink sync=false > /tmp/gst-jpegpldec-720p30.log 2>&1 & echo `$! > /tmp/gst-jpegpldec-720p30.pid",
+        "GST_PLUGIN_PATH=/tmp/gst-plugins GST_REGISTRY=/tmp/gst-registry-jpegpldec-720p30.bin nohup gst-launch-1.0 -q udpsrc port=$GstPort caps=`"application/x-rtp,media=(string)video,clock-rate=(int)90000,encoding-name=(string)JPEG,payload=(int)26`" ! rtpjitterbuffer latency=100 drop-on-latency=false ! rtpjpegdepay ! jpegpldec backend=pl-decoder summary-interval=30 verify-output-hash=false ! fakesink sync=false > /tmp/gst-jpegpldec-720p30.log 2>&1 & echo `$! > /tmp/gst-jpegpldec-720p30.pid",
         "sleep 2",
         "ps | grep gst-launch | grep -v grep",
         "echo JPEGPLDEC_720P30_RECEIVER_STARTED"

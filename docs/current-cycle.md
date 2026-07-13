@@ -29,58 +29,66 @@ Explicit exclusion: HDMI conversion/presentation throughput and driver/plugin
 zero-copy are later cycles. This cycle does not count display-side frame rate
 as decoder throughput.
 
-Checkpoint: 2026-07-12 14:50:28 +08:00. This is a diagnostic checkpoint only;
+Checkpoint: 2026-07-13. Implementation is paused after the v4cc8b board gate;
 the cycle remains active and is not passed. The most recently closed cycle is
-`jpeg-pl-decoder-board-datapath-v1`; its final evidence is in
-`docs/reports/jpeg-pl-decoder-board-datapath-v1.md`.
+`jpegpldec-real-pl-backend-v1`; its final evidence is in
+`docs/reports/jpegpldec-real-pl-backend-v1.md`.
 
 Checkpoint evidence:
 
-- Dual-buffer tile-write RTL simulation passed the existing 921600-pixel
-  exact-vector and PSNR/FNV comparison gates. Raw output is under
-  `build/jpegpldec-pl-throughput-720p30-v1/sim/`.
-- The integrated Clock Wizard 66.667 MHz implementation passed post-route
-  timing with WNS `+0.048 ns` and post-route DRC with zero errors. The
-  bitstream is
-  `build/jpegpldec-pl-throughput-720p30-v1/vivado-clkwiz/eth_ps_vdma_hdmi_stage1_board.bit`.
-- FSBL rebuilt successfully from the matching HDF: 631 tasks attempted, 599
-  reused, all successful. The generated FSBL is in the existing PetaLinux
-  project under `images/linux/zynq_fsbl.elf`.
-- The updated kernel module and plugin both built successfully. The plugin
-  still uses the real `backend=pl-decoder` path and the existing ABI.
-- Boot-only packaging passed with bitstream SHA-256
-  `d0536a0cc22e4bc4c98c668976f6727862a2004b8efe0d60741f99e4a943a86f`,
-  reused `image.ub` SHA-256
-  `14cf602b94e160f6fe9c6cbfed46404a73603f6d2e0c277cecead8285a1f7e88`, and
-  `BOOT.BIN` SHA-256
-  `76273e2409c7ec3af92c4e55d553f086646cc56bff3a1c4ce8e9c01c2790f013`.
-- The packaged v1 `BOOT.BIN` was installed on the TF-card boot partition after
-  the previous file was backed up as
-  `/run/media/mmcblk0p1/BOOT.BIN.prev-jpegpldec-720p30-v1`.
-- v1 booted through FSBL/U-Boot and reached Linux, but Linux stopped after
-  `dma-pl330 f8003000.dmac` while probing the first new AXI DMA device; no
-  `xilinx-vdma 43020000` probe or login prompt was observed.
-- A v2 reset experiment replaced the Clock Wizard lock input with a constant
-  high signal. Its bitstream also passed timing (WNS `+0.134 ns`) and DRC,
-  but temporary JTAG loading reproduced the same Linux stop. This rules out
-  the lock input as a sufficient fix; it does not prove the clock/reset path
-  correct.
+- v4cc8b routes the PL decoder/DataMover writeback path through a 64-bit
+  S2MM port and an AXIS 32-to-64 width converter, while keeping the decoder
+  control path behind an AXI-Lite clock converter. The generated JPEG clock
+  measures `64.997 MHz`; post-route timing passed with WNS `+0.170 ns`, WHS
+  `+0.021 ns`, and zero DRC errors. The bitstream SHA-256 is
+  `5de6eef793c13bd70d4009b34a45c6e92a4363b2f63c51329ebce97addbdc312`.
+- The v4cc8b boot package was generated and installed on the TF card. The
+  `BOOT.BIN` SHA-256 is
+  `35be3620960337e3b743ac8e549787fd3cc59038203a93111c885cc5d32aeb95`;
+  the reused `image.ub` SHA-256 is
+  `afc8b5658ac868592b7770d42911bc011e8e4319762af62f86bf96c481e87570`.
+  The board rebooted to Linux and brought up all DMA nodes and the 1 GbE link.
+- Register smoke, input-sink, count-only, and full RGB writeback all passed on
+  v4cc8b. The fixed 1280x720 vector produced `2764800` RGB bytes, FNV
+  `0x7127882c`, and the qualified output SHA-256
+  `01623472a5f3033e536d4691e3fde1ffc88e702c3b58c876743f5beb4c6d40c9`.
+  The full-writeback measurement was about `35.916 ms`, with `2559119`
+  cycles, `57600` commands/responses, and `115200` stalls.
+- RTL simulation passed the existing randomized backpressure and exact-output
+  gates: `921600` pixels, `1974075` cycles, PSNR `39.002 dB`, and FNV
+  `0x7127882c`. Raw output is under
+  `build/jpegpldec-pl-throughput-720p30-v1/sim-v4cc8b/`.
+- The real PC GStreamer RTP/JPEG -> `jpegpldec backend=pl-decoder` ->
+  `fakesink` gate decoded `330/330` frames with zero failures. Kernel health
+  was OK and Ethernet RX errors/dropped packets were both zero. The steady
+  gate average was `36.340 ms`; the gate script measured p95 `37.019 ms`.
+  The first frame was about `70.694 ms`, and the PL output mmap path was
+  active with output copy disabled.
+- The cached register configuration/control path and DMA output mmap remove
+  repeated AXI-Lite setup and the kernel-to-userspace output copy. The 64-bit
+  writeback reduced the measured writer stalls from the earlier `460800` to
+  `115200`, but did not yet reduce the wall-time p95 below the `33.333 ms`
+  30fps threshold.
 
-Pending after the next workstation start:
+Pending after the pause:
 
-- Diagnose the AXI DMA probe hang before installing any further experimental
-  `BOOT.BIN`; keep the current v1 file and its backup available for rollback.
-- Deploy the rebuilt `jpegpl_dma_probe.ko` and `libgstjpegpldec.so`, then run
-  the 300-frame `rtpjpegdepay -> jpegpldec -> fakesink` 720p30 test.
-- Record actual pass/fail frame count, kernel health, packet counters, and
-  `total_ms` p95 before closing this cycle.
+- Profile the remaining approximately `3.7 ms` against the `33.333 ms`
+  budget, separating JPEG core cycles, DataMover completion, ioctl overhead,
+  and GStreamer buffer handling.
+- Try software-side reductions first: avoid unnecessary GstBuffer memory
+  replacement/map operations, retain the synchronous DMA mmap contract, and
+  measure each change with the same 330-frame gate.
+- Only after software profiling, evaluate a higher decoder clock or a deeper
+  PL pipeline. The current 65 MHz design has only `+0.170 ns` WNS, so a clock
+  increase must be rebuilt and timing-verified rather than assumed safe.
+- Re-run the complete 330-frame gate and close the cycle only when p95 is at
+  most `33.333 ms` with the existing correctness and health checks.
 
-Rollback point: the previous committed source is `08190b7`. The board can be
-returned to its pre-cycle boot image from the TF-card backup
-`/run/media/mmcblk0p1/BOOT.BIN.prev-jpegpldec-720p30-v1`; the v1 package is
-staged under `build/jpegpldec-pl-throughput-720p30-v1/boot-package/`.
-The current uncommitted source experiment is the constant-high reset trial in
-`examples/eth-ps-pl-hdmi-pass-through/tcl/create_ps_emio_vdma_hdmi_bd.tcl`.
+Rollback point: the latest committed source before this cycle is `711416a`.
+The board currently contains the verified v4cc8b BOOT.BIN and matching
+`image.ub`; the previous BOOT is backed up on the TF card as
+`/run/media/mmcblk0p1/BOOT.BIN.prev-v4cc8b`. The v4cc8b package is staged under
+`build/jpegpldec-pl-throughput-720p30-v1/boot-package-v4cc8b/`.
 
 ## Rule
 

@@ -17,6 +17,7 @@
 
 #define JPEGPL_DMA_PROBE_DECODE_FLAG_COUNT_ONLY 0x00000001u
 #define JPEGPL_DMA_PROBE_DECODE_FLAG_INPUT_SINK 0x00000002u
+#define JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_MMAP 0x00000004u
 
 struct jpegpl_dma_probe_run {
 	__u32 length;
@@ -60,6 +61,16 @@ struct jpegpl_dma_probe_decode {
 
 #define JPEGPL_DMA_PROBE_IOC_DECODE \
 	_IOWR(JPEGPL_DMA_PROBE_IOC_MAGIC, 0x02, struct jpegpl_dma_probe_decode)
+
+struct jpegpl_dma_probe_info {
+	__u32 buffer_size;
+	__u32 max_transfer_size;
+	__u32 version;
+	__u32 reserved;
+};
+
+#define JPEGPL_DMA_PROBE_IOC_INFO \
+	_IOR(JPEGPL_DMA_PROBE_IOC_MAGIC, 0x04, struct jpegpl_dma_probe_info)
 
 struct jpegpl_dma_probe_register_smoke {
 	__u32 width;

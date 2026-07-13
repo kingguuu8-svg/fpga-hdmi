@@ -8,6 +8,7 @@
 #include <linux/ioctl.h>
 #include <linux/jiffies.h>
 #include <linux/ktime.h>
+#include <linux/mm.h>
 #include <linux/miscdevice.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -66,6 +67,13 @@ struct jpegpl_dma_probe_dev {
 	dma_addr_t rx_dma;
 	u32 buffer_size;
 	u32 max_transfer_size;
+	bool output_mmap_logged;
+	bool config_valid;
+	bool control_verified;
+	u32 control_verified_mode;
+	u32 configured_width;
+	u32 configured_height;
+	u32 configured_stride;
 };
 
 static void jpegpl_dma_probe_complete(void *arg)
@@ -107,6 +115,33 @@ static int jpegpl_dma_probe_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
+static int jpegpl_dma_probe_mmap(struct file *file, struct vm_area_struct *vma)
+{
+	struct jpegpl_dma_probe_dev *probe = file->private_data;
+	unsigned long size = vma->vm_end - vma->vm_start;
+
+	if (vma->vm_pgoff != 0 || size == 0 || size > probe->buffer_size)
+		return -EINVAL;
+
+	return dma_mmap_coherent(probe->dev, vma, probe->rx_buf,
+				probe->rx_dma, probe->buffer_size);
+}
+
+static int jpegpl_dma_probe_info(
+	struct jpegpl_dma_probe_dev *probe,
+	struct jpegpl_dma_probe_info __user *argp)
+{
+	struct jpegpl_dma_probe_info info = {
+		.buffer_size = probe->buffer_size,
+		.max_transfer_size = probe->max_transfer_size,
+		.version = JPEGPL_DMA_PROBE_VERSION,
+	};
+
+	if (copy_to_user(argp, &info, sizeof(info)))
+		return -EFAULT;
+	return 0;
+}
+
 static int jpegpl_dma_probe_verify_config(
 	struct jpegpl_dma_probe_dev *probe, u32 width, u32 height, u32 stride,
 	struct jpegpl_dma_probe_register_smoke *smoke)
@@ -135,6 +170,10 @@ static int jpegpl_dma_probe_verify_config(
 			 smoke->expected_pixels, smoke->version);
 		return -EIO;
 	}
+	probe->config_valid = true;
+	probe->configured_width = width;
+	probe->configured_height = height;
+	probe->configured_stride = stride;
 	dev_info(probe->dev,
 		 "JPEGPL_CONFIG_VERIFIED dst_base=0x%08x stride=%u dimensions=0x%08x expected_pixels=%u version=0x%08x\n",
 		 smoke->dst_base, smoke->stride, smoke->dimensions,
@@ -154,6 +193,9 @@ static int jpegpl_dma_probe_start_and_verify_control(
 		expected_mode |= JPEGPL_CONTROL_INPUT_SINK;
 	writel(JPEGPL_CONTROL_START | expected_mode,
 	       probe->regs + JPEGPL_REG_CONTROL);
+	if (probe->control_verified &&
+	    probe->control_verified_mode == expected_mode)
+		return 0;
 	control = readl(probe->regs + JPEGPL_REG_CONTROL);
 	if (!(control & JPEGPL_CONTROL_BUSY) ||
 	    (control & JPEGPL_CONTROL_MODE_MASK) != expected_mode) {
@@ -162,6 +204,8 @@ static int jpegpl_dma_probe_start_and_verify_control(
 			 control, expected_mode);
 		return -EIO;
 	}
+	probe->control_verified = true;
+	probe->control_verified_mode = expected_mode;
 	dev_info(probe->dev,
 		 "JPEGPL_CONTROL_VERIFIED control=0x%08x mode=0x%08x\n",
 		 control, expected_mode);
@@ -239,14 +283,21 @@ static int jpegpl_dma_probe_decode(
 	struct jpegpl_dma_probe_decode __user *argp)
 {
 	struct jpegpl_dma_probe_decode req;
-	struct jpegpl_dma_probe_register_smoke config;
 	u64 output_size;
 	unsigned long deadline;
 	u32 hw_status;
+	bool config_matches;
 	int ret = 0;
 
 	if (copy_from_user(&req, argp, sizeof(req)))
 		return -EFAULT;
+	if ((req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_MMAP) &&
+	    !probe->output_mmap_logged) {
+		probe->output_mmap_logged = true;
+		dev_info(probe->dev,
+			 "JPEGPL_OUTPUT_MMAP_ACTIVE flags=0x%08x output_copy=disabled\n",
+			 req.flags);
+	}
 	req.status = 0;
 	req.chunks = 0;
 	req.elapsed_ns = 0;
@@ -256,7 +307,11 @@ static int jpegpl_dma_probe_decode(
 	if (!req.input_length || req.input_length > probe->buffer_size ||
 	    !req.width || !req.height || (req.width & 7u) ||
 	    req.stride < req.width * 3u || output_size > probe->buffer_size ||
-	    !req.user_input || !req.user_output)
+	    !req.user_input ||
+	    (!(req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_MMAP) &&
+	     !req.user_output) ||
+	    (req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_MMAP &&
+	     (req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_COUNT_ONLY)))
 		return -EINVAL;
 
 	mutex_lock(&probe->lock);
@@ -270,10 +325,18 @@ static int jpegpl_dma_probe_decode(
 	/* Full-writeback mode overwrites every byte before PL_DONE. */
 	dma_wmb();
 
-	ret = jpegpl_dma_probe_verify_config(probe, req.width, req.height,
-					     req.stride, &config);
-	if (ret)
-		goto out;
+	config_matches = probe->config_valid &&
+		probe->configured_width == req.width &&
+		probe->configured_height == req.height &&
+		probe->configured_stride == req.stride;
+	if (!config_matches) {
+		struct jpegpl_dma_probe_register_smoke config;
+
+		ret = jpegpl_dma_probe_verify_config(probe, req.width, req.height,
+						     req.stride, &config);
+		if (ret)
+			goto out;
+	}
 	ret = jpegpl_dma_probe_start_and_verify_control(probe, req.flags);
 	if (ret)
 		goto out;
@@ -319,6 +382,9 @@ static int jpegpl_dma_probe_decode(
 
 	if (!(req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_COUNT_ONLY)) {
 		dma_rmb();
+	}
+	if (!(req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_COUNT_ONLY) &&
+	    !(req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_MMAP)) {
 		if (copy_to_user((void __user *)(uintptr_t)req.user_output,
 				 probe->rx_buf, output_size)) {
 			req.status |= JPEGPL_DMA_PROBE_STATUS_COPY_ERR;
@@ -356,6 +422,9 @@ static long jpegpl_dma_probe_ioctl(struct file *file, unsigned int cmd,
 	case JPEGPL_DMA_PROBE_IOC_REGISTER_SMOKE:
 		return jpegpl_dma_probe_register_smoke(
 			probe, (struct jpegpl_dma_probe_register_smoke __user *)arg);
+	case JPEGPL_DMA_PROBE_IOC_INFO:
+		return jpegpl_dma_probe_info(
+			probe, (struct jpegpl_dma_probe_info __user *)arg);
 	default:
 		return -ENOTTY;
 	}
@@ -364,6 +433,7 @@ static long jpegpl_dma_probe_ioctl(struct file *file, unsigned int cmd,
 static const struct file_operations jpegpl_dma_probe_fops = {
 	.owner = THIS_MODULE,
 	.open = jpegpl_dma_probe_open,
+	.mmap = jpegpl_dma_probe_mmap,
 	.unlocked_ioctl = jpegpl_dma_probe_ioctl,
 };
 
