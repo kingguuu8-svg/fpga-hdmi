@@ -167,7 +167,7 @@ static GstStaticPadTemplate hw_src_template = GST_STATIC_PAD_TEMPLATE(
     "src",
     GST_PAD_SRC,
     GST_PAD_ALWAYS,
-    GST_STATIC_CAPS("video/x-raw, format=(string)RGB"));
+    GST_STATIC_CAPS("video/x-raw, format=(string)BGR"));
 
 static gint
 compare_u64(const void *left, const void *right)
@@ -379,7 +379,7 @@ gst_jpeg_pl_hw_dec_configure_output(GstJpegPlHwDec *self, guint width,
     return TRUE;
   }
   output_state = gst_video_decoder_set_output_state(
-      GST_VIDEO_DECODER(self), GST_VIDEO_FORMAT_RGB, width, height,
+      GST_VIDEO_DECODER(self), GST_VIDEO_FORMAT_BGR, width, height,
       self->input_state);
   if (output_state == NULL) {
     return FALSE;
@@ -389,6 +389,24 @@ gst_jpeg_pl_hw_dec_configure_output(GstJpegPlHwDec *self, guint width,
   self->height = height;
   gst_video_codec_state_unref(output_state);
   return gst_video_decoder_negotiate(GST_VIDEO_DECODER(self));
+}
+
+static gboolean
+gst_jpeg_pl_hw_dec_decide_allocation(GstVideoDecoder *decoder, GstQuery *query)
+{
+  GstVideoDecoderClass *parent_class =
+      GST_VIDEO_DECODER_CLASS(gst_jpeg_pl_hw_dec_parent_class);
+  guint pool_count = gst_query_get_n_allocation_pools(query);
+  gboolean result;
+
+  while (gst_query_get_n_allocation_pools(query) > 0u) {
+    gst_query_remove_nth_allocation_pool(query, 0u);
+  }
+  result = parent_class->decide_allocation(decoder, query);
+  g_print("JPEGPLDEC_OUTPUT_POOL_BYPASSED downstream_pools=%u"
+          " output_mmap=1 parent_result=%u\n",
+          pool_count, result ? 1u : 0u);
+  return result;
 }
 
 static gboolean
@@ -511,7 +529,6 @@ gst_jpeg_pl_hw_dec_handle_frame(GstVideoDecoder *decoder,
   guint64 total_ns;
   guint64 frame_id = self->frames + self->failures + 1u;
   guint32 output_hash;
-  GstFlowReturn flow;
   gboolean input_mapped = FALSE;
   gboolean output_mapped = FALSE;
 
@@ -535,28 +552,40 @@ gst_jpeg_pl_hw_dec_handle_frame(GstVideoDecoder *decoder,
     return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-caps");
   }
 
-  flow = gst_video_decoder_allocate_output_frame(decoder, frame);
-  if (flow != GST_FLOW_OK || frame->output_buffer == NULL) {
-    gst_buffer_unmap(frame->input_buffer, &input_map);
-    return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-allocate");
-  }
   {
+    GstBuffer *output_buffer;
     GstMemory *output_memory;
-    gsize output_size = gst_buffer_get_size(frame->output_buffer);
+    gsize offsets[GST_VIDEO_MAX_PLANES] = {0u, 0u, 0u, 0u};
+    gint strides[GST_VIDEO_MAX_PLANES] = {0, 0, 0, 0};
+    gsize output_size = GST_VIDEO_INFO_SIZE(&self->output_info);
 
     if (output_size == 0u || output_size > self->dma_output_map_size) {
       gst_buffer_unmap(frame->input_buffer, &input_map);
       return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-mmap-size");
     }
     output_memory = gst_memory_new_wrapped(
-        0, self->dma_output_map, self->dma_output_map_size, 0u, output_size,
-        NULL, NULL);
+        GST_MEMORY_FLAG_NO_SHARE, self->dma_output_map,
+        self->dma_output_map_size, 0u, output_size, NULL, NULL);
     if (output_memory == NULL) {
       gst_buffer_unmap(frame->input_buffer, &input_map);
       return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-mmap-wrap");
     }
-    gst_buffer_remove_all_memory(frame->output_buffer);
-    gst_buffer_insert_memory(frame->output_buffer, 0u, output_memory);
+    output_buffer = gst_buffer_new();
+    if (output_buffer == NULL) {
+      gst_memory_unref(output_memory);
+      gst_buffer_unmap(frame->input_buffer, &input_map);
+      return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-buffer");
+    }
+    gst_buffer_append_memory(output_buffer, output_memory);
+    strides[0] = GST_VIDEO_INFO_PLANE_STRIDE(&self->output_info, 0);
+    if (gst_buffer_add_video_meta_full(
+            output_buffer, GST_VIDEO_FRAME_FLAG_NONE, GST_VIDEO_FORMAT_BGR,
+            jpeg_info.width, jpeg_info.height, 1u, offsets, strides) == NULL) {
+      gst_buffer_unref(output_buffer);
+      gst_buffer_unmap(frame->input_buffer, &input_map);
+      return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-video-meta");
+    }
+    frame->output_buffer = output_buffer;
   }
   if (!gst_buffer_map(frame->output_buffer, &output_map, GST_MAP_WRITE)) {
     gst_buffer_unmap(frame->input_buffer, &input_map);
@@ -716,6 +745,7 @@ gst_jpeg_pl_hw_dec_class_init(GstJpegPlHwDecClass *klass)
   decoder_class->start = gst_jpeg_pl_hw_dec_start;
   decoder_class->stop = gst_jpeg_pl_hw_dec_stop;
   decoder_class->set_format = gst_jpeg_pl_hw_dec_set_format;
+  decoder_class->decide_allocation = gst_jpeg_pl_hw_dec_decide_allocation;
   decoder_class->handle_frame = gst_jpeg_pl_hw_dec_handle_frame;
 
   g_object_class_install_property(
@@ -1748,7 +1778,7 @@ gst_jpeg_pl_dec_class_init(GstJpegPlDecClass *klass)
       g_param_spec_string(
           "backend",
           "Decoder backend",
-          "software-reference uses system jpegdec; pl-compressed-probe probes compressed ingress before software decode; pl-decoder publishes RGB888 decoded by the PL JPEG engine",
+          "software-reference uses system jpegdec; pl-compressed-probe probes compressed ingress before software decode; pl-decoder publishes KMS-compatible BGR888 decoded by the PL JPEG engine",
           "software-reference",
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property(
@@ -1802,7 +1832,7 @@ gst_jpeg_pl_dec_class_init(GstJpegPlDecClass *klass)
       g_param_spec_boolean(
           "verify-output-hash",
           "Verify output hash",
-          "Compute an ARM-side FNV hash for every PL-decoded RGB frame",
+          "Compute an ARM-side FNV hash for every PL-decoded BGR frame",
           FALSE,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 

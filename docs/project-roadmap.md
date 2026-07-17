@@ -25,7 +25,7 @@ Video output:
   PL video pipeline -> HDMI -> PC capture/display
 ```
 
-Current first-stage target:
+Historical first-stage target (completed rollback baseline):
 
 ```text
 Input video: 800x600 RGB888, UDP, low frame rate acceptable for proof
@@ -33,6 +33,22 @@ Output video: 800x600 HDMI through VDMA MM2S + v_axi4s_vid_out + rgb2dvi
 Effects: none in stage 1; original frame must be returned first
 Control: UART command protocol remains the first fallback after video closes
 Download/debug: keep USB-JTAG as the reliable development recovery path
+```
+
+## Native-720p Display Baseline
+
+The current display implementation cycle supersedes the 800x600 presentation
+configuration above. The 800x600 path remains the rollback baseline, while the
+active route targets native 1280x720 presentation:
+
+```text
+Input video: 1280x720 BGR888 frames from the existing jpegpldec path
+Output video: native 1280x720 HDMI through VDMA MM2S + PL PIP + v_axi4s_vid_out + rgb2dvi
+PS geometry scaling: none in the active route
+PIP: same-source AXI4-Stream input, PL frame-level double buffering
+Acceptance: full implementation timing/DRC, board programming, and HDMI return evidence
+Status: HARDWARE VERIFIED for native geometry, same-source PIP, and zero-tearing HDMI return
+Performance note: the source requests 30 fps, but synchronous PL decode plus kmssink currently presents about 15 distinct content frames per second
 ```
 
 Video source policy:

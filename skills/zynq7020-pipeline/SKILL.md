@@ -1362,5 +1362,48 @@ route is a functional low-rate closure; do not cite it as the target throughput
 tier. See
 `docs/reports/jpegpldec-real-pl-backend-v1.md`.
 
+Verified native display/PIP rebuild path (preferred for display RTL changes,
+2026-07-16):
+
+```text
+1. Read the active geometry, byte order, and performance status from
+   docs/project-roadmap.md. Do not copy those values into another workflow
+   document.
+2. Run the complete example simulation and require SIM_FLOW_OK:
+   rtk powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\skills\zynq7020-vivado\scripts\sim-wsl.ps1 -Example eth-ps-pl-hdmi-pass-through
+3. For a PIP/display RTL-only change, run the isolated OOC gate at the real
+   display clock with examples/eth-ps-pl-hdmi-pass-through/tcl/synth_pip_overlay_ooc.tcl.
+4. When a qualified project already exists, prefer the source-only rebuild:
+   examples/eth-ps-pl-hdmi-pass-through/tcl/rebuild_stage1_vdma_board_incremental.tcl
+   Pass the existing project root and a new output root to Vivado batch mode.
+5. Require STAGE1_VDMA_BOARD_INCREMENTAL_BUILD_OK, non-negative WNS, zero
+   Error-severity DRC violations, and zero failed/unrouted nets.
+6. Package only the new bitstream with
+   software/petalinux/jpegpl-dma-probe/package-boot-wsl.ps1. Reuse image.ub only
+   after confirming that the Linux/DT topology is unchanged and verifying both
+   input hashes.
+7. On the board, download BOOT.BIN to /tmp, verify SHA-256, preserve the prior
+   TF-card BOOT.BIN, copy, sync, verify again, and reboot. On a direct link,
+   restore the board address before runtime deployment if DHCP is absent.
+8. Require the fixed JPEG vector to match the qualified byte count and FNV,
+   then run exactly one PC RTP sender with jpegpldec backend=pl-decoder and
+   kmssink. Multiple senders invalidate SSRC/PTS evidence.
+9. Require dynamic HDMI motion, complete-source PIP frame validation,
+   main/PIP counter lockstep, bidirectional row/column motion, and zero tearing.
+10. For DShow HDMI return, negotiate MJPG in the initial VideoCapture open
+    parameters. A post-open FOURCC setter can report success while retaining
+    the adapter's low-rate YUY2 mode.
+11. Report source cadence, decoder time, HDMI content cadence, and capture
+    cadence separately. Do not infer board content fps from dashboard refresh.
+```
+
+Verified outcome:
+The v12 route passed simulation, PIP OOC, full implementation, TF-card boot,
+fixed PL decode, dynamic same-source PIP, frame-counter lockstep, and a
+bidirectional zero-tearing HDMI gate. The incremental build closed at WNS
+`+0.207 ns` with zero DRC errors. The configured source cadence and measured
+HDMI content cadence are intentionally distinguished in
+`docs/reports/native-720p-display-v2-v12-closed-loop-2026-07-16.md`.
+
 Do not resume hand-written baremetal RGMII bridge work. The Linux route is
 confirmed; future network-video work builds on Linux sockets, not baremetal lwIP.

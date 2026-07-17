@@ -62,7 +62,7 @@ The test utility bounds the counter on both sides. Input-sink requires at least
 one cycle per four accepted bytes, while decode modes require at least one
 cycle per output pixel; all modes use the datapath's 200 MHz maximum as the
 upper bound. Full writeback runs can also pass `--expect-fnv <value>` so a
-known vector must match its expected RGB bytes before `JPEGPL_DECODE_OK` is
+known vector must match its expected BGR bytes before `JPEGPL_DECODE_OK` is
 printed.
 
 ## Boot-Only Packaging

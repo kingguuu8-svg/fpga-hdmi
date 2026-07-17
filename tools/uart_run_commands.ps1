@@ -40,7 +40,11 @@ if ($CommandFile -ne "") {
 }
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$output = Join-Path $repoRoot $OutputPath
+$output = if ([System.IO.Path]::IsPathRooted($OutputPath)) {
+    $OutputPath
+} else {
+    Join-Path $repoRoot $OutputPath
+}
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $output) | Out-Null
 
 $serial = [System.IO.Ports.SerialPort]::new(

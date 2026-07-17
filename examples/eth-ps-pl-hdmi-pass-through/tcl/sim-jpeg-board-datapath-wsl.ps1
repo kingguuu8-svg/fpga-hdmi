@@ -34,8 +34,8 @@ $vectorInfo = Get-Content -Raw (Join-Path $outPath "vector.json") | ConvertFrom-
 if ($LASTEXITCODE -ne 0) { throw "JPEG board datapath xsim failed" }
 
 python $compare (Join-Path $outPath "rtl_pixels.hex") `
-    (Join-Path $outPath "software-reference.rgb") `
+    (Join-Path $outPath "software-reference.bgr") `
     (Join-Path $outPath "pixel-comparison.json") `
-    --min-psnr-db 35 --expected-fnv 0x7127882c
+    --min-psnr-db 35 --expected-fnv 0xa567410c
 if ($LASTEXITCODE -ne 0) { throw "JPEG board datapath pixel comparison failed" }
 Write-Output "JPEG_BOARD_DATAPATH_SIM_GATE_OK out=$outPath"

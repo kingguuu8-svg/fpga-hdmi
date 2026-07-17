@@ -11,6 +11,7 @@
 
 #define DEFAULT_FB_PATH "/dev/fb0"
 #define DEFAULT_VDMA_BASE 0x43010000u
+#define JPEG_AXI_DMA_BASE 0x43020000u
 #define DEFAULT_VDMA_MAP_SIZE 0x10000u
 #define DEFAULT_WIDTH 800u
 #define DEFAULT_HEIGHT 600u
@@ -289,6 +290,14 @@ int main(int argc, char **argv)
 
     if (parse_args(argc, argv, &config) != 0) {
         usage(argv[0]);
+        return 1;
+    }
+
+    /* The native HDF reserves this address for the JPEG AXI DMA, not VDMA. */
+    if (config.vdma_base == JPEG_AXI_DMA_BASE) {
+        fprintf(stderr,
+                "refusing VDMA access at 0x%08x: native display VDMA is 0x43000000\n",
+                config.vdma_base);
         return 1;
     }
 

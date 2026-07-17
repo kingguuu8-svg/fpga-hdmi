@@ -26,6 +26,19 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
     current_bd_design ZYNQ_CORE
     set ps7 [get_bd_cells processing_system7_0]
 
+    # Replace the official 800x600 timing with the native 720p60 HDMI mode.
+    # The 50 MHz PS fabric clock is retained; this Clocking Wizard generates
+    # the native 74.25 MHz pixel clock and the 5x HDMI serial clock.
+    set_property -dict [list \
+        CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {74.25} \
+        CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {371.25} \
+        CONFIG.CLKOUT2_USED {true} \
+    ] [get_bd_cells clk_wiz_0]
+    set_property -dict [list \
+        CONFIG.VIDEO_MODE {720p} \
+        CONFIG.enable_detection {false} \
+    ] [get_bd_cells v_tc_0]
+
     # Keep the VDMA clocks and DDR timing from the official passing design.
     # Add only the peripherals needed for the first-stage Ethernet/UART path.
     set_property -dict [list \
@@ -80,39 +93,47 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
         connect_bd_net [get_bd_ports $port_name] [get_bd_pins processing_system7_0/$ps_pin]
     }
 
-    # The RGMII IDELAYCTRL requires a 200 MHz reference. Reuse the already
-    # validated VDMA HDMI 200 MHz serial clock rather than changing PS FCLKs.
+    # The RGMII IDELAYCTRL requires an independent 200 MHz reference. The
+    # HDMI serial clock above is about 371 MHz at 720p and cannot be reused.
+    if {[llength [get_bd_cells -quiet idelay_clk_wiz]] == 0} {
+        create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:6.0 idelay_clk_wiz
+        set_property -dict [list \
+            CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {200.000} \
+            CONFIG.CLKOUT1_USED {true} \
+            CONFIG.NUM_OUT_CLKS {1} \
+            CONFIG.PRIM_IN_FREQ {50.000} \
+            CONFIG.USE_LOCKED {true} \
+            CONFIG.USE_RESET {false} \
+        ] [get_bd_cells idelay_clk_wiz]
+        connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK0] \
+            [get_bd_pins idelay_clk_wiz/clk_in1]
+    }
     if {[llength [get_bd_ports -quiet IDELAY_REF_CLK]] == 0} {
         create_bd_port -dir O IDELAY_REF_CLK
-        connect_bd_net [get_bd_ports IDELAY_REF_CLK] [get_bd_pins clk_wiz_0/clk_out2]
+        connect_bd_net [get_bd_ports IDELAY_REF_CLK] [get_bd_pins idelay_clk_wiz/clk_out1]
     }
 
-    # Route B PIP MVP: keep axi_vdma_0 as the Linux-controlled main display
-    # reader, add axi_vdma_1 as a second MM2S reader for the same framebuffer,
-    # and place the PL PIP overlay core before v_axi4s_vid_out_0.
+    # Route B PIP MVP: keep axi_vdma_0 as the Linux-controlled display reader,
+    # duplicate its AXI stream in PL, and feed both consumers of the PIP core
+    # from the same frame boundary. This removes the independent VDMA drift.
     if {[llength [get_bd_cells -quiet axis_pip_overlay_core_0]] == 0} {
         create_bd_cell -type module -reference axis_pip_overlay_core axis_pip_overlay_core_0
     }
     set_property -dict [list \
-        CONFIG.FRAME_W {800} \
-        CONFIG.FRAME_H {600} \
-        CONFIG.PIP_X {560} \
-        CONFIG.PIP_Y {420} \
-        CONFIG.PIP_W {400} \
-        CONFIG.PIP_H {300} \
+        CONFIG.FRAME_W {1280} \
+        CONFIG.FRAME_H {720} \
+        CONFIG.PIP_X {1088} \
+        CONFIG.PIP_Y {598} \
+        CONFIG.PIP_W {320} \
+        CONFIG.PIP_H {180} \
         CONFIG.SCALE_X {4} \
         CONFIG.SCALE_Y {4} \
         CONFIG.BORDER {2} \
     ] [get_bd_cells axis_pip_overlay_core_0]
 
-    if {[llength [get_bd_cells -quiet axi_vdma_1]] == 0} {
-        create_bd_cell -type ip -vlnv xilinx.com:ip:axi_vdma:6.3 axi_vdma_1
+    if {[llength [get_bd_cells -quiet axis_pip_input_broadcast_0]] == 0} {
+        create_bd_cell -type module -reference axis_pip_input_broadcast axis_pip_input_broadcast_0
     }
-    set_property -dict [list \
-        CONFIG.c_include_s2mm {0} \
-        CONFIG.c_m_axis_mm2s_tdata_width {24} \
-        CONFIG.c_mm2s_max_burst_length {64} \
-    ] [get_bd_cells axi_vdma_1]
 
     # Board-live JPEG decode path. AXI DMA MM2S fetches compressed JPEG, the
     # qualified core emits coordinate-tagged RGB, and AXI DataMover S2MM writes
@@ -173,43 +194,37 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
         CONFIG.PROTOCOL {AXI4LITE} \
         CONFIG.ACLK_ASYNC {1} \
     ] [get_bd_cells jpeg_decoder_ctrl_cc]
-    set_property -dict [list CONFIG.NUM_SI {5} CONFIG.NUM_CLKS {2}] [get_bd_cells axi_smc]
-    set_property -dict [list CONFIG.NUM_MI {5}] [get_bd_cells ps7_0_axi_periph]
+    set_property -dict [list CONFIG.NUM_SI {4} CONFIG.NUM_CLKS {2}] [get_bd_cells axi_smc]
+    set_property -dict [list CONFIG.NUM_MI {4}] [get_bd_cells ps7_0_axi_periph]
 
     set old_main_stream [get_bd_intf_nets -quiet axi_vdma_0_M_AXIS_MM2S]
     if {[llength $old_main_stream] != 0} {
         delete_bd_objs $old_main_stream
     }
-
-    if {[llength [get_bd_intf_nets -quiet pip_main_axis]] == 0} {
-        connect_bd_intf_net -intf_net pip_main_axis \
-            [get_bd_intf_pins axi_vdma_0/M_AXIS_MM2S] \
-            [get_bd_intf_pins axis_pip_overlay_core_0/S_MAIN]
+    foreach pip_net_name {pip_main_axis pip_aux_axis pip_source_axis pip_broadcast_main_axis pip_broadcast_pip_axis} {
+        set pip_old_net [get_bd_intf_nets -quiet $pip_net_name]
+        if {[llength $pip_old_net] != 0} {
+            delete_bd_objs $pip_old_net
+        }
     }
-    if {[llength [get_bd_intf_nets -quiet pip_aux_axis]] == 0} {
-        connect_bd_intf_net -intf_net pip_aux_axis \
-            [get_bd_intf_pins axi_vdma_1/M_AXIS_MM2S] \
-            [get_bd_intf_pins axis_pip_overlay_core_0/S_PIP]
-    }
+    connect_bd_intf_net -intf_net pip_source_axis \
+        [get_bd_intf_pins axi_vdma_0/M_AXIS_MM2S] \
+        [get_bd_intf_pins axis_pip_input_broadcast_0/S_AXIS]
+    connect_bd_intf_net -intf_net pip_broadcast_main_axis \
+        [get_bd_intf_pins axis_pip_input_broadcast_0/M_MAIN] \
+        [get_bd_intf_pins axis_pip_overlay_core_0/S_MAIN]
+    connect_bd_intf_net -intf_net pip_broadcast_pip_axis \
+        [get_bd_intf_pins axis_pip_input_broadcast_0/M_PIP] \
+        [get_bd_intf_pins axis_pip_overlay_core_0/S_PIP]
     if {[llength [get_bd_intf_nets -quiet pip_to_video_out_axis]] == 0} {
         connect_bd_intf_net -intf_net pip_to_video_out_axis \
             [get_bd_intf_pins axis_pip_overlay_core_0/M_AXIS] \
             [get_bd_intf_pins v_axi4s_vid_out_0/video_in]
     }
-    if {[llength [get_bd_intf_nets -quiet axi_vdma_1_M_AXI_MM2S]] == 0} {
-        connect_bd_intf_net -intf_net axi_vdma_1_M_AXI_MM2S \
-            [get_bd_intf_pins axi_smc/S02_AXI] \
-            [get_bd_intf_pins axi_vdma_1/M_AXI_MM2S]
-    }
     if {[llength [get_bd_intf_nets -quiet ps7_0_axi_periph_M01_AXI]] == 0} {
         connect_bd_intf_net -intf_net ps7_0_axi_periph_M01_AXI \
-            [get_bd_intf_pins axi_vdma_1/S_AXI_LITE] \
-            [get_bd_intf_pins ps7_0_axi_periph/M01_AXI]
-    }
-    if {[llength [get_bd_intf_nets -quiet ps7_0_axi_periph_M02_AXI]] == 0} {
-        connect_bd_intf_net -intf_net ps7_0_axi_periph_M02_AXI \
             [get_bd_intf_pins axis_pip_overlay_core_0/S_AXI] \
-            [get_bd_intf_pins ps7_0_axi_periph/M02_AXI]
+            [get_bd_intf_pins ps7_0_axi_periph/M01_AXI]
     }
     if {[llength [get_bd_intf_nets -quiet jpeg_decode_input_axis]] == 0} {
         connect_bd_intf_net -intf_net jpeg_decode_input_axis \
@@ -238,23 +253,23 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
     }
     if {[llength [get_bd_intf_nets -quiet axi_dma_0_M_AXI_MM2S]] == 0} {
         connect_bd_intf_net -intf_net axi_dma_0_M_AXI_MM2S \
-            [get_bd_intf_pins axi_smc/S03_AXI] \
+            [get_bd_intf_pins axi_smc/S02_AXI] \
             [get_bd_intf_pins axi_dma_0/M_AXI_MM2S]
     }
     if {[llength [get_bd_intf_nets -quiet axi_datamover_0_M_AXI_S2MM]] == 0} {
         connect_bd_intf_net -intf_net axi_datamover_0_M_AXI_S2MM \
-            [get_bd_intf_pins axi_smc/S04_AXI] \
+            [get_bd_intf_pins axi_smc/S03_AXI] \
             [get_bd_intf_pins axi_datamover_0/M_AXI_S2MM]
     }
     if {[llength [get_bd_intf_nets -quiet ps7_0_axi_periph_M03_AXI]] == 0} {
         connect_bd_intf_net -intf_net ps7_0_axi_periph_M03_AXI \
             [get_bd_intf_pins axi_dma_0/S_AXI_LITE] \
-            [get_bd_intf_pins ps7_0_axi_periph/M03_AXI]
+            [get_bd_intf_pins ps7_0_axi_periph/M02_AXI]
     }
     if {[llength [get_bd_intf_nets -quiet ps7_0_axi_periph_M04_AXI]] == 0} {
         connect_bd_intf_net -intf_net ps7_0_axi_periph_M04_AXI \
             [get_bd_intf_pins jpeg_decoder_ctrl_cc/S_AXI] \
-            [get_bd_intf_pins ps7_0_axi_periph/M04_AXI]
+            [get_bd_intf_pins ps7_0_axi_periph/M03_AXI]
     }
     if {[llength [get_bd_intf_nets -quiet jpeg_decoder_ctrl_cc_M_AXI]] == 0} {
         connect_bd_intf_net -intf_net jpeg_decoder_ctrl_cc_M_AXI \
@@ -262,9 +277,6 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
             [get_bd_intf_pins jpeg_decoder_ctrl_cc/M_AXI]
     }
 
-    connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK0] \
-        [get_bd_pins axi_vdma_1/s_axi_lite_aclk] \
-        [get_bd_pins ps7_0_axi_periph/M01_ACLK]
     connect_bd_net [get_bd_pins jpeg_clk_wiz/clk_out1] \
         [get_bd_pins axi_dma_0/m_axi_mm2s_aclk] \
         [get_bd_pins axi_datamover_0/m_axi_mm2s_aclk] \
@@ -276,31 +288,31 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
         [get_bd_pins axi_smc/aclk1] \
         [get_bd_pins jpeg_fclk_reset/slowest_sync_clk]
     # Keep the PS-facing AXI-Lite control path in the official 50 MHz domain.
-    # Vivado inserts an AXI clock converter between M04 and the decoder slave;
+    # Vivado inserts an AXI clock converter between M03 and the decoder slave;
     # the decoder data path remains on the faster generated clock.
     connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK0] \
         [get_bd_pins axi_dma_0/s_axi_lite_aclk] \
+        [get_bd_pins ps7_0_axi_periph/M02_ACLK] \
         [get_bd_pins ps7_0_axi_periph/M03_ACLK] \
-        [get_bd_pins ps7_0_axi_periph/M04_ACLK] \
         [get_bd_pins jpeg_decoder_ctrl_cc/s_axi_aclk]
     connect_bd_net [get_bd_pins jpeg_clk_wiz/clk_out1] \
         [get_bd_pins jpeg_decoder_ctrl_cc/m_axi_aclk]
     connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK1] \
         [get_bd_pins jpeg_clk_wiz/clk_in1]
     connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK1] \
-        [get_bd_pins axi_vdma_1/m_axi_mm2s_aclk] \
-        [get_bd_pins axi_vdma_1/m_axis_mm2s_aclk] \
+        [get_bd_pins axis_pip_input_broadcast_0/aclk] \
         [get_bd_pins axis_pip_overlay_core_0/aclk] \
-        [get_bd_pins ps7_0_axi_periph/M02_ACLK]
+        [get_bd_pins ps7_0_axi_periph/M01_ACLK]
     connect_bd_net [get_bd_pins rst_ps7_0_100M/peripheral_aresetn] \
+        [get_bd_pins axis_pip_input_broadcast_0/aresetn] \
         [get_bd_pins axis_pip_overlay_core_0/aresetn] \
-        [get_bd_pins ps7_0_axi_periph/M02_ARESETN]
-    connect_bd_net [get_bd_pins rst_ps7_0_50M/peripheral_aresetn] \
-        [get_bd_pins axi_vdma_1/axi_resetn] \
         [get_bd_pins ps7_0_axi_periph/M01_ARESETN]
-    # Diagnostic variant: release every 65 MHz-domain slave synchronously
-    # from a constant-high reset. This isolates proc_sys_reset/lock behavior
-    # from the DataMover and AXI clock-converter datapath.
+    connect_bd_net [get_bd_pins rst_ps7_0_50M/peripheral_aresetn] \
+        [get_bd_pins ps7_0_axi_periph/M02_ARESETN] \
+        [get_bd_pins ps7_0_axi_periph/M03_ARESETN]
+    # Keep the PS-facing control path synchronized, but use the qualified
+    # constant-high release for the JPEG data path. This matches the prior
+    # board-verified v4cc8b topology; the AXI DMA itself remains PS-reset.
     connect_bd_net [get_bd_pins jpeg_reset_one/dout] \
         [get_bd_pins axi_datamover_0/m_axi_mm2s_aresetn] \
         [get_bd_pins axi_datamover_0/m_axis_mm2s_cmdsts_aresetn] \
@@ -309,8 +321,8 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
         [get_bd_pins jpeg_writeback_width_converter/aresetn]
     connect_bd_net [get_bd_pins rst_ps7_0_50M/peripheral_aresetn] \
         [get_bd_pins axi_dma_0/axi_resetn] \
+        [get_bd_pins ps7_0_axi_periph/M02_ARESETN] \
         [get_bd_pins ps7_0_axi_periph/M03_ARESETN] \
-        [get_bd_pins ps7_0_axi_periph/M04_ARESETN] \
         [get_bd_pins jpeg_decoder_ctrl_cc/s_axi_aresetn]
     # The PS-facing AXI-Lite side remains on the FCLK0 reset domain.
     connect_bd_net [get_bd_pins jpeg_reset_one/dout] \
@@ -325,10 +337,6 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
         [get_bd_pins jpeg_fclk_reset/mb_debug_sys_rst]
 
     create_bd_addr_seg -range 0x10000000 -offset 0x00000000 \
-        [get_bd_addr_spaces axi_vdma_1/Data_MM2S] \
-        [get_bd_addr_segs processing_system7_0/S_AXI_HP0/HP0_DDR_LOWOCM] \
-        SEG_processing_system7_0_HP0_DDR_LOWOCM_1
-    create_bd_addr_seg -range 0x10000000 -offset 0x00000000 \
         [get_bd_addr_spaces axi_dma_0/Data_MM2S] \
         [get_bd_addr_segs processing_system7_0/S_AXI_HP0/HP0_DDR_LOWOCM] \
         SEG_processing_system7_0_HP0_DDR_LOWOCM_2
@@ -336,10 +344,6 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
         [get_bd_addr_spaces axi_datamover_0/Data_S2MM] \
         [get_bd_addr_segs processing_system7_0/S_AXI_HP0/HP0_DDR_LOWOCM] \
         SEG_processing_system7_0_HP0_DDR_LOWOCM_4
-    create_bd_addr_seg -range 0x00010000 -offset 0x43010000 \
-        [get_bd_addr_spaces processing_system7_0/Data] \
-        [get_bd_addr_segs axi_vdma_1/S_AXI_LITE/Reg] \
-        SEG_axi_vdma_1_Reg
     create_bd_addr_seg -range 0x00010000 -offset 0x43020000 \
         [get_bd_addr_spaces processing_system7_0/Data] \
         [get_bd_addr_segs axi_dma_0/S_AXI_LITE/Reg] \
@@ -387,19 +391,14 @@ proc create_ps_emio_vdma_hdmi_bd {repo_root} {
             [get_bd_pins axi_vdma_0/s2mm_introut] \
             [get_bd_pins vdma_irq_concat/In1]
     }
-    if {[llength [get_bd_nets -quiet pip_vdma_mm2s_irq]] == 0} {
-        connect_bd_net -net pip_vdma_mm2s_irq \
-            [get_bd_pins axi_vdma_1/mm2s_introut] \
-            [get_bd_pins vdma_irq_concat/In2]
-    }
     if {[llength [get_bd_nets -quiet probe_dma_mm2s_irq]] == 0} {
         connect_bd_net -net probe_dma_mm2s_irq \
             [get_bd_pins axi_dma_0/mm2s_introut] \
-            [get_bd_pins vdma_irq_concat/In3]
+            [get_bd_pins vdma_irq_concat/In2]
     }
     if {[llength [get_bd_nets -quiet vdma_irq_zero_net]] == 0} {
         set zero_sinks {}
-        for {set irq_idx 4} {$irq_idx < 16} {incr irq_idx} {
+        for {set irq_idx 3} {$irq_idx < 16} {incr irq_idx} {
             lappend zero_sinks [get_bd_pins vdma_irq_concat/In$irq_idx]
         }
         connect_bd_net -net vdma_irq_zero_net \

@@ -62,13 +62,30 @@ def roi_rgb(frame_bgr: np.ndarray, x: int, y: int, nominal_w: int = 640, nominal
 
 
 def grab_frames(index: int, backend_name: str, backend: int, width: int, height: int, frames: int, read_interval_ms: int) -> tuple[bool, list[np.ndarray], dict]:
-    cap = cv2.VideoCapture(index, backend)
+    if backend_name == "dshow":
+        cap = cv2.VideoCapture(
+            index,
+            backend,
+            [
+                cv2.CAP_PROP_FRAME_WIDTH,
+                width,
+                cv2.CAP_PROP_FRAME_HEIGHT,
+                height,
+                cv2.CAP_PROP_FOURCC,
+                cv2.VideoWriter_fourcc(*"MJPG"),
+                cv2.CAP_PROP_FPS,
+                30,
+            ],
+        )
+    else:
+        cap = cv2.VideoCapture(index, backend)
     if not cap.isOpened():
         return False, [], {"index": index, "backend": backend_name, "opened": False}
 
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-    cap.set(cv2.CAP_PROP_FPS, 30)
+    if backend_name != "dshow":
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        cap.set(cv2.CAP_PROP_FPS, 30)
 
     samples = []
     ok_count = 0
@@ -81,6 +98,8 @@ def grab_frames(index: int, backend_name: str, backend: int, width: int, height:
             time.sleep(read_interval_ms / 1000.0)
     actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fourcc_value = int(cap.get(cv2.CAP_PROP_FOURCC))
+    capture_fourcc = "".join(chr((fourcc_value >> (8 * offset)) & 0xFF) for offset in range(4))
     cap.release()
     return len(samples) > 0, samples, {
         "index": index,
@@ -90,6 +109,7 @@ def grab_frames(index: int, backend_name: str, backend: int, width: int, height:
         "samples": len(samples),
         "width": actual_w,
         "height": actual_h,
+        "fourcc": capture_fourcc,
     }
 
 
@@ -161,9 +181,16 @@ def yellow_mask(frame_bgr: np.ndarray) -> np.ndarray:
     return (r > 130) & (g > 110) & (b < 120) & (r > b * 1.4) & (g > b * 1.3)
 
 
-def validate_pip_overlay_frame(frame: np.ndarray) -> tuple[bool, list[dict]]:
-    x0, y0, x1, y1 = scale_rect(frame, (560, 420, 200, 150))
-    border = max(1, int(round(2 * frame.shape[1] / 800)))
+PIP_OVERLAY_PRESETS = {
+    "small": ((1088, 598, 160, 90), "native_720p_quarter_pip_window_1088_598_160_90"),
+    "large": ((928, 508, 320, 180), "native_720p_half_pip_window_928_508_320_180"),
+}
+
+
+def validate_pip_overlay_frame(frame: np.ndarray, preset: str = "small") -> tuple[bool, list[dict]]:
+    rect, expected_roi = PIP_OVERLAY_PRESETS[preset]
+    x0, y0, x1, y1 = scale_rect(frame, rect, nominal_w=1280, nominal_h=720)
+    border = max(1, int(round(2 * frame.shape[1] / 1280)))
     pip = frame[y0:y1, x0:x1]
     if pip.size == 0:
         return False, [{
@@ -195,7 +222,7 @@ def validate_pip_overlay_frame(frame: np.ndarray) -> tuple[bool, list[dict]]:
     results = [
         {
             "name": "pip_overlay_roi",
-            "expected": "fixed_pip_window_560_420_200_150",
+            "expected": expected_roi,
             "roi": [x0, y0, x1, y1],
             "pass": True,
         },

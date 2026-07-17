@@ -1,5 +1,82 @@
 # Current Cycle
 
+## native-720p-display-v2-v12 (closed)
+
+Objective: restore the combined native display route and verify real PC
+RTP/JPEG input through PL JPEG decode, DRM/KMS, display VDMA, same-source PL
+PIP, HDMI output, and PC return capture.
+
+Result:
+
+- the removed second VDMA's interrupt-slot regression was corrected, so JPEG
+  AXI DMA completion now reaches Linux GIC63;
+- v12 simulation, PIP OOC, full implementation, timing, and DRC gates passed;
+- the hash-verified v12 BOOT.BIN is installed and boots connected native HDMI;
+- fixed BGR decode matched the qualified byte count and FNV;
+- dynamic HDMI, complete-source large PIP, main/PIP lockstep, and
+  bidirectional zero-tearing gates passed;
+- dashboard state now reflects the read-back PIP registers, and DShow return
+  capture negotiates MJPG at open time rather than falling back to low-rate
+  YUY2;
+- the final receiver exceeded 7,890 successful PL frames with zero failures,
+  zero Ethernet drops/errors, and exactly one PC RTP sender.
+
+The visual/display boundary is closed. The PC requests 30 fps, but the measured
+HDMI content cadence is 15.018 fps because the approximately 31 ms PL decode
+and blocking GStreamer 1.12 KMS page flip remain serial. A multi-buffer
+DMA-BUF/KMS queue is the next performance boundary; this result does not hide
+that limit behind dashboard refresh rate.
+
+Rollback point: TF-card
+`/run/media/mmcblk0p1/BOOT.BIN.prev-v11-424a9b80`.
+
+Evidence:
+`docs/reports/native-720p-display-v2-v12-closed-loop-2026-07-16.md`.
+
+## native-720p-display-v1 (checkpoint, paused)
+
+Objective: replace the active 800x600 HDMI presentation path with native
+1280x720 timing and keep the 720p30 `jpegpldec` PL-decoder output in the
+GStreamer-to-DRM/KMS path without PS-side geometry scaling. The PL PIP stage
+must remain on the video path and use frame-level buffering.
+
+Changed scope before the checkpoint:
+
+- set the generated video clock/VTC route to the Vivado `720p` preset and
+  74.25/371.25 MHz HDMI clock targets;
+- changed the Linux display timing and dashboard receiver contract to native
+  1280x720 RGB into `kmssink`;
+- connected one VDMA MM2S stream to a PL AXIS input broadcaster and PIP core;
+- replaced the PIP arrays with explicit clocked dual-port frame RAM instances;
+- added an AXIS broadcaster simulation gate and updated the PIP simulation
+  source list.
+
+Verification at checkpoint:
+
+- the complete RTL simulation flow passed: framebuffer reader, PIP core,
+  AXIS input broadcaster, and DMA probe all reported `SIM_OK`;
+- the generated BD validated with native 720p timing metadata: 1280 active
+  pixels, 720 active lines, 1650 horizontal frame and 750 vertical frame;
+- the first native build using the old inferred memory reached PIP OOC
+  synthesis but implemented the two frame arrays as `RAM64M`/LUT resources;
+- the explicit-RAM rebuild reached the PIP OOC launch, but its run had no
+  `.vivado.end.rst` or `.vivado.error.rst` after the 30-minute build limit.
+  The build was stopped at that point. No bitstream was generated or
+  programmed, and no native-720p HDMI capture evidence exists yet.
+
+Evidence: `docs/reports/native-720p-display-checkpoint-2026-07-15.md` and
+the raw simulation/build outputs under `build/`.
+
+Rollback point: the last qualified decoder/display source and board package
+remain the prior committed state. The native-720p source changes in the
+working tree are intentionally not presented as hardware verified.
+
+Residual risk: the explicit dual-port RAM implementation still needs an
+isolated OOC completion/resource report, followed by full implementation,
+timing/DRC, bitstream programming, and HDMI return validation. `axi_vdma_1`
+also remains instantiated in the generated design and must be removed or
+explicitly justified before final acceptance.
+
 ## jpegpldec-pl-throughput-720p30-v1 (closed)
 
 Objective: make the real `jpegpldec backend=pl-decoder` path sustain the
@@ -133,17 +210,14 @@ None.
 ## Most Recently Closed Cycle
 
 ```text
-Cycle ID: jpegpldec-pl-throughput-720p30-v1
-Result: PASSED. The real `jpegpldec backend=pl-decoder` path decoded 330
-  dynamic 1280x720 RTP/JPEG frames with zero failures and gate p95
-  `31.455 ms`.
-Evidence: docs/reports/jpegpldec-pl-throughput-720p30-v1.md and
-  build/jpegpldec-pl-throughput-720p30-v1/runtime-logging-fix-gate-final/.
-Rollback point: commit e0e0ea5 and the verified v4cc8b BOOT.BIN/image.ub
-  state recorded by this cycle.
-Residual risk: this is a synchronous decoder-to-GStreamer closure; HDMI
-  presentation throughput and an asynchronous production buffer pool remain
-  outside this cycle.
+Cycle ID: native-720p-display-v2-v12
+Result: PASSED for native HDMI topology, dynamic PL decode, complete-source
+  same-frame PIP, register/UI control consistency, and zero-tearing return.
+Evidence: docs/reports/native-720p-display-v2-v12-closed-loop-2026-07-16.md
+  and build/native-720p-display-v2/.
+Rollback point: /run/media/mmcblk0p1/BOOT.BIN.prev-v11-424a9b80.
+Residual risk: requested 30 fps source cadence currently yields 15.018
+  distinct HDMI content fps; the next boundary is multi-buffer DMA-BUF/KMS.
 ```
 
 ## Frozen Progress Note
@@ -1623,11 +1697,11 @@ Decision: Outcome A - proceed on Linux/socket route, retire hand-written
 
 ## Current Decision
 
-The active implementation route is now confirmed by hardware evidence:
+The active implementation route is confirmed by v12 hardware evidence:
 
 ```text
-PC UDP RGB888 frame -> Linux userspace socket receiver -> DDR framebuffer
--> VDMA MM2S -> v_axi4s_vid_out -> rgb2dvi -> HDMI
+PC GStreamer RTP/JPEG -> Linux rtpjpegdepay/jpegpldec -> PL JPEG decode
+-> DRM/KMS framebuffer -> VDMA MM2S -> same-source PL PIP -> HDMI
 ```
 
 The hand-written baremetal RGMII bridge + lwIP route is retired. It was
@@ -1712,6 +1786,12 @@ rules live in AGENTS.md.
 Third-party review with independently re-run validator evidence appended to the
 boundary-fix and 15fps reports; one saved HDMI JPEG was independently
 marker-decoded and matched the trace's claimed frame_id.
+Native display v12 is hardware verified: the combined route boots from the TF
+card, fixed PL BGR output matches, dynamic HDMI/PIP motion passes, main/PIP
+counters advance in lockstep, and bidirectional tearing validation reports
+zero torn frames. The PC source requests 30 fps while board PTS evidence shows
+15.018 distinct HDMI content fps. DShow MJPG-at-open negotiation fixes the
+separate low-rate dashboard capture problem.
 ```
 
 Retired dead end:
@@ -1725,11 +1805,7 @@ layer. Do not resume this work.
 
 ## Next Work Direction
 
-No active work note is open. The next implementation step can build on four
-verified facts: the Linux direct-copy network-to-HDMI transfer chain passes,
-the board display side can page-flip textured motion through DRM/KMS with
-stable vblank cadence when network receive is removed, the board boots a
-PetaLinux rootfs with GStreamer tools/plugins, and the PC-to-board GStreamer
-JPEG/RTP-to-fbdevsink route passes color-aware dynamic HDMI return validation.
-The next route should add frame/drop accounting or begin the requested video
-effects on this known-good transport and display base.
+No active work note is open. The next performance cycle should preserve the
+v12 visual gates while replacing the single coherent decoder output and
+blocking sink submission with a multi-buffer DMA-BUF/KMS queue. It should not
+return to fbdev or infer board content fps from the dashboard capture cadence.

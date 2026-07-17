@@ -2,10 +2,10 @@
 `default_nettype none
 
 module tb_axis_pip_overlay_core;
-    localparam integer FRAME_W = 16;
-    localparam integer FRAME_H = 12;
-    localparam integer PIP_X = 10;
-    localparam integer PIP_Y = 7;
+    localparam integer FRAME_W = 32;
+    localparam integer FRAME_H = 24;
+    localparam integer PIP_X = 24;
+    localparam integer PIP_Y = 19;
     localparam integer PIP_W = 8;
     localparam integer PIP_H = 6;
     localparam integer PIP_DEFAULT_W = 4;
@@ -76,7 +76,7 @@ module tb_axis_pip_overlay_core;
     integer expected_pip_y = PIP_Y;
     integer expected_pip_w = PIP_DEFAULT_W;
     integer expected_pip_h = PIP_DEFAULT_H;
-    integer expected_scale = 4;
+    integer expected_scale = 8;
     integer expected_enable = 1;
     integer expected_border = 1;
     integer expected_effect = 0;
@@ -345,7 +345,7 @@ module tb_axis_pip_overlay_core;
         expected_enable = 1;
         expected_border = 0;
         expected_effect = 1;
-        expected_scale = 2;
+        expected_scale = 4;
         expected_pip_x = 2;
         expected_pip_y = 2;
         expected_pip_w = PIP_W;
@@ -364,7 +364,7 @@ module tb_axis_pip_overlay_core;
 
         expected_border = 1;
         expected_effect = 2;
-        expected_scale = 4;
+        expected_scale = 8;
         expected_pip_x = PIP_X;
         expected_pip_y = PIP_Y;
         expected_pip_w = PIP_DEFAULT_W;

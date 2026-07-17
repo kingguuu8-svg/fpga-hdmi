@@ -113,19 +113,19 @@ static int parse_args(int argc, char **argv, app_config_t *config)
 static int set_preset(pip_config_t *config, const char *preset)
 {
     config->control = CTRL_ENABLE | CTRL_BORDER | CTRL_SCALE_QUARTER | CTRL_EFFECT_NORMAL;
-    config->x = 560u;
-    config->y = 420u;
+    config->x = 1088u;
+    config->y = 598u;
 
     if (strcmp(preset, "bypass") == 0) {
         config->control &= ~CTRL_ENABLE;
     } else if (strcmp(preset, "bottom-right") == 0 || strcmp(preset, "small") == 0 || strcmp(preset, "normal") == 0) {
         /* defaults */
     } else if (strcmp(preset, "top-left") == 0) {
-        config->x = 16u;
-        config->y = 16u;
+        config->x = 32u;
+        config->y = 32u;
     } else if (strcmp(preset, "large") == 0) {
-        config->x = 360u;
-        config->y = 260u;
+        config->x = 928u;
+        config->y = 508u;
         config->control &= ~CTRL_SCALE_QUARTER;
         config->control |= CTRL_SCALE_HALF;
     } else if (strcmp(preset, "invert") == 0) {

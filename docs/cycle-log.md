@@ -3887,3 +3887,69 @@ mmap path reuses one coherent output buffer synchronously; and the generated
 clock reset still uses diagnostic constant-high isolation. The first frame is
 approximately `65 ms`, while the steady profile remains below the 30fps
 budget.
+
+## Cycle: native-720p-display-v2-v12
+
+Objective: repair the native display combination design, restore the real
+RTP/JPEG -> `jpegpldec` PL decode -> DRM/KMS -> display VDMA -> PL PIP -> HDMI
+route, and verify dynamic same-source PIP plus frame-boundary integrity on the
+connected board.
+
+Changed scope:
+
+- corrected the JPEG AXI DMA interrupt index after removing the second display
+  VDMA;
+- corrected PL output byte order and the plugin's coherent mmap/pool behavior;
+- replaced independent main/PIP reads with one AXI-stream broadcaster;
+- decoupled PIP full-source capture geometry from small/large display geometry;
+- added a timing-gated incremental Vivado rebuild path;
+- made dashboard start establish/read back the large PIP preset;
+- made DShow HDMI capture negotiate MJPG in the initial device open.
+
+Verification:
+
+- complete RTL simulation passed all four jobs with `SIM_FLOW_OK`;
+- PIP OOC passed at 150 MHz with WNS `+0.579 ns` and zero DRC errors;
+- full v12 implementation passed with WNS `+0.207 ns`, WHS `+0.028 ns`, no
+  failed/unrouted nets, and zero Error-severity DRC violations;
+- BOOT.BIN was hash-verified before and after TF-card installation and the
+  board rebooted with connected native HDMI mode;
+- fixed PL decode returned 921,600 pixels, 2,764,800 BGR bytes, zero errors,
+  and FNV `0xa567410c`;
+- final runtime recorded at least 7,890 successful PL frames, zero failures,
+  plugin p95 `31.398 ms`, zero Ethernet errors/drops, and one PC sender;
+- HDMI ball motion passed 90/90 frames; complete large PIP passed 87/87;
+  main/PIP counter lockstep passed six samples;
+- bidirectional tearing passed 90 row-motion and 90 column-motion frames with
+  zero torn frames;
+- MJPG-at-open capture reduced median DShow read interval from 94 ms to 16 ms;
+- a separate board PTS probe measured 15.018 effective HDMI content fps from
+  the requested 30 fps source cadence.
+
+Board action:
+
+- installed v12 BOOT.BIN on the TF card after preserving the v11 image;
+- rebooted, restored the direct-link Ethernet address, deployed the unchanged
+  runtime module/plugin/tools under `/tmp`, and left the final dashboard,
+  single sender, PL receiver, large PIP, and HDMI return running.
+
+Evidence:
+
+- `docs/reports/native-720p-display-v2-v12-closed-loop-2026-07-16.md`
+- `build/720p-native-vdma-board-v12-incremental/reports/`
+- `build/native-720p-display-v2/uart-v12-final-health.log`
+- `build/native-720p-display-v2/hdmi-v12-ball-pip-large-90/`
+- `build/native-720p-display-v2/hdmi-v12-tearing-90-final/`
+
+Rollback point: restore
+`/run/media/mmcblk0p1/BOOT.BIN.prev-v11-424a9b80`, whose SHA-256 and install
+procedure are recorded in the report.
+
+Result: PASSED for native display topology, dynamic PL decode, complete
+same-source PIP, register/UI control consistency, and zero-tearing HDMI return.
+The 30 fps source request is not claimed as 30 distinct HDMI content fps.
+
+Residual risk: the current single coherent output buffer keeps 65 MHz PL
+decode and GStreamer 1.12 blocking KMS page-flip serial. The next performance
+cycle should use a multi-buffer DMA-BUF/KMS queue rather than returning to
+fbdev or custom raw display writes.

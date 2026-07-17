@@ -31,8 +31,17 @@ if {$example eq "video-pip"} {
         [list \
             tb_axis_pip_overlay_core \
             PL_CONTROLLED_PIP_CORE_SIM_OK \
-            [list [file join $repo_root examples $example rtl axis_pip_overlay_core.v]] \
+            [list \
+                [file join $repo_root examples $example rtl axis_pip_overlay_core.v] \
+                [file join $repo_root examples $example rtl axis_pip_frame_ram.v] \
+            ] \
             [list [file join $repo_root examples $example sim tb_axis_pip_overlay_core.v]] \
+        ] \
+        [list \
+            tb_axis_pip_input_broadcast \
+            AXIS_PIP_INPUT_BROADCAST_SIM_OK \
+            [list [file join $repo_root examples $example rtl axis_pip_input_broadcast.v]] \
+            [list [file join $repo_root examples $example sim tb_axis_pip_input_broadcast.v]] \
         ] \
         [list \
             tb_axis_dma_probe_core \

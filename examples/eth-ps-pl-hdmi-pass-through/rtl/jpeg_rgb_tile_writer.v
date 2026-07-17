@@ -344,15 +344,16 @@ module jpeg_rgb_tile_writer (
                     status_error_flags[1] <= 1'b1;
 
                 if (!cfg_count_only) begin
+                    // DDR byte order is B, G, R so the mmap buffer matches GstVideoFormat BGR.
                     if (!block_active[capture_bank]) begin
                         block_x[capture_bank] <= pixel_block_x;
                         block_y[capture_bank] <= pixel_block_y;
                         block_active[capture_bank] <= 1'b1;
                         block_buffer[{capture_bank, pixel_block_index}] <=
-                            {pixel_r, pixel_g, pixel_b};
+                            {pixel_b, pixel_g, pixel_r};
                     end else if (capture_same_block) begin
                         block_buffer[{capture_bank, pixel_block_index}] <=
-                            {pixel_r, pixel_g, pixel_b};
+                            {pixel_b, pixel_g, pixel_r};
                     end else begin
                         block_full[capture_bank] <= 1'b1;
                         capture_bank <= ~capture_bank;
@@ -360,7 +361,7 @@ module jpeg_rgb_tile_writer (
                         block_y[~capture_bank] <= pixel_block_y;
                         block_active[~capture_bank] <= 1'b1;
                         block_buffer[{~capture_bank, pixel_block_index}] <=
-                            {pixel_r, pixel_g, pixel_b};
+                            {pixel_b, pixel_g, pixel_r};
                     end
                 end
             end

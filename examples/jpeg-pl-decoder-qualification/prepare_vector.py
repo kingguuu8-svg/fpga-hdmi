@@ -34,7 +34,16 @@ def main():
         for value, strobe, last in words:
             handle.write(f"{last:x}{strobe:x}{value:08x}\n")
 
-    (args.out_dir / "software-reference.rgb").write_bytes(image.tobytes())
+    rgb_reference = image.tobytes()
+    bgr_reference = bytearray(len(rgb_reference))
+    for offset in range(0, len(rgb_reference), 3):
+        bgr_reference[offset : offset + 3] = (
+            rgb_reference[offset + 2],
+            rgb_reference[offset + 1],
+            rgb_reference[offset],
+        )
+    (args.out_dir / "software-reference.rgb").write_bytes(rgb_reference)
+    (args.out_dir / "software-reference.bgr").write_bytes(bgr_reference)
     metadata = {
         "jpeg": str(args.jpeg.resolve()),
         "sha256": hashlib.sha256(data).hexdigest(),
@@ -43,7 +52,7 @@ def main():
         "width": width,
         "height": height,
         "pixel_count": width * height,
-        "software_reference": "Pillow RGB decode",
+        "software_reference": "Pillow RGB decode with derived BGR byte-order reference",
     }
     (args.out_dir / "vector.json").write_text(
         json.dumps(metadata, indent=2) + "\n", encoding="ascii"

@@ -1,8 +1,9 @@
 # PC Dashboard
 
 The dashboard is a PC-side web console for the Zynq video pipeline.
-The preferred mode is now the GStreamer route, not the legacy custom UDP/fbdev
-route.
+The preferred mode is the real GStreamer route:
+`1280x720@30 RTP/JPEG -> jpegpldec backend=pl-decoder -> kmssink -> PL PIP -> HDMI`.
+The legacy custom UDP/fbdev route is recovery-only.
 
 MVP panels:
 
@@ -18,12 +19,14 @@ FPGA Output:
 
 Function Control Panel:
   start-stream starts the board GStreamer receiver over UART and the PC
-  GStreamer RTP/raw sender
+  GStreamer RTP/JPEG sender; the board command preflights jpegpldec, KMS, and
+  the PIP TCP control daemon
   stop-stream stops the PC sender and attempts to stop the board receiver
   capture-output is only a manual HDMI snapshot fallback
-  receiver-status tails the board GStreamer receiver log over UART
-  pause/resume/effect controls are legacy UDP/fbdev controls and are explicit
-  not-implemented in GStreamer mode
+  receiver-status tails the board GStreamer receiver and PIP daemon logs over
+  UART
+  pause/resume controls the board gst-launch process; PIP preset buttons use
+  the TCP control daemon
 ```
 
 Run the GStreamer/Chinese UI self-test:
@@ -85,26 +88,56 @@ Current behavior:
 
 ```text
 start-stream:
-  board: kill stale gst-launch processes, hide the active framebuffer console
-    cursor, then run udpsrc port=5011 ! rtpjitterbuffer ! rtpjpegdepay !
-    jpegdec ! videoconvert ! videoscale ! fbdevsink device=/dev/fb0
-  PC: conda GStreamer videotestsrc ball ! tee; one branch records the actual
-    RGB source preview, the other uses I420 ! jpegenc ! rtpjpegpay ! udpsink
+  board: preflight /dev/dri/card0, the deployed jpegpldec plugin, and
+    /tmp/pip-tools/pip_effect_server; then run udpsrc port=5011 ! rtpjitterbuffer !
+    rtpjpegdepay ! jpegparse !
+    capssetter caps="image/jpeg,framerate=(fraction)30/1" !
+    jpegpldec backend=pl-decoder !
+    video/x-raw,format=BGR,width=1280,height=720 ! kmssink
+    force-modesetting=true sync=false qos=false
+  board control: start the PIP TCP daemon, apply the large same-source preset,
+    then read it back so the dashboard state reflects the actual registers
+  PC: the GStreamer executable in the project Conda environment runs
+    videotestsrc ball at 1280x720@30 ! tee; one branch
+    records the actual RGB source preview, the other uses I420 ! jpegenc !
+    rtpjpegpay ! udpsink
 
 right panel:
   live HDMI return through /api/output-stream.mjpeg
+  DShow negotiates MJPG at device-open time; setting FOURCC after opening the
+  capture device silently falls back to 1280x720 YUY2 at 10 fps on the current
+  adapter
 
 capture-output:
   manual HDMI snapshot capture through tools/capture_hdmi.py; not the primary
   right-panel video path
 
 pause-receiver / resume-receiver / receiver-status:
-  receiver-status tails the board GStreamer receiver log in GStreamer mode;
-  pause/resume are not implemented for the gst-launch route
+  pause/resume send STOP/CONT to the board gst-launch process;
+  receiver-status tails both receiver and PIP daemon logs
 
 effect-none / effect-invert:
-  not implemented for the gst-launch route; retained only for legacy UDP mode
+  retained for legacy UDP mode; use the PIP preset buttons for the active PL
+  effect path
 ```
+
+The board must have these runtime files before `start-stream`:
+
+```text
+/tmp/gst-plugins/libgstjpegpldec.so
+/tmp/pip-tools/pip_effect_server
+```
+
+The dashboard fails explicitly with `JPEGPLDEC_PLUGIN_MISSING` or
+`PIP_CONTROL_SERVER_MISSING` rather than silently falling back to software
+JPEG or fbdev. Use `--gst-decoder jpegdec --gst-sink fbdevsink` only for an
+explicit recovery comparison.
+
+The PC source and RTP caps request 30 fps. The current synchronous PL decode
+plus GStreamer 1.12 `kmssink` route presents about 15 distinct HDMI content
+frames per second; the dashboard's faster MJPG capture does not change that
+board-side content rate. See `docs/project-roadmap.md` and the latest native
+display report for the measured boundary.
 
 Disable UART explicitly if the serial port should not be touched:
 

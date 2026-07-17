@@ -50,6 +50,8 @@ set_property target_language Verilog [current_project]
 
 add_files -norecurse [list \
     [file join $repo_root examples eth-ps-pl-hdmi-pass-through rtl axis_pip_overlay_core.v] \
+    [file join $repo_root examples eth-ps-pl-hdmi-pass-through rtl axis_pip_frame_ram.v] \
+    [file join $repo_root examples eth-ps-pl-hdmi-pass-through rtl axis_pip_input_broadcast.v] \
     [file join $repo_root examples eth-ps-pl-hdmi-pass-through rtl axis_dma_probe_core.v] \
     [file join $repo_root examples eth-ps-pl-hdmi-pass-through rtl jpeg_rgb_tile_writer.v] \
     [file join $repo_root examples eth-ps-pl-hdmi-pass-through rtl jpeg_pl_decoder_axis.v] \

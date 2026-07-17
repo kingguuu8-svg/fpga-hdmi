@@ -72,12 +72,12 @@ try {
         "sha256sum /tmp/gst-plugins/libgstjpegpldec.so",
         "rmmod jpegpl_dma_probe 2>/dev/null || true",
         "insmod /tmp/jpegpl_dma_probe.ko",
-        "rm -f /tmp/gst-registry-jpegpldec-real.bin /tmp/jpegpl-plugin.rgb /tmp/jpegpl-fixed.log /tmp/jpegpl-software.log",
+        "rm -f /tmp/gst-registry-jpegpldec-real.bin /tmp/jpegpl-plugin.bgr /tmp/jpegpl-fixed.log /tmp/jpegpl-software.log",
         "GST_PLUGIN_PATH=/tmp/gst-plugins GST_REGISTRY=/tmp/gst-registry-jpegpldec-real.bin gst-inspect-1.0 jpegpldec | sed -n '1,150p'",
-        "GST_PLUGIN_PATH=/tmp/gst-plugins GST_REGISTRY=/tmp/gst-registry-jpegpldec-real.bin GST_DEBUG_DUMP_DOT_DIR=/tmp/jpegpl-fixed-dot gst-launch-1.0 -q filesrc location=/tmp/jpegpl-vector.jpg blocksize=30054 num-buffers=1 ! image/jpeg,width=1280,height=720,framerate=1/1 ! jpegpldec backend=pl-decoder summary-interval=1 verify-output-hash=true ! filesink location=/tmp/jpegpl-plugin.rgb > /tmp/jpegpl-fixed.log 2>&1",
+        "GST_PLUGIN_PATH=/tmp/gst-plugins GST_REGISTRY=/tmp/gst-registry-jpegpldec-real.bin GST_DEBUG_DUMP_DOT_DIR=/tmp/jpegpl-fixed-dot gst-launch-1.0 -q filesrc location=/tmp/jpegpl-vector.jpg blocksize=30054 num-buffers=1 ! image/jpeg,width=1280,height=720,framerate=1/1 ! jpegpldec backend=pl-decoder summary-interval=1 verify-output-hash=true ! filesink location=/tmp/jpegpl-plugin.bgr > /tmp/jpegpl-fixed.log 2>&1",
         "cat /tmp/jpegpl-fixed.log",
-        "wc -c /tmp/jpegpl-plugin.rgb",
-        "sha256sum /tmp/jpegpl-plugin.rgb",
+        "wc -c /tmp/jpegpl-plugin.bgr",
+        "sha256sum /tmp/jpegpl-plugin.bgr",
         "echo FIXED_PL_CHILD_MATCHES=`$(grep -r -l 'pl-hardware-decoder' /tmp/jpegpl-fixed-dot | wc -l)",
         "echo FIXED_SOFTWARE_CHILD_MATCHES=`$(grep -r -l 'software-reference-decoder' /tmp/jpegpl-fixed-dot | wc -l)",
         "GST_PLUGIN_PATH=/tmp/gst-plugins GST_REGISTRY=/tmp/gst-registry-jpegpldec-real.bin gst-launch-1.0 -q filesrc location=/tmp/jpegpl-vector.jpg blocksize=30054 num-buffers=1 ! image/jpeg,width=1280,height=720,framerate=1/1 ! jpegpldec backend=software-reference summary-interval=1 ! fakesink > /tmp/jpegpl-software.log 2>&1",
@@ -85,9 +85,9 @@ try {
         "echo JPEGPLDEC_FIXED_AND_SOFTWARE_OK"
     )
     Require-Text $fixedLog $pluginHash "plugin hash"
-    Require-Text $fixedLog "output_fnv=0x7127882c result=pass" "fixed PL FNV"
-    Require-Text $fixedLog "2764800 /tmp/jpegpl-plugin.rgb" "fixed RGB size"
-    Require-Text $fixedLog "01623472a5f3033e536d4691e3fde1ffc88e702c3b58c876743f5beb4c6d40c9" "fixed RGB SHA-256"
+    Require-Text $fixedLog "output_fnv=0xa567410c result=pass" "fixed PL BGR FNV"
+    Require-Text $fixedLog "2764800 /tmp/jpegpl-plugin.bgr" "fixed BGR size"
+    Require-Text $fixedLog "65f2b7716bdb46decfd145a87565ac4e3c8772991b30e989976699a275f8f556" "fixed BGR SHA-256"
     Require-Text $fixedLog "FIXED_SOFTWARE_CHILD_MATCHES=0" "PL graph software exclusion"
     Require-Text $fixedLog "JPEGPLDEC_FIXED_AND_SOFTWARE_OK" "software regression"
 
@@ -175,8 +175,9 @@ try {
     $summary = [PSCustomObject]@{
         cycle = "jpegpldec-real-pl-backend-v1"
         plugin_sha256 = $pluginHash
-        fixed_output_fnv = "0x7127882c"
-        fixed_output_sha256 = "01623472a5f3033e536d4691e3fde1ffc88e702c3b58c876743f5beb4c6d40c9"
+        fixed_output_format = "BGR"
+        fixed_output_fnv = "0xa567410c"
+        fixed_output_sha256 = "65f2b7716bdb46decfd145a87565ac4e3c8772991b30e989976699a275f8f556"
         requested_frames = $Frames
         decoded_pass_frames = $passes.Count
         decoded_fail_frames = $fails.Count

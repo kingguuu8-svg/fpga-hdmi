@@ -116,7 +116,7 @@ int main(int argc, char **argv)
 			input_sink = 1;
 		else {
 			fprintf(stderr,
-				"usage: %s --self-test | --register-smoke [--width n] [--height n] [--device path] | --decode input.jpg output.rgb [--width n] [--height n] [--timeout-ms n] [--count-only] [--input-sink] [--expect-fnv value] [--device path]\n",
+				"usage: %s --self-test | --register-smoke [--width n] [--height n] [--device path] | --decode input.jpg output.bgr [--width n] [--height n] [--timeout-ms n] [--count-only] [--input-sink] [--expect-fnv value] [--device path]\n",
 				argv[0]);
 			return 2;
 		}

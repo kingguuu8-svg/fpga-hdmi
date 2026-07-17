@@ -22,13 +22,30 @@ BACKEND_BY_NAME = {name: backend for name, backend in BACKENDS}
 
 
 def grab_frames(index: int, backend_name: str, backend: int, width: int, height: int, frames: int) -> tuple[bool, list[np.ndarray], dict]:
-    cap = cv2.VideoCapture(index, backend)
+    if backend_name == "dshow":
+        cap = cv2.VideoCapture(
+            index,
+            backend,
+            [
+                cv2.CAP_PROP_FRAME_WIDTH,
+                width,
+                cv2.CAP_PROP_FRAME_HEIGHT,
+                height,
+                cv2.CAP_PROP_FOURCC,
+                cv2.VideoWriter_fourcc(*"MJPG"),
+                cv2.CAP_PROP_FPS,
+                30,
+            ],
+        )
+    else:
+        cap = cv2.VideoCapture(index, backend)
     if not cap.isOpened():
         return False, [], {"index": index, "backend": backend_name, "opened": False}
 
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-    cap.set(cv2.CAP_PROP_FPS, 30)
+    if backend_name != "dshow":
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        cap.set(cv2.CAP_PROP_FPS, 30)
 
     samples: list[np.ndarray] = []
     for _ in range(frames):
@@ -38,6 +55,8 @@ def grab_frames(index: int, backend_name: str, backend: int, width: int, height:
 
     actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fourcc_value = int(cap.get(cv2.CAP_PROP_FOURCC))
+    capture_fourcc = "".join(chr((fourcc_value >> (8 * offset)) & 0xFF) for offset in range(4))
     cap.release()
     return bool(samples), samples, {
         "index": index,
@@ -46,6 +65,7 @@ def grab_frames(index: int, backend_name: str, backend: int, width: int, height:
         "frames_read": len(samples),
         "width": actual_w,
         "height": actual_h,
+        "fourcc": capture_fourcc,
     }
 
 
