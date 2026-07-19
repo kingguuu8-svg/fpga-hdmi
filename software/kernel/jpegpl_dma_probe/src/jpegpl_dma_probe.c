@@ -1,6 +1,7 @@
 #include <linux/completion.h>
 #include <linux/delay.h>
 #include <linux/device.h>
+#include <linux/dma-buf.h>
 #include <linux/dmaengine.h>
 #include <linux/dma-mapping.h>
 #include <linux/fs.h>
@@ -15,6 +16,7 @@
 #include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
+#include <linux/scatterlist.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 
@@ -61,6 +63,18 @@ struct jpegpl_dma_chan_wait {
 	struct completion done;
 };
 
+struct jpegpl_dma_dmabuf_slot {
+	struct dma_buf *buf;
+	struct dma_buf_attachment *attachment;
+	struct sg_table *sgt;
+	dma_addr_t dma_addr;
+	u32 size;
+	u32 width;
+	u32 height;
+	u32 stride;
+	bool registered;
+};
+
 struct jpegpl_dma_probe_dev {
 	struct device *dev;
 	struct dma_chan *tx_chan;
@@ -80,6 +94,9 @@ struct jpegpl_dma_probe_dev {
 	u32 configured_width;
 	u32 configured_height;
 	u32 configured_stride;
+	u32 configured_dst_base;
+	struct jpegpl_dma_dmabuf_slot dmabuf_slots[
+		JPEGPL_DMA_PROBE_MAX_DMABUF_SLOTS];
 };
 
 static void jpegpl_dma_probe_complete(void *arg)
@@ -150,9 +167,10 @@ static int jpegpl_dma_probe_info(
 
 static int jpegpl_dma_probe_verify_config(
 	struct jpegpl_dma_probe_dev *probe, u32 width, u32 height, u32 stride,
+	dma_addr_t output_dma,
 	struct jpegpl_dma_probe_register_smoke *smoke)
 {
-	u32 dst_base = lower_32_bits(probe->rx_dma);
+	u32 dst_base = lower_32_bits(output_dma);
 	u32 dimensions = (height << 16) | width;
 	u32 expected_pixels = width * height;
 
@@ -180,6 +198,7 @@ static int jpegpl_dma_probe_verify_config(
 	probe->configured_width = width;
 	probe->configured_height = height;
 	probe->configured_stride = stride;
+	probe->configured_dst_base = dst_base;
 	dev_info(probe->dev,
 		 "JPEGPL_CONFIG_VERIFIED dst_base=0x%08x stride=%u dimensions=0x%08x expected_pixels=%u version=0x%08x\n",
 		 smoke->dst_base, smoke->stride, smoke->dimensions,
@@ -277,22 +296,136 @@ static int jpegpl_dma_probe_register_smoke(
 
 	mutex_lock(&probe->lock);
 	ret = jpegpl_dma_probe_verify_config(probe, req.width, req.height,
-					     req.stride, &req);
+					     req.stride, probe->rx_dma, &req);
 	mutex_unlock(&probe->lock);
-	if (copy_to_user(argp, &req, sizeof(req)) && !ret)
+	if (copy_to_user(argp, &req, sizeof(req)) && !ret) {
 		ret = -EFAULT;
+	}
 	return ret;
+}
+
+static void
+jpegpl_dma_probe_release_dmabuf_slot(struct jpegpl_dma_probe_dev *probe,
+					     struct jpegpl_dma_dmabuf_slot *slot)
+{
+	if (slot->sgt != NULL && slot->attachment != NULL)
+		dma_buf_unmap_attachment(slot->attachment, slot->sgt,
+					 DMA_FROM_DEVICE);
+	if (slot->attachment != NULL && slot->buf != NULL)
+		dma_buf_detach(slot->buf, slot->attachment);
+	if (slot->buf != NULL)
+		dma_buf_put(slot->buf);
+	memset(slot, 0, sizeof(*slot));
+}
+
+static int jpegpl_dma_probe_register_dmabuf(
+	struct jpegpl_dma_probe_dev *probe,
+	struct jpegpl_dma_probe_dmabuf_register __user *argp)
+{
+	struct jpegpl_dma_probe_dmabuf_register req;
+	struct jpegpl_dma_dmabuf_slot *slot;
+	struct dma_buf *buf;
+	struct dma_buf_attachment *attachment;
+	struct sg_table *sgt;
+	u64 required_size;
+	int ret = 0;
+
+	if (copy_from_user(&req, argp, sizeof(req)))
+		return -EFAULT;
+	required_size = (u64)req.stride * req.height;
+	if (req.fd < 0 || req.slot >= JPEGPL_DMA_PROBE_MAX_DMABUF_SLOTS ||
+	    !req.width || !req.height || req.stride < req.width * 3u ||
+	    !req.size || required_size > req.size)
+		return -EINVAL;
+
+	mutex_lock(&probe->lock);
+	slot = &probe->dmabuf_slots[req.slot];
+	if (slot->registered) {
+		ret = -EBUSY;
+		goto out_unlock;
+	}
+
+	buf = dma_buf_get(req.fd);
+	if (IS_ERR(buf)) {
+		ret = PTR_ERR(buf);
+		goto out_unlock;
+	}
+	attachment = dma_buf_attach(buf, probe->dev);
+	if (IS_ERR(attachment)) {
+		ret = PTR_ERR(attachment);
+		dma_buf_put(buf);
+		goto out_unlock;
+	}
+	sgt = dma_buf_map_attachment(attachment, DMA_FROM_DEVICE);
+	if (IS_ERR(sgt)) {
+		ret = PTR_ERR(sgt);
+		dma_buf_detach(buf, attachment);
+		dma_buf_put(buf);
+		goto out_unlock;
+	}
+	if (sgt->nents != 1 || sg_dma_len(sgt->sgl) < req.size) {
+		dev_warn(probe->dev,
+			 "JPEGPL_DMABUF_REGISTER_REJECTED slot=%u nents=%u size=%u sg_len=%u\n",
+			 req.slot, sgt->nents, req.size, sg_dma_len(sgt->sgl));
+		dma_buf_unmap_attachment(attachment, sgt, DMA_FROM_DEVICE);
+		dma_buf_detach(buf, attachment);
+		dma_buf_put(buf);
+		ret = -EOPNOTSUPP;
+		goto out_unlock;
+	}
+
+	slot->buf = buf;
+	slot->attachment = attachment;
+	slot->sgt = sgt;
+	slot->dma_addr = sg_dma_address(sgt->sgl);
+	slot->size = req.size;
+	slot->width = req.width;
+	slot->height = req.height;
+	slot->stride = req.stride;
+	slot->registered = true;
+	dev_info(probe->dev,
+		 "JPEGPL_DMABUF_REGISTERED slot=%u fd=%d dma=%pad size=%u stride=%u\n",
+		 req.slot, req.fd, &slot->dma_addr, req.size, req.stride);
+
+out_unlock:
+	mutex_unlock(&probe->lock);
+	return ret;
+}
+
+static int jpegpl_dma_probe_unregister_dmabuf(
+	struct jpegpl_dma_probe_dev *probe,
+	struct jpegpl_dma_probe_dmabuf_unregister __user *argp)
+{
+	struct jpegpl_dma_probe_dmabuf_unregister req;
+
+	if (copy_from_user(&req, argp, sizeof(req)))
+		return -EFAULT;
+	if (req.slot >= JPEGPL_DMA_PROBE_MAX_DMABUF_SLOTS)
+		return -EINVAL;
+
+	mutex_lock(&probe->lock);
+	jpegpl_dma_probe_release_dmabuf_slot(probe,
+					     &probe->dmabuf_slots[req.slot]);
+	mutex_unlock(&probe->lock);
+	dev_info(probe->dev, "JPEGPL_DMABUF_UNREGISTERED slot=%u\n", req.slot);
+	return 0;
 }
 
 static int jpegpl_dma_probe_decode(
 	struct jpegpl_dma_probe_dev *probe,
-	struct jpegpl_dma_probe_decode __user *argp)
+	void *argp,
+	bool kernel_req,
+	u32 output_slot)
 {
 	struct jpegpl_dma_probe_decode req;
+	struct jpegpl_dma_dmabuf_slot *slot = NULL;
+	dma_addr_t output_dma = probe->rx_dma;
 	u64 output_size;
 	u64 ioctl_start_ns = ktime_get_ns();
 	u64 copy_start_ns;
 	u64 copy_ns = 0u;
+	u64 sync_start_ns;
+	u64 sync_ns = 0u;
 	u64 config_start_ns;
 	u64 config_ns = 0u;
 	u64 control_start_ns;
@@ -308,8 +441,11 @@ static int jpegpl_dma_probe_decode(
 	bool config_matches;
 	int ret = 0;
 
-	if (copy_from_user(&req, argp, sizeof(req)))
+	if (kernel_req) {
+		memcpy(&req, argp, sizeof(req));
+	} else if (copy_from_user(&req, (void __user *)argp, sizeof(req))) {
 		return -EFAULT;
+	}
 	if ((req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_MMAP) &&
 	    !probe->output_mmap_logged) {
 		probe->output_mmap_logged = true;
@@ -323,14 +459,27 @@ static int jpegpl_dma_probe_decode(
 	if (!req.timeout_ms)
 		req.timeout_ms = JPEGPL_DMA_PROBE_DEFAULT_TIMEOUT_MS;
 	output_size = (u64)req.stride * req.height;
+	if (req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_DMABUF) {
+		if (output_slot >= JPEGPL_DMA_PROBE_MAX_DMABUF_SLOTS)
+			return -EINVAL;
+		slot = &probe->dmabuf_slots[output_slot];
+		if (!slot->registered || slot->width != req.width ||
+		    slot->height != req.height || slot->stride != req.stride ||
+		    output_size > slot->size)
+			return -EINVAL;
+		output_dma = slot->dma_addr;
+	}
 	if (!req.input_length || req.input_length > probe->buffer_size ||
 	    !req.width || !req.height || (req.width & 7u) ||
 	    req.stride < req.width * 3u || output_size > probe->buffer_size ||
 	    !req.user_input ||
 	    (!(req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_MMAP) &&
+	     !(req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_DMABUF) &&
 	     !req.user_output) ||
 	    (req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_MMAP &&
-	     (req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_COUNT_ONLY)))
+	     (req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_COUNT_ONLY)) ||
+	    ((req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_MMAP) &&
+	     (req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_DMABUF)))
 		return -EINVAL;
 
 	mutex_lock(&probe->lock);
@@ -345,20 +494,39 @@ static int jpegpl_dma_probe_decode(
 	copy_ns = ktime_get_ns() - copy_start_ns;
 	/* Full-writeback mode overwrites every byte before PL_DONE. */
 	dma_wmb();
+	if ((req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_DMABUF) &&
+	    !(req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_DMABUF_SKIP_DEVICE_SYNC) &&
+	    slot != NULL) {
+		sync_start_ns = ktime_get_ns();
+		dma_sync_sg_for_device(probe->dev, slot->sgt->sgl,
+				       slot->sgt->nents, DMA_FROM_DEVICE);
+		sync_ns = ktime_get_ns() - sync_start_ns;
+	}
 
 	config_matches = probe->config_valid &&
 		probe->configured_width == req.width &&
 		probe->configured_height == req.height &&
-		probe->configured_stride == req.stride;
+		probe->configured_stride == req.stride &&
+		probe->configured_dst_base == lower_32_bits(output_dma);
 	if (!config_matches) {
-		struct jpegpl_dma_probe_register_smoke config;
+		if (probe->config_valid &&
+		    probe->configured_width == req.width &&
+		    probe->configured_height == req.height &&
+		    probe->configured_stride == req.stride) {
+			writel(lower_32_bits(output_dma),
+			       probe->regs + JPEGPL_REG_DST_BASE);
+			probe->configured_dst_base = lower_32_bits(output_dma);
+		} else {
+			struct jpegpl_dma_probe_register_smoke config;
 
-		config_start_ns = ktime_get_ns();
-		ret = jpegpl_dma_probe_verify_config(probe, req.width, req.height,
-						     req.stride, &config);
-		config_ns = ktime_get_ns() - config_start_ns;
-		if (ret)
-			goto out;
+			config_start_ns = ktime_get_ns();
+			ret = jpegpl_dma_probe_verify_config(probe, req.width,
+							     req.height, req.stride,
+							     output_dma, &config);
+			config_ns = ktime_get_ns() - config_start_ns;
+			if (ret)
+				goto out;
+		}
 	}
 	control_start_ns = ktime_get_ns();
 	ret = jpegpl_dma_probe_start_and_verify_control(probe, req.flags);
@@ -411,10 +579,16 @@ static int jpegpl_dma_probe_decode(
 	}
 
 	if (!(req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_COUNT_ONLY)) {
+		if ((req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_DMABUF) &&
+		    (req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_DMABUF_CPU_SYNC) &&
+		    slot != NULL)
+			dma_sync_sg_for_cpu(probe->dev, slot->sgt->sgl,
+					    slot->sgt->nents, DMA_FROM_DEVICE);
 		dma_rmb();
 	}
 	if (!(req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_COUNT_ONLY) &&
-	    !(req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_MMAP)) {
+	    !(req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_MMAP) &&
+	    !(req.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_DMABUF)) {
 		if (copy_to_user((void __user *)(uintptr_t)req.user_output,
 				 probe->rx_buf, output_size)) {
 			req.status |= JPEGPL_DMA_PROBE_STATUS_COPY_ERR;
@@ -435,9 +609,10 @@ out_terminate:
 out:
 	if (jpegpl_trace_timing)
 		dev_info(probe->dev,
-			 "JPEGPL_TIMING flags=0x%08x copy_us=%llu config_us=%llu control_us=%llu tx_wait_us=%llu pl_poll_us=%llu post_us=%llu driver_window_us=%llu ioctl_us=%llu status=0x%08x\n",
+			 "JPEGPL_TIMING flags=0x%08x copy_us=%llu sync_us=%llu config_us=%llu control_us=%llu tx_wait_us=%llu pl_poll_us=%llu post_us=%llu driver_window_us=%llu ioctl_us=%llu status=0x%08x\n",
 			 req.flags,
 			 div_u64(copy_ns, 1000u),
+			 div_u64(sync_ns, 1000u),
 			 div_u64(config_ns, 1000u),
 			 div_u64(control_ns, 1000u),
 			 div_u64(tx_wait_ns, 1000u),
@@ -446,9 +621,32 @@ out:
 			 div_u64(req.elapsed_ns, 1000u),
 			 div_u64(ktime_get_ns() - ioctl_start_ns, 1000u),
 			 req.status);
+	if (kernel_req) {
+		memcpy(argp, &req, sizeof(req));
+	} else if (copy_to_user((void __user *)argp, &req, sizeof(req)) && !ret) {
+		ret = -EFAULT;
+	}
+	mutex_unlock(&probe->lock);
+	return ret;
+}
+
+static int jpegpl_dma_probe_decode_dmabuf(
+	struct jpegpl_dma_probe_dev *probe,
+	struct jpegpl_dma_probe_decode_dmabuf __user *argp)
+{
+	struct jpegpl_dma_probe_decode_dmabuf req;
+	int ret;
+
+	if (copy_from_user(&req, argp, sizeof(req)))
+		return -EFAULT;
+	if (req.decode.flags & JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_MMAP)
+		return -EINVAL;
+	req.decode.flags |= JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_DMABUF;
+	req.decode.user_output = 0u;
+	ret = jpegpl_dma_probe_decode(probe, &req.decode, true,
+					      req.output_slot);
 	if (copy_to_user(argp, &req, sizeof(req)) && !ret)
 		ret = -EFAULT;
-	mutex_unlock(&probe->lock);
 	return ret;
 }
 
@@ -462,13 +660,25 @@ static long jpegpl_dma_probe_ioctl(struct file *file, unsigned int cmd,
 		return -EOPNOTSUPP;
 	case JPEGPL_DMA_PROBE_IOC_DECODE:
 		return jpegpl_dma_probe_decode(
-			probe, (struct jpegpl_dma_probe_decode __user *)arg);
+			probe, (void __user *)arg, false,
+			JPEGPL_DMA_PROBE_MAX_DMABUF_SLOTS);
+	case JPEGPL_DMA_PROBE_IOC_DECODE_DMABUF:
+		return jpegpl_dma_probe_decode_dmabuf(
+			probe, (struct jpegpl_dma_probe_decode_dmabuf __user *)arg);
 	case JPEGPL_DMA_PROBE_IOC_REGISTER_SMOKE:
 		return jpegpl_dma_probe_register_smoke(
 			probe, (struct jpegpl_dma_probe_register_smoke __user *)arg);
 	case JPEGPL_DMA_PROBE_IOC_INFO:
 		return jpegpl_dma_probe_info(
 			probe, (struct jpegpl_dma_probe_info __user *)arg);
+	case JPEGPL_DMA_PROBE_IOC_REGISTER_DMABUF:
+		return jpegpl_dma_probe_register_dmabuf(
+			probe,
+			(struct jpegpl_dma_probe_dmabuf_register __user *)arg);
+	case JPEGPL_DMA_PROBE_IOC_UNREGISTER_DMABUF:
+		return jpegpl_dma_probe_unregister_dmabuf(
+			probe,
+			(struct jpegpl_dma_probe_dmabuf_unregister __user *)arg);
 	default:
 		return -ENOTTY;
 	}
@@ -540,9 +750,13 @@ err_release_tx:
 static int jpegpl_dma_probe_remove(struct platform_device *pdev)
 {
 	struct jpegpl_dma_probe_dev *probe = platform_get_drvdata(pdev);
+	unsigned int slot;
 
 	misc_deregister(&probe->miscdev);
 	dmaengine_terminate_sync(probe->tx_chan);
+	for (slot = 0u; slot < JPEGPL_DMA_PROBE_MAX_DMABUF_SLOTS; slot++)
+		jpegpl_dma_probe_release_dmabuf_slot(probe,
+						     &probe->dmabuf_slots[slot]);
 	dma_release_channel(probe->tx_chan);
 	return 0;
 }

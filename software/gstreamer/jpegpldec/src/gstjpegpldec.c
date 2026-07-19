@@ -1,6 +1,9 @@
 #include <gst/gst.h>
+#include <gst/allocators/gstdmabuf.h>
 #include <gst/video/gstvideodecoder.h>
 #include <gst/video/video.h>
+#include <drm.h>
+#include <xf86drm.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -25,6 +28,9 @@
 #define RECENT_WINDOW 256u
 #define BUFFER_PROBE_MARKER_SIZE 24
 #define DEFAULT_DMA_DEVICE "/dev/jpegpl_dma_probe"
+#define DEFAULT_DRM_DEVICE "/dev/dri/card0"
+#define DMABUF_SLOT_COUNT JPEGPL_DMA_PROBE_MAX_DMABUF_SLOTS
+#define DMABUF_LEASE_QUARK "fpga-hdml-jpegpldec-dmabuf-lease"
 
 typedef struct _GstJpegPlDecJpegInfo {
   gboolean valid;
@@ -54,8 +60,11 @@ typedef struct _GstJpegPlDec {
   gchar *probe_mode;
   gchar *backend;
   gchar *dma_device;
+  gchar *output_mode;
   guint summary_interval;
   gboolean verify_output_hash;
+  gboolean trace_frames;
+  gboolean dmabuf_device_sync;
   guint32 pl_base;
   guint32 pl_map_size;
   volatile guint8 *pl_regs;
@@ -97,14 +106,34 @@ typedef struct _GstJpegPlDecClass {
   GstBinClass parent_class;
 } GstJpegPlDecClass;
 
+typedef struct _GstJpegPlDmabufSlot {
+  gboolean registered;
+  gboolean in_use;
+  guint32 handle;
+  guint32 pitch;
+  gsize size;
+  gsize output_size;
+  GstMemory *memory;
+} GstJpegPlDmabufSlot;
+
 typedef struct _GstJpegPlHwDec {
   GstVideoDecoder parent;
   gchar *dma_device;
+  gchar *output_mode;
   gint dma_fd;
+  gint drm_fd;
   guint8 *dma_output_map;
   gsize dma_output_map_size;
+  GstAllocator *dmabuf_allocator;
+  GstJpegPlDmabufSlot dmabuf_slots[DMABUF_SLOT_COUNT];
+  GMutex dmabuf_lock;
+  GCond dmabuf_cond;
+  gboolean dmabuf_stopping;
+  gboolean dmabuf_ready;
   guint summary_interval;
   gboolean verify_output_hash;
+  gboolean trace_frames;
+  gboolean dmabuf_device_sync;
   GstVideoCodecState *input_state;
   GstVideoInfo output_info;
   guint width;
@@ -142,7 +171,10 @@ enum {
   PROP_PL_BASE,
   PROP_PL_MAP_SIZE,
   PROP_DMA_DEVICE,
-  PROP_VERIFY_OUTPUT_HASH
+  PROP_VERIFY_OUTPUT_HASH,
+  PROP_OUTPUT_MODE,
+  PROP_TRACE_FRAMES,
+  PROP_DMABUF_DEVICE_SYNC
 };
 
 static GstStaticPadTemplate sink_template = GST_STATIC_PAD_TEMPLATE(
@@ -366,8 +398,228 @@ enum {
   HW_PROP_0,
   HW_PROP_DMA_DEVICE,
   HW_PROP_SUMMARY_INTERVAL,
-  HW_PROP_VERIFY_OUTPUT_HASH
+  HW_PROP_VERIFY_OUTPUT_HASH,
+  HW_PROP_OUTPUT_MODE,
+  HW_PROP_TRACE_FRAMES,
+  HW_PROP_DMABUF_DEVICE_SYNC
 };
+
+typedef struct _GstJpegPlDmabufLease {
+  GstJpegPlHwDec *self;
+  guint slot;
+} GstJpegPlDmabufLease;
+
+static gboolean
+gst_jpeg_pl_hw_dec_dmabuf_enabled(GstJpegPlHwDec *self)
+{
+  return g_strcmp0(self->output_mode, "drm-dmabuf") == 0;
+}
+
+static void
+gst_jpeg_pl_hw_dec_destroy_slot(GstJpegPlHwDec *self, guint index)
+{
+  GstJpegPlDmabufSlot *slot = &self->dmabuf_slots[index];
+  struct jpegpl_dma_probe_dmabuf_unregister unregister_req;
+  struct drm_gem_close destroy = {0};
+
+  if (slot->registered && self->dma_fd >= 0) {
+    memset(&unregister_req, 0, sizeof(unregister_req));
+    unregister_req.slot = index;
+    if (ioctl(self->dma_fd, JPEGPL_DMA_PROBE_IOC_UNREGISTER_DMABUF,
+              &unregister_req) != 0) {
+      g_print("JPEGPLDEC_DMABUF_UNREGISTER_ERROR slot=%u errno=%d\n",
+              index, errno);
+    }
+  }
+  slot->registered = FALSE;
+  if (slot->memory != NULL) {
+    gst_memory_unref(slot->memory);
+    slot->memory = NULL;
+  }
+  if (slot->handle != 0u && self->drm_fd >= 0) {
+    destroy.handle = slot->handle;
+    if (drmIoctl(self->drm_fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy) != 0) {
+      g_print("JPEGPLDEC_DMABUF_DESTROY_ERROR slot=%u errno=%d\n",
+              index, errno);
+    }
+  }
+  memset(slot, 0, sizeof(*slot));
+}
+
+static void
+gst_jpeg_pl_hw_dec_teardown_dmabuf(GstJpegPlHwDec *self)
+{
+  guint index;
+
+  g_mutex_lock(&self->dmabuf_lock);
+  self->dmabuf_stopping = TRUE;
+  g_cond_broadcast(&self->dmabuf_cond);
+  while (TRUE) {
+    gboolean in_use = FALSE;
+
+    for (index = 0u; index < DMABUF_SLOT_COUNT; index++) {
+      if (self->dmabuf_slots[index].in_use) {
+        in_use = TRUE;
+        break;
+      }
+    }
+    if (!in_use) {
+      break;
+    }
+    g_cond_wait(&self->dmabuf_cond, &self->dmabuf_lock);
+  }
+  g_mutex_unlock(&self->dmabuf_lock);
+
+  for (index = 0u; index < DMABUF_SLOT_COUNT; index++) {
+    gst_jpeg_pl_hw_dec_destroy_slot(self, index);
+  }
+  if (self->dmabuf_allocator != NULL) {
+    gst_object_unref(self->dmabuf_allocator);
+    self->dmabuf_allocator = NULL;
+  }
+  if (self->drm_fd >= 0) {
+    close(self->drm_fd);
+    self->drm_fd = -1;
+  }
+
+  g_mutex_lock(&self->dmabuf_lock);
+  self->dmabuf_ready = FALSE;
+  self->dmabuf_stopping = FALSE;
+  g_mutex_unlock(&self->dmabuf_lock);
+}
+
+static void
+gst_jpeg_pl_hw_dec_release_dmabuf_slot(GstJpegPlHwDec *self, guint slot)
+{
+  g_mutex_lock(&self->dmabuf_lock);
+  self->dmabuf_slots[slot].in_use = FALSE;
+  g_cond_signal(&self->dmabuf_cond);
+  g_mutex_unlock(&self->dmabuf_lock);
+}
+
+static void
+gst_jpeg_pl_hw_dec_dmabuf_lease_free(gpointer data)
+{
+  GstJpegPlDmabufLease *lease = data;
+  GstJpegPlHwDec *self = lease->self;
+
+  gst_jpeg_pl_hw_dec_release_dmabuf_slot(self, lease->slot);
+  gst_object_unref(self);
+  g_free(lease);
+}
+
+static gboolean
+gst_jpeg_pl_hw_dec_acquire_dmabuf(GstJpegPlHwDec *self, guint *index)
+{
+  g_mutex_lock(&self->dmabuf_lock);
+  while (!self->dmabuf_stopping) {
+    guint i;
+
+    for (i = 0u; i < DMABUF_SLOT_COUNT; i++) {
+      if (!self->dmabuf_slots[i].in_use &&
+          self->dmabuf_slots[i].registered) {
+        self->dmabuf_slots[i].in_use = TRUE;
+        *index = i;
+        g_mutex_unlock(&self->dmabuf_lock);
+        return TRUE;
+      }
+    }
+    g_cond_wait(&self->dmabuf_cond, &self->dmabuf_lock);
+  }
+  g_mutex_unlock(&self->dmabuf_lock);
+  return FALSE;
+}
+
+static gboolean
+gst_jpeg_pl_hw_dec_setup_dmabuf(GstJpegPlHwDec *self)
+{
+  guint width = GST_VIDEO_INFO_WIDTH(&self->output_info);
+  guint height = GST_VIDEO_INFO_HEIGHT(&self->output_info);
+  guint index;
+
+  if (!gst_jpeg_pl_hw_dec_dmabuf_enabled(self)) {
+    return TRUE;
+  }
+  if (self->dmabuf_ready) {
+    return TRUE;
+  }
+  if (self->dma_fd < 0 || width == 0u || height == 0u) {
+    return FALSE;
+  }
+
+  self->drm_fd = open(DEFAULT_DRM_DEVICE, O_RDWR | O_CLOEXEC);
+  if (self->drm_fd < 0) {
+    g_print("JPEGPLDEC_DMABUF_SETUP_ERROR stage=open-drm errno=%d\n", errno);
+    return FALSE;
+  }
+  self->dmabuf_allocator = gst_dmabuf_allocator_new();
+  if (self->dmabuf_allocator == NULL) {
+    g_print("JPEGPLDEC_DMABUF_SETUP_ERROR stage=allocator\n");
+    gst_jpeg_pl_hw_dec_teardown_dmabuf(self);
+    return FALSE;
+  }
+
+  for (index = 0u; index < DMABUF_SLOT_COUNT; index++) {
+    GstJpegPlDmabufSlot *slot = &self->dmabuf_slots[index];
+    struct drm_mode_create_dumb create = {0};
+    struct jpegpl_dma_probe_dmabuf_register register_req;
+    gint prime_fd = -1;
+
+    create.width = width;
+    create.height = height;
+    create.bpp = 24u;
+    if (drmIoctl(self->drm_fd, DRM_IOCTL_MODE_CREATE_DUMB, &create) != 0 ||
+        create.pitch < width * 3u || create.size < create.pitch * height) {
+      g_print("JPEGPLDEC_DMABUF_SETUP_ERROR stage=create-dumb slot=%u errno=%d\n",
+              index, errno);
+      gst_jpeg_pl_hw_dec_teardown_dmabuf(self);
+      return FALSE;
+    }
+    slot->handle = create.handle;
+    slot->pitch = create.pitch;
+    slot->size = create.size;
+    slot->output_size = (gsize)create.pitch * height;
+    if (drmPrimeHandleToFD(self->drm_fd, slot->handle,
+                            DRM_CLOEXEC | DRM_RDWR, &prime_fd) != 0) {
+      g_print("JPEGPLDEC_DMABUF_SETUP_ERROR stage=prime-export slot=%u errno=%d\n",
+              index, errno);
+      gst_jpeg_pl_hw_dec_teardown_dmabuf(self);
+      return FALSE;
+    }
+    slot->memory = gst_dmabuf_allocator_alloc(self->dmabuf_allocator,
+                                               prime_fd, slot->size);
+    if (slot->memory == NULL) {
+      close(prime_fd);
+      g_print("JPEGPLDEC_DMABUF_SETUP_ERROR stage=wrap-memory slot=%u\n",
+              index);
+      gst_jpeg_pl_hw_dec_teardown_dmabuf(self);
+      return FALSE;
+    }
+
+    memset(&register_req, 0, sizeof(register_req));
+    register_req.fd = gst_dmabuf_memory_get_fd(slot->memory);
+    register_req.slot = index;
+    register_req.size = slot->size;
+    register_req.width = width;
+    register_req.height = height;
+    register_req.stride = slot->pitch;
+    if (ioctl(self->dma_fd, JPEGPL_DMA_PROBE_IOC_REGISTER_DMABUF,
+              &register_req) != 0) {
+      g_print("JPEGPLDEC_DMABUF_SETUP_ERROR stage=driver-register slot=%u errno=%d\n",
+              index, errno);
+      gst_jpeg_pl_hw_dec_teardown_dmabuf(self);
+      return FALSE;
+    }
+    slot->registered = TRUE;
+  }
+
+  self->dmabuf_ready = TRUE;
+  g_print("JPEGPLDEC_DMABUF_POOL_READY slots=%u width=%u height=%u"
+          " pitch=%u bytes=%" G_GSIZE_FORMAT " output_mode=drm-dmabuf\n",
+          DMABUF_SLOT_COUNT, width, height, self->dmabuf_slots[0].pitch,
+          self->dmabuf_slots[0].output_size);
+  return TRUE;
+}
 
 static gboolean
 gst_jpeg_pl_hw_dec_configure_output(GstJpegPlHwDec *self, guint width,
@@ -375,7 +627,8 @@ gst_jpeg_pl_hw_dec_configure_output(GstJpegPlHwDec *self, guint width,
 {
   GstVideoCodecState *output_state;
 
-  if (self->width == width && self->height == height) {
+  if (self->width == width && self->height == height &&
+      (!gst_jpeg_pl_hw_dec_dmabuf_enabled(self) || self->dmabuf_ready)) {
     return TRUE;
   }
   output_state = gst_video_decoder_set_output_state(
@@ -388,12 +641,16 @@ gst_jpeg_pl_hw_dec_configure_output(GstJpegPlHwDec *self, guint width,
   self->width = width;
   self->height = height;
   gst_video_codec_state_unref(output_state);
-  return gst_video_decoder_negotiate(GST_VIDEO_DECODER(self));
+  if (!gst_video_decoder_negotiate(GST_VIDEO_DECODER(self))) {
+    return FALSE;
+  }
+  return gst_jpeg_pl_hw_dec_setup_dmabuf(self);
 }
 
 static gboolean
 gst_jpeg_pl_hw_dec_decide_allocation(GstVideoDecoder *decoder, GstQuery *query)
 {
+  GstJpegPlHwDec *self = GST_JPEG_PL_HW_DEC(decoder);
   GstVideoDecoderClass *parent_class =
       GST_VIDEO_DECODER_CLASS(gst_jpeg_pl_hw_dec_parent_class);
   guint pool_count = gst_query_get_n_allocation_pools(query);
@@ -404,8 +661,10 @@ gst_jpeg_pl_hw_dec_decide_allocation(GstVideoDecoder *decoder, GstQuery *query)
   }
   result = parent_class->decide_allocation(decoder, query);
   g_print("JPEGPLDEC_OUTPUT_POOL_BYPASSED downstream_pools=%u"
-          " output_mmap=1 parent_result=%u\n",
-          pool_count, result ? 1u : 0u);
+          " output_mode=%s output_mmap=%u parent_result=%u\n",
+          pool_count, self->output_mode,
+          gst_jpeg_pl_hw_dec_dmabuf_enabled(self) ? 0u : 1u,
+          result ? 1u : 0u);
   return result;
 }
 
@@ -435,19 +694,21 @@ gst_jpeg_pl_hw_dec_start(GstVideoDecoder *decoder)
     self->dma_fd = -1;
     return FALSE;
   }
-  mapped = mmap(NULL, info.buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED,
-                self->dma_fd, 0);
-  if (mapped == MAP_FAILED) {
-    GST_ELEMENT_ERROR(self, RESOURCE, OPEN_READ,
-                      ("could not map PL JPEG decoder output"),
-                      ("device=%s size=%u error=%s", self->dma_device,
-                       info.buffer_size, g_strerror(errno)));
-    close(self->dma_fd);
-    self->dma_fd = -1;
-    return FALSE;
+  if (!gst_jpeg_pl_hw_dec_dmabuf_enabled(self)) {
+    mapped = mmap(NULL, info.buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED,
+                  self->dma_fd, 0);
+    if (mapped == MAP_FAILED) {
+      GST_ELEMENT_ERROR(self, RESOURCE, OPEN_READ,
+                        ("could not map PL JPEG decoder output"),
+                        ("device=%s size=%u error=%s", self->dma_device,
+                         info.buffer_size, g_strerror(errno)));
+      close(self->dma_fd);
+      self->dma_fd = -1;
+      return FALSE;
+    }
+    self->dma_output_map = mapped;
+    self->dma_output_map_size = info.buffer_size;
   }
-  self->dma_output_map = mapped;
-  self->dma_output_map_size = info.buffer_size;
   self->width = 0u;
   self->height = 0u;
   self->frames = 0u;
@@ -456,8 +717,12 @@ gst_jpeg_pl_hw_dec_start(GstVideoDecoder *decoder)
   self->max_elapsed_ns = 0u;
   self->total_cycles = 0u;
   self->total_stalls = 0u;
-  g_print("JPEGPLDEC_BACKEND_SELECTED backend=pl-decoder device=%s software_jpegdec=absent output_mmap=1 output_mmap_size=%u\n",
-          self->dma_device, info.buffer_size);
+  g_print("JPEGPLDEC_BACKEND_SELECTED backend=pl-decoder device=%s"
+          " software_jpegdec=absent output_mode=%s output_mmap=%u"
+          " output_mmap_size=%u\n",
+          self->dma_device, self->output_mode,
+          gst_jpeg_pl_hw_dec_dmabuf_enabled(self) ? 0u : 1u,
+          info.buffer_size);
   return TRUE;
 }
 
@@ -466,6 +731,7 @@ gst_jpeg_pl_hw_dec_stop(GstVideoDecoder *decoder)
 {
   GstJpegPlHwDec *self = GST_JPEG_PL_HW_DEC(decoder);
 
+  gst_jpeg_pl_hw_dec_teardown_dmabuf(self);
   if (self->dma_fd >= 0) {
     if (self->dma_output_map != NULL) {
       munmap(self->dma_output_map, self->dma_output_map_size);
@@ -498,6 +764,9 @@ gst_jpeg_pl_hw_dec_set_format(GstVideoDecoder *decoder,
   if (self->input_state != NULL) {
     gst_video_codec_state_unref(self->input_state);
   }
+  if (self->dmabuf_ready) {
+    gst_jpeg_pl_hw_dec_teardown_dmabuf(self);
+  }
   self->input_state = gst_video_codec_state_ref(state);
   self->width = 0u;
   self->height = 0u;
@@ -523,14 +792,20 @@ gst_jpeg_pl_hw_dec_handle_frame(GstVideoDecoder *decoder,
   GstJpegPlHwDec *self = GST_JPEG_PL_HW_DEC(decoder);
   GstJpegPlDecJpegInfo jpeg_info;
   struct jpegpl_dma_probe_decode req;
+  struct jpegpl_dma_probe_decode_dmabuf dmabuf_req;
   GstMapInfo input_map;
   GstMapInfo output_map;
   GstClockTime started;
+  GstClockTime ioctl_started;
+  GstClockTime ioctl_wall_ns;
   guint64 total_ns;
   guint64 frame_id = self->frames + self->failures + 1u;
   guint32 output_hash;
   gboolean input_mapped = FALSE;
   gboolean output_mapped = FALSE;
+  gboolean using_dmabuf = gst_jpeg_pl_hw_dec_dmabuf_enabled(self);
+  gboolean dmabuf_slot_acquired = FALSE;
+  guint dmabuf_slot_index = 0u;
 
   memset(&input_map, 0, sizeof(input_map));
   memset(&output_map, 0, sizeof(output_map));
@@ -555,73 +830,152 @@ gst_jpeg_pl_hw_dec_handle_frame(GstVideoDecoder *decoder,
   {
     GstBuffer *output_buffer;
     GstMemory *output_memory;
+    GstJpegPlDmabufLease *lease = NULL;
     gsize offsets[GST_VIDEO_MAX_PLANES] = {0u, 0u, 0u, 0u};
     gint strides[GST_VIDEO_MAX_PLANES] = {0, 0, 0, 0};
-    gsize output_size = GST_VIDEO_INFO_SIZE(&self->output_info);
+    gsize output_size;
 
-    if (output_size == 0u || output_size > self->dma_output_map_size) {
-      gst_buffer_unmap(frame->input_buffer, &input_map);
-      return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-mmap-size");
+    if (using_dmabuf) {
+      if (!self->dmabuf_ready ||
+          !gst_jpeg_pl_hw_dec_acquire_dmabuf(self, &dmabuf_slot_index)) {
+        gst_buffer_unmap(frame->input_buffer, &input_map);
+        return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "dmabuf-acquire");
+      }
+      dmabuf_slot_acquired = TRUE;
+      output_size = self->dmabuf_slots[dmabuf_slot_index].output_size;
+      output_memory = gst_memory_ref(
+          self->dmabuf_slots[dmabuf_slot_index].memory);
+    } else {
+      output_size = GST_VIDEO_INFO_SIZE(&self->output_info);
+      if (output_size == 0u || output_size > self->dma_output_map_size) {
+        gst_buffer_unmap(frame->input_buffer, &input_map);
+        return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-mmap-size");
+      }
+      output_memory = gst_memory_new_wrapped(
+          GST_MEMORY_FLAG_NO_SHARE, self->dma_output_map,
+          self->dma_output_map_size, 0u, output_size, NULL, NULL);
     }
-    output_memory = gst_memory_new_wrapped(
-        GST_MEMORY_FLAG_NO_SHARE, self->dma_output_map,
-        self->dma_output_map_size, 0u, output_size, NULL, NULL);
     if (output_memory == NULL) {
+      if (dmabuf_slot_acquired) {
+        gst_jpeg_pl_hw_dec_release_dmabuf_slot(self, dmabuf_slot_index);
+        dmabuf_slot_acquired = FALSE;
+      }
       gst_buffer_unmap(frame->input_buffer, &input_map);
-      return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-mmap-wrap");
+      return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-memory");
     }
     output_buffer = gst_buffer_new();
     if (output_buffer == NULL) {
       gst_memory_unref(output_memory);
+      if (dmabuf_slot_acquired) {
+        gst_jpeg_pl_hw_dec_release_dmabuf_slot(self, dmabuf_slot_index);
+        dmabuf_slot_acquired = FALSE;
+      }
       gst_buffer_unmap(frame->input_buffer, &input_map);
       return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-buffer");
     }
     gst_buffer_append_memory(output_buffer, output_memory);
-    strides[0] = GST_VIDEO_INFO_PLANE_STRIDE(&self->output_info, 0);
+    strides[0] = using_dmabuf ?
+        (gint)self->dmabuf_slots[dmabuf_slot_index].pitch :
+        GST_VIDEO_INFO_PLANE_STRIDE(&self->output_info, 0);
     if (gst_buffer_add_video_meta_full(
             output_buffer, GST_VIDEO_FRAME_FLAG_NONE, GST_VIDEO_FORMAT_BGR,
             jpeg_info.width, jpeg_info.height, 1u, offsets, strides) == NULL) {
       gst_buffer_unref(output_buffer);
+      if (dmabuf_slot_acquired) {
+        gst_jpeg_pl_hw_dec_release_dmabuf_slot(self, dmabuf_slot_index);
+        dmabuf_slot_acquired = FALSE;
+      }
       gst_buffer_unmap(frame->input_buffer, &input_map);
       return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-video-meta");
     }
+    if (dmabuf_slot_acquired) {
+      lease = g_new0(GstJpegPlDmabufLease, 1);
+      lease->self = GST_JPEG_PL_HW_DEC(gst_object_ref(self));
+      lease->slot = dmabuf_slot_index;
+      gst_mini_object_set_qdata(
+          GST_MINI_OBJECT_CAST(output_buffer),
+          g_quark_from_static_string(DMABUF_LEASE_QUARK), lease,
+          gst_jpeg_pl_hw_dec_dmabuf_lease_free);
+      dmabuf_slot_acquired = FALSE;
+    }
     frame->output_buffer = output_buffer;
   }
-  if (!gst_buffer_map(frame->output_buffer, &output_map, GST_MAP_WRITE)) {
+  if ((!using_dmabuf || self->verify_output_hash) &&
+      !gst_buffer_map(frame->output_buffer, &output_map, GST_MAP_WRITE)) {
     gst_buffer_unmap(frame->input_buffer, &input_map);
     return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-map");
   }
-  output_mapped = TRUE;
+  output_mapped = !using_dmabuf || self->verify_output_hash;
 
   memset(&req, 0, sizeof(req));
   req.input_length = (guint32)input_map.size;
   req.width = jpeg_info.width;
   req.height = jpeg_info.height;
-  req.stride = (guint32)GST_VIDEO_INFO_PLANE_STRIDE(&self->output_info, 0);
+  req.stride = using_dmabuf ? self->dmabuf_slots[dmabuf_slot_index].pitch :
+                              (guint32)GST_VIDEO_INFO_PLANE_STRIDE(
+                                  &self->output_info, 0);
   req.timeout_ms = 1000u;
   req.user_input = (guint64)(guintptr)input_map.data;
-  req.flags = JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_MMAP;
+  req.flags = using_dmabuf ? JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_DMABUF :
+                             JPEGPL_DMA_PROBE_DECODE_FLAG_OUTPUT_MMAP;
+  if (using_dmabuf && self->verify_output_hash) {
+    req.flags |= JPEGPL_DMA_PROBE_DECODE_FLAG_DMABUF_CPU_SYNC;
+  }
+  if (using_dmabuf && !self->dmabuf_device_sync) {
+    req.flags |= JPEGPL_DMA_PROBE_DECODE_FLAG_DMABUF_SKIP_DEVICE_SYNC;
+  }
   req.user_output = 0u;
 
   started = gst_util_get_timestamp();
-  if (ioctl(self->dma_fd, JPEGPL_DMA_PROBE_IOC_DECODE, &req) != 0) {
+  if (using_dmabuf) {
+    memset(&dmabuf_req, 0, sizeof(dmabuf_req));
+    dmabuf_req.decode = req;
+    dmabuf_req.output_slot = dmabuf_slot_index;
+  }
+  ioctl_started = gst_util_get_timestamp();
+  if (ioctl(self->dma_fd,
+            using_dmabuf ? JPEGPL_DMA_PROBE_IOC_DECODE_DMABUF :
+                           JPEGPL_DMA_PROBE_IOC_DECODE,
+            using_dmabuf ? (void *)&dmabuf_req : (void *)&req) != 0) {
     gint saved_errno = errno;
-    gst_buffer_unmap(frame->output_buffer, &output_map);
+    if (output_mapped) {
+      gst_buffer_unmap(frame->output_buffer, &output_map);
+    }
     gst_buffer_unmap(frame->input_buffer, &input_map);
     g_print("JPEGPLDEC_PL_DECODE_IOCTL frame=%" G_GUINT64_FORMAT
             " errno=%d status=0x%08x errors=0x%08x result=fail\n",
             frame_id, saved_errno, req.status, req.error_flags);
     return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "ioctl");
   }
+  ioctl_wall_ns = gst_util_get_timestamp() - ioctl_started;
+  if (using_dmabuf) {
+    req = dmabuf_req.decode;
+  }
   total_ns = gst_util_get_timestamp() - started;
   output_hash = self->verify_output_hash ?
       fnv1a32(output_map.data, output_map.size) : 0u;
 
-  if (req.output_bytes != output_map.size ||
-      req.pixels != jpeg_info.width * jpeg_info.height ||
+  if (using_dmabuf &&
+      req.output_bytes != self->dmabuf_slots[dmabuf_slot_index].output_size) {
+    if (output_mapped) {
+      gst_buffer_unmap(frame->output_buffer, &output_map);
+    }
+    gst_buffer_unmap(frame->input_buffer, &input_map);
+    return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-size");
+  }
+  if (!using_dmabuf && req.output_bytes != output_map.size) {
+    if (output_mapped) {
+      gst_buffer_unmap(frame->output_buffer, &output_map);
+    }
+    gst_buffer_unmap(frame->input_buffer, &input_map);
+    return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "output-size");
+  }
+  if (req.pixels != jpeg_info.width * jpeg_info.height ||
       req.commands != req.responses || req.error_flags != 0u ||
       (req.status & JPEGPL_DMA_PROBE_STATUS_PL_DONE) == 0u) {
-    gst_buffer_unmap(frame->output_buffer, &output_map);
+    if (output_mapped) {
+      gst_buffer_unmap(frame->output_buffer, &output_map);
+    }
     gst_buffer_unmap(frame->input_buffer, &input_map);
     return gst_jpeg_pl_hw_dec_fail_frame(self, frame, "counter-gate");
   }
@@ -631,18 +985,20 @@ gst_jpeg_pl_hw_dec_handle_frame(GstVideoDecoder *decoder,
   self->max_elapsed_ns = MAX(self->max_elapsed_ns, total_ns);
   self->total_cycles += req.cycles;
   self->total_stalls += req.stall_cycles;
-  g_print("JPEGPLDEC_PL_DECODE frame=%" G_GUINT64_FORMAT
-          " pts=%" G_GUINT64_FORMAT " duration=%" G_GUINT64_FORMAT
-          " input_bytes=%u output_bytes=%u"
-          " cycles=%u stalls=%u commands=%u responses=%u"
-          " ioctl_ms=%.3f total_ms=%.3f hash_enabled=%u"
-          " output_mmap=1"
-          " output_fnv=0x%08x result=pass\n",
-          frame_id, (guint64)frame->pts, (guint64)frame->duration,
-          req.input_bytes, req.output_bytes,
-          req.cycles, req.stall_cycles, req.commands, req.responses,
-          ns_to_ms(req.elapsed_ns), ns_to_ms(total_ns),
-          self->verify_output_hash ? 1u : 0u, output_hash);
+  if (self->trace_frames) {
+    g_print("JPEGPLDEC_PL_DECODE frame=%" G_GUINT64_FORMAT
+            " pts=%" G_GUINT64_FORMAT " duration=%" G_GUINT64_FORMAT
+            " input_bytes=%u output_bytes=%u"
+            " cycles=%u stalls=%u commands=%u responses=%u"
+            " ioctl_ms=%.3f ioctl_wall_ms=%.3f total_ms=%.3f hash_enabled=%u"
+            " output_mode=%s"
+            " output_fnv=0x%08x result=pass\n",
+            frame_id, (guint64)frame->pts, (guint64)frame->duration,
+            req.input_bytes, req.output_bytes,
+            req.cycles, req.stall_cycles, req.commands, req.responses,
+            ns_to_ms(req.elapsed_ns), ns_to_ms(ioctl_wall_ns), ns_to_ms(total_ns),
+            self->verify_output_hash ? 1u : 0u, self->output_mode, output_hash);
+  }
   if (self->summary_interval > 0u &&
       (self->frames % self->summary_interval) == 0u) {
     g_print("JPEGPLDEC_PL_DECODE_PROGRESS frames=%" G_GUINT64_FORMAT
@@ -678,6 +1034,16 @@ gst_jpeg_pl_hw_dec_set_property(GObject *object, guint prop_id,
     case HW_PROP_VERIFY_OUTPUT_HASH:
       self->verify_output_hash = g_value_get_boolean(value);
       break;
+    case HW_PROP_TRACE_FRAMES:
+      self->trace_frames = g_value_get_boolean(value);
+      break;
+    case HW_PROP_DMABUF_DEVICE_SYNC:
+      self->dmabuf_device_sync = g_value_get_boolean(value);
+      break;
+    case HW_PROP_OUTPUT_MODE:
+      g_free(self->output_mode);
+      self->output_mode = g_value_dup_string(value);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
       break;
@@ -700,6 +1066,15 @@ gst_jpeg_pl_hw_dec_get_property(GObject *object, guint prop_id, GValue *value,
     case HW_PROP_VERIFY_OUTPUT_HASH:
       g_value_set_boolean(value, self->verify_output_hash);
       break;
+    case HW_PROP_TRACE_FRAMES:
+      g_value_set_boolean(value, self->trace_frames);
+      break;
+    case HW_PROP_DMABUF_DEVICE_SYNC:
+      g_value_set_boolean(value, self->dmabuf_device_sync);
+      break;
+    case HW_PROP_OUTPUT_MODE:
+      g_value_set_string(value, self->output_mode);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
       break;
@@ -711,6 +1086,7 @@ gst_jpeg_pl_hw_dec_finalize(GObject *object)
 {
   GstJpegPlHwDec *self = GST_JPEG_PL_HW_DEC(object);
 
+  gst_jpeg_pl_hw_dec_teardown_dmabuf(self);
   if (self->dma_fd >= 0) {
     close(self->dma_fd);
   }
@@ -718,6 +1094,9 @@ gst_jpeg_pl_hw_dec_finalize(GObject *object)
     gst_video_codec_state_unref(self->input_state);
   }
   g_clear_pointer(&self->dma_device, g_free);
+  g_clear_pointer(&self->output_mode, g_free);
+  g_cond_clear(&self->dmabuf_cond);
+  g_mutex_clear(&self->dmabuf_lock);
   G_OBJECT_CLASS(gst_jpeg_pl_hw_dec_parent_class)->finalize(object);
 }
 
@@ -725,9 +1104,15 @@ static void
 gst_jpeg_pl_hw_dec_init(GstJpegPlHwDec *self)
 {
   self->dma_device = g_strdup(DEFAULT_DMA_DEVICE);
+  self->output_mode = g_strdup("mmap");
   self->dma_fd = -1;
+  self->drm_fd = -1;
   self->summary_interval = 30u;
   self->verify_output_hash = FALSE;
+  self->trace_frames = FALSE;
+  self->dmabuf_device_sync = TRUE;
+  g_mutex_init(&self->dmabuf_lock);
+  g_cond_init(&self->dmabuf_cond);
   gst_video_info_init(&self->output_info);
   gst_video_decoder_set_packetized(GST_VIDEO_DECODER(self), TRUE);
 }
@@ -766,6 +1151,25 @@ gst_jpeg_pl_hw_dec_class_init(GstJpegPlHwDecClass *klass)
                            "Compute an ARM-side FNV hash for each PL output",
                            FALSE,
                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property(
+      object_class, HW_PROP_TRACE_FRAMES,
+      g_param_spec_boolean("trace-frames", "Trace frames",
+                           "Print one diagnostic line for every decoded frame",
+                           FALSE,
+                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property(
+      object_class, HW_PROP_DMABUF_DEVICE_SYNC,
+      g_param_spec_boolean("dmabuf-device-sync", "DMA-BUF device sync",
+                           "Synchronize DRM PRIME memory for the PL device before write",
+                           TRUE,
+                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property(
+      object_class, HW_PROP_OUTPUT_MODE,
+      g_param_spec_string("output-mode", "Output buffer mode",
+                          "mmap uses the legacy single buffer; drm-dmabuf"
+                          " exports a three-slot DRM PRIME pool",
+                          "mmap",
+                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   gst_element_class_set_static_metadata(
       element_class, "Zynq PL JPEG hardware decoder", "Codec/Decoder/Image",
       "Decode baseline 4:2:0 JPEG through /dev/jpegpl_dma_probe", "fpga-hdml");
@@ -1507,6 +1911,9 @@ gst_jpeg_pl_dec_select_backend(GstJpegPlDec *self, const gchar *backend)
         "dma-device", self->dma_device,
         "summary-interval", self->summary_interval,
         "verify-output-hash", self->verify_output_hash,
+        "trace-frames", self->trace_frames,
+        "dmabuf-device-sync", self->dmabuf_device_sync,
+        "output-mode", self->output_mode,
         NULL);
   } else {
     next_decoder = gst_element_factory_make("jpegdec",
@@ -1637,6 +2044,29 @@ gst_jpeg_pl_dec_set_property(GObject *object, guint prop_id,
                      self->verify_output_hash, NULL);
       }
       break;
+    case PROP_TRACE_FRAMES:
+      self->trace_frames = g_value_get_boolean(value);
+      if (self->decoder != NULL &&
+          GST_IS_JPEG_PL_HW_DEC(self->decoder)) {
+        g_object_set(self->decoder, "trace-frames", self->trace_frames, NULL);
+      }
+      break;
+    case PROP_DMABUF_DEVICE_SYNC:
+      self->dmabuf_device_sync = g_value_get_boolean(value);
+      if (self->decoder != NULL &&
+          GST_IS_JPEG_PL_HW_DEC(self->decoder)) {
+        g_object_set(self->decoder, "dmabuf-device-sync",
+                     self->dmabuf_device_sync, NULL);
+      }
+      break;
+    case PROP_OUTPUT_MODE:
+      g_free(self->output_mode);
+      self->output_mode = g_value_dup_string(value);
+      if (self->decoder != NULL &&
+          GST_IS_JPEG_PL_HW_DEC(self->decoder)) {
+        g_object_set(self->decoder, "output-mode", self->output_mode, NULL);
+      }
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
       break;
@@ -1670,6 +2100,15 @@ gst_jpeg_pl_dec_get_property(GObject *object, guint prop_id, GValue *value,
       break;
     case PROP_VERIFY_OUTPUT_HASH:
       g_value_set_boolean(value, self->verify_output_hash);
+      break;
+    case PROP_TRACE_FRAMES:
+      g_value_set_boolean(value, self->trace_frames);
+      break;
+    case PROP_DMABUF_DEVICE_SYNC:
+      g_value_set_boolean(value, self->dmabuf_device_sync);
+      break;
+    case PROP_OUTPUT_MODE:
+      g_value_set_string(value, self->output_mode);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -1724,6 +2163,7 @@ gst_jpeg_pl_dec_finalize(GObject *object)
   g_clear_pointer(&self->probe_mode, g_free);
   g_clear_pointer(&self->backend, g_free);
   g_clear_pointer(&self->dma_device, g_free);
+  g_clear_pointer(&self->output_mode, g_free);
   g_clear_pointer(&self->dma_in, g_free);
   g_clear_pointer(&self->dma_out, g_free);
   g_mutex_clear(&self->lock);
@@ -1737,9 +2177,12 @@ gst_jpeg_pl_dec_init(GstJpegPlDec *self)
   self->backend = g_strdup("software-reference");
   self->probe_mode = g_strdup("software");
   self->dma_device = g_strdup(DEFAULT_DMA_DEVICE);
+  self->output_mode = g_strdup("mmap");
   self->dma_fd = -1;
   self->summary_interval = 30u;
   self->verify_output_hash = FALSE;
+  self->trace_frames = FALSE;
+  self->dmabuf_device_sync = TRUE;
   self->pl_base = DEFAULT_PL_BASE;
   self->pl_map_size = DEFAULT_PL_MAP_SIZE;
   g_mutex_init(&self->lock);
@@ -1834,6 +2277,34 @@ gst_jpeg_pl_dec_class_init(GstJpegPlDecClass *klass)
           "Verify output hash",
           "Compute an ARM-side FNV hash for every PL-decoded BGR frame",
           FALSE,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property(
+      object_class,
+      PROP_TRACE_FRAMES,
+      g_param_spec_boolean(
+          "trace-frames",
+          "Trace frames",
+          "Print one diagnostic line for every PL-decoded frame",
+          FALSE,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property(
+      object_class,
+      PROP_DMABUF_DEVICE_SYNC,
+      g_param_spec_boolean(
+          "dmabuf-device-sync",
+          "DMA-BUF device sync",
+          "Synchronize DRM PRIME memory for the PL device before write",
+          TRUE,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property(
+      object_class,
+      PROP_OUTPUT_MODE,
+      g_param_spec_string(
+          "output-mode",
+          "Output buffer mode",
+          "mmap uses the legacy single buffer; drm-dmabuf uses a three-slot"
+          " DRM PRIME output pool",
+          "mmap",
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   gst_element_class_set_static_metadata(

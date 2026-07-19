@@ -204,20 +204,25 @@ that lets a future agent return to the previous known-good point.
 ## Active Cycle
 
 ```text
-None.
+None. The native-720p30-dmabuf-display-v1 cycle is closed.
 ```
 
 ## Most Recently Closed Cycle
 
 ```text
-Cycle ID: native-720p-display-v2-v12
-Result: PASSED for native HDMI topology, dynamic PL decode, complete-source
-  same-frame PIP, register/UI control consistency, and zero-tearing return.
-Evidence: docs/reports/native-720p-display-v2-v12-closed-loop-2026-07-16.md
-  and build/native-720p-display-v2/.
-Rollback point: /run/media/mmcblk0p1/BOOT.BIN.prev-v11-424a9b80.
-Residual risk: requested 30 fps source cadence currently yields 15.018
-  distinct HDMI content fps; the next boundary is multi-buffer DMA-BUF/KMS.
+Cycle ID: native-720p30-dmabuf-display-v1
+Result: PASSED for the connected-board 1280x720 HDMI display boundary. A
+  four-slot DRM DMA-BUF output pool and bounded GStreamer/KMS queue produced
+  29.975 distinct HDMI content fps over the formal 60-second run. Ball motion
+  passed, and an independent stripe receiver session reported zero tearing.
+Evidence: docs/reports/native-720p30-dmabuf-display-v1-closed-loop-2026-07-19.md
+  and build/native-720p30-dmabuf-display-v1/formal-60s-capture60-four-slot-clean-single-source-com15/.
+Rollback point: no boot image or Vivado source changed; restore the prior
+  runtime plugin/driver artifacts if needed.
+Residual risk: this establishes 720p30, not the maximum rate or resolution;
+  the stripe gate uses a fresh RTP receiver session, and the selected route
+  uses dmabuf-device-sync=false. PIP geometry remains covered by the v12
+  report rather than being re-measured here.
 ```
 
 ## Frozen Progress Note

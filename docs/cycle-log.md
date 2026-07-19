@@ -3953,3 +3953,52 @@ Residual risk: the current single coherent output buffer keeps 65 MHz PL
 decode and GStreamer 1.12 blocking KMS page-flip serial. The next performance
 cycle should use a multi-buffer DMA-BUF/KMS queue rather than returning to
 fbdev or custom raw display writes.
+
+## Cycle: native-720p30-dmabuf-display-v1
+
+Objective: replace the single synchronous display output with a real
+multi-buffer DRM DMA-BUF/KMS route and verify native 1280x720 HDMI output at
+30 distinct content fps on the connected board without tearing.
+
+Changed scope:
+
+- kept the native 720p PL PIP/HDMI topology and PL JPEG decoder unchanged;
+- used `jpegpldec output-mode=drm-dmabuf` with four output slots;
+- kept a bounded three-buffer GStreamer queue before `kmssink`;
+- disabled the measured extra device-sync ioctl in the passing throughput
+  configuration;
+- hardened the HDMI gate so stale PC RTP senders are removed before and after
+  a run;
+- separated the ball and stripe checks into independent receiver sessions so
+  RTP session handover is not confused with HDMI presentation integrity;
+- sampled the HDMI return at 60 fps while the source remained paced at 30 fps.
+
+Verification:
+
+- formal ball capture passed with 3600 samples, 3502 unique hashes, 3599
+  frames containing the ball, and centroid spans `x=339.4`, `y=344.597`;
+- content cadence passed with 1866 distinct frames over 62219 ms and measured
+  effective HDMI content fps `29.975` against a `29.5` minimum;
+- independent stripe capture passed with 600 frames, 600 row-motion frames,
+  600 column-motion frames, and zero tearing frames;
+- board logs showed four DMA-BUF slots, 1800 ball PL decode frames with
+  failures `0`, ball profile p50 `30.771 ms` and p95 `31.728 ms`, kernel health
+  OK, and Ethernet errors/dropped `0/0`;
+- the plugin and driver builds passed, and the driver self-test checksum was
+  `0x6bf6a41d`.
+
+Board action: deployed the runtime plugin and kernel module temporarily over
+the existing Ethernet/HTTP path, ran the formal gate on UART `COM15`, and
+stopped both receiver sessions. No Vivado build, boot image change, or TF-card
+write was required.
+
+Evidence: `docs/reports/native-720p30-dmabuf-display-v1-closed-loop-2026-07-19.md`
+and `build/native-720p30-dmabuf-display-v1/formal-60s-capture60-four-slot-clean-single-source-com15/`.
+
+Rollback point: no persistent board image changed; return to the previous
+runtime artifacts and v12 board package if required.
+
+Result: PASSED for the 720p30 HDMI throughput and no-tearing boundary. This
+does not claim 720p60, 1080p performance, or seamless RTP SSRC/timestamp
+handover inside one long-lived jitterbuffer. PIP geometry remains covered by
+the v12 report.

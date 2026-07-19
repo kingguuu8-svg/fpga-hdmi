@@ -47,8 +47,12 @@ Output video: native 1280x720 HDMI through VDMA MM2S + PL PIP + v_axi4s_vid_out 
 PS geometry scaling: none in the active route
 PIP: same-source AXI4-Stream input, PL frame-level double buffering
 Acceptance: full implementation timing/DRC, board programming, and HDMI return evidence
-Status: HARDWARE VERIFIED for native geometry, same-source PIP, and zero-tearing HDMI return
-Performance note: the source requests 30 fps, but synchronous PL decode plus kmssink currently presents about 15 distinct content frames per second
+Status: HARDWARE VERIFIED for native geometry, same-source PIP, zero-tearing
+  HDMI return, and the four-slot DRM DMA-BUF 720p30 display boundary
+Performance note: the formal connected-board run measured 29.975 distinct HDMI
+  content fps from a 30 fps source over 60 seconds. The selected route uses
+  four DMA-BUF output slots, a bounded GStreamer queue, and
+  dmabuf-device-sync=false. Maximum rate/resolution remains unmeasured.
 ```
 
 Video source policy:
@@ -213,14 +217,14 @@ Phase C:
   JPEG RTL core decoded the current GStreamer profile, passed software-reference
   image comparison, met the 720p30 cycle budget, and closed standalone XC7Z020
   timing.
-  jpegpldec real PL backend gate: PASSED at the functional low-rate boundary.
-  `backend=pl-decoder` now bypasses the system `jpegdec`, sends qualified
+  jpegpldec real PL backend and native HDMI 720p30 gate: PASSED. The
+  `backend=pl-decoder` route bypasses the system `jpegdec`, sends qualified
   1280x720 baseline 4:2:0 JPEG buffers through the board-live PL decoder, and
-  publishes RGB888 GstBuffers into the existing GStreamer-to-HDMI chain. Fixed
-  output matched the qualified RGB hash, dynamic HDMI motion passed, and the
-  runtime graph contained no software decoder child. This does not satisfy the
-  720p30 tier; the next boundary is PL writeback/clock and copy-path throughput
-  optimization inside this real pipeline.
+  presents them through a four-slot DRM DMA-BUF pool and `kmssink`. The formal
+  HDMI return measured 29.975 distinct content fps for 60 seconds, dynamic
+  motion passed, and the independent stripe gate reported zero tearing. The
+  next boundary is maximum-rate/resolution characterization, not a return to
+  fbdev or a single-buffer display path.
   Later: carry the same command semantics over TCP/UDP.
 
 Phase D:

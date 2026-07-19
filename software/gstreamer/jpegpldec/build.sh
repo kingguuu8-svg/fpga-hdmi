@@ -11,6 +11,7 @@ components_dir="${SYSROOT_COMPONENTS:-$petalinux_project/build/tmp/sysroots-comp
 gst_component="${GST_COMPONENT:-$components_dir/gstreamer1.0}"
 gst_base_component="${GST_BASE_COMPONENT:-$components_dir/gstreamer1.0-plugins-base}"
 glib_component="${GLIB_COMPONENT:-$components_dir/glib-2.0}"
+libdrm_component="${LIBDRM_COMPONENT:-$components_dir/libdrm}"
 
 mkdir -p "$out_dir"
 
@@ -33,6 +34,14 @@ if [[ ! -d "$glib_component/usr/include/glib-2.0" ]]; then
   echo "ERROR: GLib target headers not found: $glib_component" >&2
   exit 1
 fi
+if [[ ! -f "$gst_base_component/usr/include/gstreamer-1.0/gst/allocators/gstdmabuf.h" ]]; then
+  echo "ERROR: GStreamer DMA-BUF allocator headers not found: $gst_base_component" >&2
+  exit 1
+fi
+if [[ ! -f "$libdrm_component/usr/include/xf86drm.h" ]]; then
+  echo "ERROR: libdrm target headers not found: $libdrm_component" >&2
+  exit 1
+fi
 
 cflags=(
   -std=gnu99
@@ -46,6 +55,8 @@ cflags=(
   -I"$gst_base_component/usr/include/gstreamer-1.0"
   -I"$glib_component/usr/include/glib-2.0"
   -I"$glib_component/usr/lib/glib-2.0/include"
+  -I"$libdrm_component/usr/include"
+  -I"$libdrm_component/usr/include/libdrm"
   -I"$repo_root/software/kernel/jpegpl_dma_probe/include"
 )
 
@@ -55,10 +66,13 @@ ldflags=(
   -L"$gst_component/usr/lib"
   -L"$gst_base_component/usr/lib"
   -L"$glib_component/usr/lib"
+  -L"$libdrm_component/usr/lib"
   -lgstreamer-1.0
   -lgstvideo-1.0
+  -lgstallocators-1.0
   -lgobject-2.0
   -lglib-2.0
+  -ldrm
 )
 
 "$cross_cc" "${cflags[@]}" \

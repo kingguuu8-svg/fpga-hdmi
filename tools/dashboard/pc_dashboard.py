@@ -873,7 +873,9 @@ class DashboardState:
         preflight = ""
         if self.gst_decoder == "jpegpldec":
             plugin_env = f"GST_PLUGIN_PATH={self.gst_plugin_path} GST_REGISTRY={self.gst_registry} "
-            decoder = f"jpegpldec backend={self.gst_backend} summary-interval=30"
+            decoder = f"jpegpldec backend={self.gst_backend} summary-interval=30 trace-frames=false"
+            if self.gst_backend == "pl-decoder" and self.gst_sink == "kmssink":
+                decoder += " output-mode=drm-dmabuf dmabuf-device-sync=false ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=0"
             preflight += (
                 f"if ! {plugin_env}gst-inspect-1.0 jpegpldec >/dev/null 2>&1; then "
                 "echo JPEGPLDEC_PLUGIN_MISSING; exit 1; fi; "
@@ -2181,6 +2183,10 @@ def run_self_test(out_dir: Path) -> int:
         assert 'rtpjpegdepay ! jpegparse ! capssetter caps="image/jpeg,framerate=(fraction)30/1"' in board_cmd
         assert "! jpegpldec" in board_cmd
         assert "jpegpldec backend=pl-decoder" in board_cmd
+        assert "output-mode=drm-dmabuf" in board_cmd
+        assert "dmabuf-device-sync=false" in board_cmd
+        assert "trace-frames=false" in board_cmd
+        assert "queue max-size-buffers=3" in board_cmd
         assert "kmssink force-modesetting=true" in board_cmd
         assert "GST_PLUGIN_PATH=/tmp/gst-plugins" in board_cmd
         assert "PIP_CONTROL_SERVER_STARTED" in board_cmd

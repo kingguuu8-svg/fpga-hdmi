@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import hashlib
 import json
 import sys
@@ -78,7 +79,7 @@ def main() -> int:
     parser.add_argument("--raw-format", default="rgb", choices=["rgb", "bgr"])
     args = parser.parse_args()
 
-    paths = sorted(Path().glob(args.samples_glob))
+    paths = [Path(path) for path in sorted(glob.glob(args.samples_glob))]
     frames = [
         analyze_frame(path, args.threshold, args.raw_width, args.raw_height, args.raw_format)
         for path in paths
